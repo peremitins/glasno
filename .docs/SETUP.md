@@ -2,33 +2,43 @@
 
 Пошагово: GitHub, база данных (TablePlus), окружение, запуск.
 
-## 1. GitHub: аккаунт и репозиторий
+## 1. GitHub: личный аккаунт + отдельный SSH-ключ
 
-### Аккаунт
-Не заводи третий аккаунт — используй **существующий личный**. Репозиторий сделай **приватным**. Если проект взлетит — позже перенесёшь репозиторий в отдельную организацию с сохранением истории (Settings → Transfer ownership).
+Репозиторий хостим под **личным аккаунтом** (не под `mentai-app`, который занят под Mentala). Сложность в том, что на этом маке SSH-ключ уже привязан к `mentai-app` (`ssh -T git@github.com` отвечает `Hi mentai-app!`), а **один SSH-ключ может принадлежать только одному аккаунту GitHub**. Поэтому для личного аккаунта заводим **отдельный ключ + host-алиас** — это надёжнее HTTPS-токена (кейчейн хранит один логин на github.com → два аккаунта по HTTPS конфликтуют; токены ещё и протухают).
 
-### Создание репозитория (через сайт)
-1. github.com → справа вверху «+» → **New repository**.
-2. **Owner:** твой личный аккаунт. **Repository name:** `jobai` (или `jobai-app`).
-3. **Visibility:** Private.
-4. НЕ ставь галочки «Add README / .gitignore / license» — они уже есть в проекте.
-5. **Create repository**.
-
-### Привязка локального проекта
-В корне `jobai` выполни:
+### 1.1. Новый ключ для личного аккаунта
 ```bash
-git init
-git add .
-git commit -m "init: скелет проекта JobAI"
-git branch -M main
-git remote add origin git@github.com:<твой-логин>/jobai.git   # или https://github.com/<логин>/jobai.git
+ssh-keygen -t ed25519 -C "peremitins-personal" -f ~/.ssh/id_ed25519_peremitins
+eval "$(ssh-agent -s)"
+ssh-add --apple-use-keychain ~/.ssh/id_ed25519_peremitins
+```
+
+### 1.2. Привязать публичный ключ к личному аккаунту
+```bash
+pbcopy < ~/.ssh/id_ed25519_peremitins.pub
+```
+GitHub (под личным аккаунтом) → Settings → SSH and GPG keys → New SSH key → вставить → Add.
+
+### 1.3. Host-алиас в `~/.ssh/config`
+Добавить блок (настройку Mentala/`github.com` не трогаем):
+```
+Host github-peremitins
+  HostName github.com
+  User git
+  IdentityFile ~/.ssh/id_ed25519_peremitins
+  IdentitiesOnly yes
+```
+
+### 1.4. Создать пустой репозиторий
+GitHub (личный аккаунт) → «+» → New repository → `jobai` → **Private** → без README/gitignore/license → Create.
+
+### 1.5. Проверить и запушить
+```bash
+ssh -T git@github-peremitins          # должно ответить: Hi <личный-логин>!
+git remote set-url origin git@github-peremitins:<личный-логин>/jobai.git
 git push -u origin main
 ```
-
-Альтернатива через GitHub CLI (если установлен `gh`):
-```bash
-gh repo create jobai --private --source=. --remote=origin --push
-```
+В адресе хост — `github-peremitins` (алиас), не `github.com`. Замени `<личный-логин>` на точный логин личного аккаунта.
 
 > Перед первым push убедись, что `.env*` и `.cursor/mcp.json` в `.gitignore` (они там уже есть) — секреты не должны попасть в репозиторий.
 

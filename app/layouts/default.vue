@@ -1,44 +1,146 @@
 <script setup lang="ts">
-import { useI18n } from 'vue-i18n';
+  import {
+    BarChartIcon,
+    BellIcon,
+    ClockIcon,
+    DashboardIcon,
+    DoubleArrowLeftIcon,
+    DoubleArrowRightIcon,
+    GearIcon,
+    HomeIcon,
+    MoonIcon,
+    PersonIcon,
+    PlusCircledIcon,
+    ReaderIcon,
+    SunIcon,
+  } from '@radix-icons/vue';
+  import { useI18n } from 'vue-i18n';
+  import AuroraField from '@/app/components/design/AuroraField.vue';
 
-const { t } = useI18n();
+  const { t } = useI18n();
+  const { theme, toggleTheme } = useDesignPreferences();
+  const isSidebarCollapsed = useLocalStorage('jobai-sidebar-collapsed', false);
 
-const nav = [
-  { to: '/', key: 'dashboard', icon: '◧' },
-  { to: '/interview/new', key: 'newInterview', icon: '＋' },
-  { to: '/history', key: 'history', icon: '◷' },
-  { to: '/questions', key: 'questionBank', icon: '▤' },
-  { to: '/pricing', key: 'pricing', icon: '★' },
-  { to: '/profile', key: 'profile', icon: '◐' },
-];
+  const nav = [
+    { to: '/', key: 'dashboard', icon: HomeIcon },
+    { to: '/interview/new', key: 'newInterview', icon: PlusCircledIcon },
+    { to: '/history', key: 'history', icon: ClockIcon },
+    { to: '/questions', key: 'questionBank', icon: ReaderIcon },
+    { to: '/pricing', key: 'pricing', icon: BarChartIcon },
+    { to: '/profile', key: 'profile', icon: PersonIcon },
+  ];
 </script>
 
 <template>
-  <div class="layout">
-    <!-- Боковое меню (десктоп) -->
-    <aside class="sidebar">
-      <div class="brand">{{ t('app.name') }}</div>
-      <nav class="nav">
+  <div
+    class="layout-shell"
+    :class="{ 'layout-shell--collapsed': isSidebarCollapsed }"
+  >
+    <AuroraField />
+
+    <aside class="sidebar glass-frame glass-frame--soft">
+      <div class="sidebar-top">
+        <NuxtLink to="/" class="brand" aria-label="JobAI">
+          <span class="brand-mark">
+            <DashboardIcon />
+          </span>
+          <span class="brand-text">{{ t('app.name') }}</span>
+        </NuxtLink>
+
+        <button
+          type="button"
+          class="sidebar-toggle"
+          :aria-label="
+            isSidebarCollapsed
+              ? t('layout.sidebarExpand')
+              : t('layout.sidebarCollapse')
+          "
+          v-tooltip="
+            isSidebarCollapsed
+              ? t('layout.sidebarExpand')
+              : t('layout.sidebarCollapse')
+          "
+          @click="isSidebarCollapsed = !isSidebarCollapsed"
+        >
+          <DoubleArrowRightIcon v-if="isSidebarCollapsed" aria-hidden="true" />
+          <DoubleArrowLeftIcon v-else aria-hidden="true" />
+        </button>
+      </div>
+
+      <nav class="nav" aria-label="Основная навигация">
         <NuxtLink
           v-for="item in nav"
           :key="item.to"
           :to="item.to"
           class="nav-item"
           active-class="nav-item--active"
+          :aria-label="t(`nav.${item.key}`)"
+          v-tooltip="isSidebarCollapsed ? t(`nav.${item.key}`) : undefined"
         >
-          <span class="nav-ico" aria-hidden="true">{{ item.icon }}</span>
+          <span class="nav-ico" aria-hidden="true">
+            <component :is="item.icon" />
+          </span>
           <span class="nav-label">{{ t(`nav.${item.key}`) }}</span>
         </NuxtLink>
       </nav>
+
+      <section class="sidebar-card">
+        <p>{{ t('layout.weekProgress') }}</p>
+        <strong>7</strong>
+        <span>{{ t('layout.weekProgressHint') }}</span>
+      </section>
+
+      <section class="sidebar-card sidebar-card--accent">
+        <p>{{ t('layout.planTitle') }}</p>
+        <span>{{ t('layout.planHint') }}</span>
+        <NuxtLink to="/pricing" class="mini-cta">{{
+          t('billing.upgrade')
+        }}</NuxtLink>
+      </section>
     </aside>
 
-    <!-- Контент -->
-    <main class="content">
-      <slot />
+    <main class="workspace">
+      <header class="topbar glass-frame glass-frame--soft">
+        <div class="topbar-title">
+          <span>{{ t('app.name') }}</span>
+          <small>{{ t('app.tagline') }}</small>
+        </div>
+
+        <div class="toolbar">
+          <button
+            type="button"
+            class="icon-button"
+            :aria-label="t('layout.themeToggle')"
+            @click="toggleTheme"
+          >
+            <SunIcon v-if="theme === 'dark'" aria-hidden="true" />
+            <MoonIcon v-else aria-hidden="true" />
+          </button>
+
+          <button
+            type="button"
+            class="icon-button"
+            :aria-label="t('layout.notifications')"
+          >
+            <BellIcon aria-hidden="true" />
+          </button>
+
+          <NuxtLink to="/profile" class="profile-pill">
+            <span class="avatar" aria-hidden="true">A</span>
+            <span>Анна</span>
+          </NuxtLink>
+        </div>
+      </header>
+
+      <section class="content-surface">
+        <slot />
+      </section>
     </main>
 
-    <!-- Нижнее меню (мобильный) -->
-    <nav class="bottom-nav">
+    <nav
+      class="bottom-nav glass-frame glass-frame--soft"
+      aria-label="Мобильная навигация"
+    >
       <NuxtLink
         v-for="item in nav.slice(0, 5)"
         :key="item.to"
@@ -46,105 +148,497 @@ const nav = [
         class="bottom-item"
         active-class="bottom-item--active"
       >
-        <span aria-hidden="true">{{ item.icon }}</span>
+        <component :is="item.icon" aria-hidden="true" />
         <small>{{ t(`nav.${item.key}`) }}</small>
+      </NuxtLink>
+      <NuxtLink
+        to="/profile"
+        class="bottom-item"
+        active-class="bottom-item--active"
+      >
+        <GearIcon aria-hidden="true" />
+        <small>{{ t('nav.profile') }}</small>
       </NuxtLink>
     </nav>
   </div>
 </template>
 
 <style scoped>
-.layout {
-  min-height: 100vh;
-  display: grid;
-  grid-template-columns: 240px 1fr;
-}
-.sidebar {
-  border-right: 1px solid var(--color-border);
-  background: var(--color-surface);
-  padding: 20px 14px;
-  position: sticky;
-  top: 0;
-  height: 100vh;
-}
-.brand {
-  font-weight: 700;
-  font-size: 20px;
-  padding: 6px 10px 18px;
-  color: var(--color-accent);
-}
-.nav {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.nav-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  border-radius: 10px;
-  color: var(--color-text);
-  text-decoration: none;
-  font-size: 15px;
-}
-.nav-item:hover {
-  background: var(--color-bg);
-}
-.nav-item--active {
-  background: color-mix(in srgb, var(--color-accent) 12%, white);
-  color: var(--color-accent);
-  font-weight: 600;
-}
-.nav-ico {
-  width: 20px;
-  text-align: center;
-}
-.content {
-  padding: 28px clamp(16px, 4vw, 40px);
-  max-width: 1100px;
-  width: 100%;
-}
-.bottom-nav {
-  display: none;
-}
+  .layout-shell {
+    position: relative;
+    display: grid;
+    grid-template-columns: 260px minmax(0, 1fr);
+    min-height: 100dvh;
+    padding: 20px;
+    gap: 22px;
+    transition: grid-template-columns var(--motion-normal) var(--ease-out),
+      gap var(--motion-normal) var(--ease-out);
+  }
 
-@media (max-width: 768px) {
-  .layout {
-    grid-template-columns: 1fr;
+  .layout-shell--collapsed {
+    grid-template-columns: 88px minmax(0, 1fr);
   }
+
   .sidebar {
-    display: none;
-  }
-  .content {
-    padding: 16px 16px 88px;
-  }
-  .bottom-nav {
-    display: flex;
-    justify-content: space-around;
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    background: var(--color-surface);
-    border-top: 1px solid var(--color-border);
-    padding: 8px 4px env(safe-area-inset-bottom);
-  }
-  .bottom-item {
+    position: sticky;
+    top: 20px;
     display: flex;
     flex-direction: column;
+    height: calc(100dvh - 40px);
+    padding: 16px;
+    overflow: hidden;
+    transition: padding var(--motion-normal) var(--ease-out);
+  }
+
+  .sidebar-top {
+    display: flex;
     align-items: center;
-    gap: 2px;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 24px;
+  }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+    color: var(--text-primary);
     text-decoration: none;
-    color: var(--color-muted);
-    font-size: 18px;
-    padding: 4px 8px;
   }
-  .bottom-item small {
-    font-size: 10px;
+
+  .brand-mark,
+  .nav-ico,
+  .icon-button,
+  .avatar {
+    display: grid;
+    place-items: center;
   }
-  .bottom-item--active {
-    color: var(--color-accent);
+
+  .brand-mark {
+    width: 40px;
+    height: 40px;
+    border-radius: 14px;
+    background: var(--button-bg);
+    box-shadow: var(--button-shadow);
+    color: var(--button-text);
   }
-}
+
+  .brand-mark svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  .brand-text {
+    font-family: var(--font-display);
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: 0;
+    transition: opacity var(--motion-fast) var(--ease-out),
+      transform var(--motion-fast) var(--ease-out);
+    white-space: nowrap;
+  }
+
+  .sidebar-toggle {
+    display: grid;
+    flex: 0 0 36px;
+    place-items: center;
+    width: 36px;
+    height: 36px;
+    border: 1px solid var(--glass-border);
+    border-radius: 13px;
+    background: var(--surface-soft);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: transform var(--motion-normal) var(--ease-out),
+      background var(--motion-normal) var(--ease-out),
+      border-color var(--motion-normal) var(--ease-out),
+      color var(--motion-normal) var(--ease-out);
+  }
+
+  .sidebar-toggle:hover {
+    transform: translateY(-1px);
+    border-color: var(--glass-border-strong);
+    background: var(--surface-raised);
+    color: var(--text-primary);
+  }
+
+  .sidebar-toggle svg {
+    width: 17px;
+    height: 17px;
+  }
+
+  .nav {
+    display: grid;
+    gap: 6px;
+  }
+
+  .nav-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-height: 46px;
+    padding: 0 12px;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    text-decoration: none;
+    transition: background var(--motion-normal) var(--ease-out),
+      border-color var(--motion-normal) var(--ease-out),
+      color var(--motion-normal) var(--ease-out),
+      transform var(--motion-normal) var(--ease-out);
+  }
+
+  .nav-item:hover {
+    transform: translateX(2px);
+    border-color: var(--glass-border);
+    background: var(--surface-soft);
+    color: var(--text-primary);
+  }
+
+  .nav-item--active {
+    border-color: var(--glass-border-strong);
+    background: linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--accent) 26%, transparent),
+      var(--surface-soft)
+    );
+    color: var(--text-primary);
+    box-shadow: inset 0 1px 0 var(--inner-highlight);
+  }
+
+  .nav-ico {
+    width: 28px;
+    height: 28px;
+    border-radius: 10px;
+    background: var(--surface-soft);
+  }
+
+  .nav-ico svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  .nav-label {
+    font-size: 14px;
+    font-weight: 700;
+    transition: opacity var(--motion-fast) var(--ease-out),
+      transform var(--motion-fast) var(--ease-out);
+    white-space: nowrap;
+  }
+
+  .sidebar-card {
+    display: grid;
+    gap: 7px;
+    margin-top: auto;
+    padding: 16px;
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-md);
+    background: var(--surface-soft);
+  }
+
+  .sidebar-card + .sidebar-card {
+    margin-top: 12px;
+  }
+
+  .sidebar-card p,
+  .sidebar-card span {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.45;
+  }
+
+  .sidebar-card strong {
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 26px;
+    line-height: 1;
+  }
+
+  .sidebar-card--accent {
+    margin-top: 12px;
+  }
+
+  .layout-shell--collapsed .sidebar {
+    padding: 12px;
+  }
+
+  .layout-shell--collapsed .sidebar-top {
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .layout-shell--collapsed .brand {
+    justify-content: center;
+    gap: 0;
+  }
+
+  .layout-shell--collapsed .brand-text,
+  .layout-shell--collapsed .nav-label {
+    width: 0;
+    opacity: 0;
+    overflow: hidden;
+    transform: translateX(-6px);
+  }
+
+  .layout-shell--collapsed .nav-item {
+    justify-content: center;
+    gap: 0;
+    padding: 0;
+  }
+
+  .layout-shell--collapsed .nav-ico {
+    width: 40px;
+    height: 40px;
+  }
+
+  .layout-shell--collapsed .sidebar-card {
+    display: none;
+  }
+
+  .mini-cta {
+    display: inline-flex;
+    justify-content: center;
+    min-height: 38px;
+    align-items: center;
+    border-radius: 13px;
+    background: var(--button-bg);
+    color: var(--button-text);
+    font-size: 13px;
+    font-weight: 800;
+    text-decoration: none;
+  }
+
+  .workspace {
+    display: grid;
+    grid-template-rows: auto 1fr;
+    gap: 22px;
+    min-width: 0;
+  }
+
+  .topbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    min-height: 72px;
+    padding: 12px 14px 12px 20px;
+  }
+
+  .topbar-title {
+    display: grid;
+    gap: 3px;
+  }
+
+  .topbar-title span {
+    color: var(--text-primary);
+    font-weight: 800;
+  }
+
+  .topbar-title small {
+    color: var(--text-muted);
+    font-size: 12px;
+  }
+
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .icon-button,
+  .profile-pill {
+    border: 1px solid var(--glass-border);
+    background: var(--surface-soft);
+    color: var(--text-secondary);
+    transition: transform var(--motion-normal) var(--ease-out),
+      background var(--motion-normal) var(--ease-out),
+      border-color var(--motion-normal) var(--ease-out),
+      color var(--motion-normal) var(--ease-out);
+  }
+
+  .icon-button {
+    width: 44px;
+    height: 44px;
+    border-radius: 16px;
+    cursor: pointer;
+  }
+
+  .icon-button:hover,
+  .profile-pill:hover {
+    transform: translateY(-1px);
+    border-color: var(--glass-border-strong);
+    background: var(--surface-raised);
+    color: var(--text-primary);
+  }
+
+  .icon-button svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  .profile-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    min-height: 44px;
+    padding: 0 12px 0 7px;
+    border-radius: 999px;
+    text-decoration: none;
+    font-size: 13px;
+    font-weight: 800;
+  }
+
+  .avatar {
+    width: 30px;
+    height: 30px;
+    border-radius: 999px;
+    background: var(--avatar-bg);
+    color: var(--avatar-text);
+    font-family: var(--font-mono);
+    font-size: 12px;
+  }
+
+  .content-surface {
+    min-width: 0;
+    width: min(1180px, 100%);
+    padding: clamp(4px, 1vw, 14px) 0 72px;
+  }
+
+  .bottom-nav {
+    display: none;
+  }
+
+  @media (max-width: 1365px) {
+    .layout-shell {
+      grid-template-columns: 1fr;
+      padding: 14px;
+    }
+
+    .sidebar {
+      display: none;
+    }
+
+    .topbar {
+      align-items: flex-start;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .toolbar {
+      width: 100%;
+      overflow-x: auto;
+      padding-bottom: 2px;
+    }
+
+    .content-surface {
+      width: 100%;
+      padding-bottom: 96px;
+    }
+
+    .bottom-nav {
+      position: fixed;
+      right: 14px;
+      bottom: max(14px, env(safe-area-inset-bottom));
+      left: 14px;
+      z-index: 20;
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      padding: 8px;
+    }
+
+    .bottom-item {
+      display: grid;
+      place-items: center;
+      gap: 3px;
+      min-height: 52px;
+      border-radius: 16px;
+      color: var(--text-muted);
+      text-decoration: none;
+    }
+
+    .bottom-item svg {
+      width: 18px;
+      height: 18px;
+    }
+
+    .bottom-item small {
+      max-width: 100%;
+      overflow: hidden;
+      font-size: 9px;
+      font-weight: 700;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .bottom-item--active {
+      background: var(--surface-raised);
+      color: var(--text-primary);
+    }
+  }
+
+  @media (max-width: 640px) {
+    .layout-shell {
+      height: 100dvh;
+      min-height: 100dvh;
+      overflow: hidden;
+      padding: 10px;
+    }
+
+    .workspace {
+      height: calc(100dvh - 96px);
+      overflow-y: auto;
+      scrollbar-width: none;
+    }
+
+    .workspace::-webkit-scrollbar {
+      display: none;
+    }
+
+    .content-surface {
+      padding-bottom: 18px;
+    }
+
+    .topbar-title small,
+    .profile-pill {
+      display: none;
+    }
+
+    .topbar {
+      flex-direction: row;
+      align-items: center;
+      gap: 12px;
+      min-height: 72px;
+    }
+
+    .topbar-title {
+      min-width: 0;
+    }
+
+    .toolbar {
+      display: flex;
+      justify-content: flex-end;
+      width: auto;
+      margin-left: auto;
+      padding-bottom: 0;
+      gap: 8px;
+      overflow: visible;
+    }
+
+    .bottom-nav {
+      right: 10px;
+      left: 10px;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      padding: 6px;
+    }
+
+    .bottom-item {
+      min-height: 48px;
+      border-radius: 14px;
+    }
+
+    .bottom-item small {
+      display: none;
+    }
+  }
 </style>
