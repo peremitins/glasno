@@ -41,10 +41,18 @@ export class InterviewService {
     const preparedSource = await prepareInterviewSource(params.input.source, {
       hhClient: this.deps.hhClient,
     });
+    const input = await this.normalizeCustomQuestionsInput({
+      input: params.input,
+      anonymousSessionId: params.anonymousSessionId,
+      userId: params.userId ?? null,
+      role: params.input.role || preparedSource.role,
+      vacancyTitle: preparedSource.vacancyTitle,
+      vacancyRaw: preparedSource.vacancyRaw,
+    });
 
     const metadata = buildInterviewPlanMetadata({
-      input: params.input,
-      role: params.input.role || preparedSource.role,
+      input,
+      role: input.role || preparedSource.role,
       vacancyTitle: preparedSource.vacancyTitle,
     });
 
@@ -56,13 +64,13 @@ export class InterviewService {
       vacancyRaw: preparedSource.vacancyRaw,
       vacancyUrl: preparedSource.vacancyUrl,
       companyName: preparedSource.companyName,
-      resumeRaw: params.input.resumeText || null,
-      role: params.input.role || preparedSource.role,
-      level: params.input.level,
+      resumeRaw: input.resumeText || null,
+      role: input.role || preparedSource.role,
+      level: input.level,
       questionCount: metadata.plan.items.length || 1,
-      language: params.input.language,
-      interviewerMode: params.input.interviewerMode,
-      interviewerAvatarId: params.input.interviewerAvatarId,
+      language: input.language,
+      interviewerMode: input.interviewerMode,
+      interviewerAvatarId: input.interviewerAvatarId,
       status: 'running',
       metadata: { ...metadata },
     });
@@ -74,6 +82,36 @@ export class InterviewService {
       session.id,
       params.userId
     );
+  }
+
+  private async normalizeCustomQuestionsInput(params: {
+    input: CreateInterviewSessionRequest;
+    anonymousSessionId: string;
+    userId?: string | null;
+    role?: string | null;
+    vacancyTitle?: string | null;
+    vacancyRaw?: string | null;
+  }): Promise<CreateInterviewSessionRequest> {
+    const rawText = params.input.customQuestionsText?.trim();
+    if (!rawText) return params.input;
+
+    const normalized = await this.deps.engine.normalizeCustomQuestions({
+      rawText,
+      anonymousSessionId: params.anonymousSessionId,
+      userId: params.userId ?? null,
+      role: params.role,
+      level: params.input.level,
+      vacancyTitle: params.vacancyTitle,
+      vacancyRaw: params.vacancyRaw,
+      resumeText: params.input.resumeText,
+      questionSourceMode: params.input.questionSourceMode,
+    });
+    const questions = normalizeQuestionList(normalized.questions, rawText);
+
+    return {
+      ...params.input,
+      customQuestionsText: questions.join('\n'),
+    };
   }
 
   async getState(params: {
@@ -263,6 +301,32 @@ function normalizeQuestion(question: string): string {
     throw apiError('E_UPSTREAM', 'LLM вернул пустой вопрос');
   }
   return normalized;
+}
+
+function normalizeQuestionList(questions: string[], fallbackRaw: string): string[] {
+  const source = questions.length ? questions : fallbackRaw.split(/\n|;|(?<=\?)\s+/);
+  const seen = new Set<string>();
+  const result: string[] = [];
+
+  for (const item of source) {
+    const question = normalizeQuestionCandidate(item);
+    if (!question || question.length < 8) continue;
+    const key = question.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(question);
+  }
+
+  return result.slice(0, 12);
+}
+
+function normalizeQuestionCandidate(value: string): string {
+  const normalized = value
+    .trim()
+    .replace(/^\d+[\).:-]\s*/, '')
+    .replace(/\s+/g, ' ');
+  if (!normalized) return '';
+  return /[?.!]$/.test(normalized) ? normalized : `${normalized}?`;
 }
 
 function hasClarificationFor(turns: InterviewTurnRecord[], turnId: string): boolean {

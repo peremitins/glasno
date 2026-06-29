@@ -66,6 +66,7 @@ describe('InterviewService', () => {
   it('creates a running anonymous interview session with the first question', async () => {
     const repository = createInMemoryRepository();
     const engine = {
+      normalizeCustomQuestions: vi.fn(),
       generateQuestion: vi
         .fn()
         .mockResolvedValue({ question: 'Расскажите о релевантном опыте.' }),
@@ -109,9 +110,64 @@ describe('InterviewService', () => {
     expect(engine.generateQuestion).toHaveBeenCalledOnce();
   });
 
+  it('normalizes custom questions through the interview engine before building the plan', async () => {
+    const repository = createInMemoryRepository();
+    const engine = {
+      normalizeCustomQuestions: vi.fn().mockResolvedValue({
+        questions: [
+          'Как вы выстраиваете план продаж?',
+          'Расскажите про сложные переговоры с клиентом?',
+        ],
+      }),
+      generateQuestion: vi.fn(),
+      evaluateAnswer: vi.fn(),
+    };
+
+    const service = new InterviewService({
+      repository,
+      engine,
+      hhClient: null,
+    });
+
+    const state = await service.createSession({
+      anonymousSessionId: 'anon_1',
+      input: {
+        source: { type: 'profession', role: 'Менеджер по продажам' },
+        level: 'middle',
+        sessionGoal: 'quick',
+        questionSourceMode: 'custom',
+        customQuestionsText:
+          'спроси план продаж; сложные переговоры; сложные переговоры',
+        responseMode: 'text',
+        hintMode: 'off',
+        language: 'ru',
+        interviewerMode: 'neutral',
+        interviewerAvatarId: 'neutral-pro',
+      },
+    });
+
+    expect(engine.normalizeCustomQuestions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        rawText: 'спроси план продаж; сложные переговоры; сложные переговоры',
+        role: 'Менеджер по продажам',
+      })
+    );
+    expect(engine.generateQuestion).not.toHaveBeenCalled();
+    expect(state.session.plan.items).toHaveLength(2);
+    expect(state.session.plan.items.map((item) => item.question)).toEqual([
+      'Как вы выстраиваете план продаж?',
+      'Расскажите про сложные переговоры с клиентом?',
+    ]);
+    expect(state.currentTurn).toMatchObject({
+      question: 'Как вы выстраиваете план продаж?',
+      questionSource: 'user',
+    });
+  });
+
   it('asks one clarification after a shallow answer and then moves to the next main question', async () => {
     const repository = createInMemoryRepository();
     const engine = {
+      normalizeCustomQuestions: vi.fn(),
       generateQuestion: vi
         .fn()
         .mockResolvedValueOnce({ question: 'Расскажите о сложной задаче.' })

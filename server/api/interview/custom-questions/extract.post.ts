@@ -1,6 +1,6 @@
-import { ResumeExtractResponseDto } from '@/shared/dto';
+import { QuestionInputExtractResponseDto } from '@/shared/dto';
 import { resolveOpenAiConfig } from '@/server/application/config/openaiConfig';
-import { extractResumeText } from '@/server/infrastructure/resume/extractResumeText';
+import { extractInterviewFileText } from '@/server/infrastructure/files/extractInterviewFileText';
 import { extractTextFromImageWithOpenAi } from '@/server/infrastructure/llm/openaiImageTextExtractor';
 import { apiError } from '@/server/utils/errors';
 import { defineApiHandler } from '@/server/utils/handler';
@@ -11,18 +11,16 @@ export default defineApiHandler(async (event) => {
   const file = parts?.find((part) => part.name === 'file' && part.data);
 
   if (!file?.data) {
-    throw apiError(
-      'E_VALIDATION',
-      'Прикрепите PDF, изображение или текстовый файл резюме'
-    );
+    throw apiError('E_VALIDATION', 'Прикрепите PDF, изображение или текстовый файл');
   }
 
   const runtimeConfig = useRuntimeConfig(event);
   const openai = resolveOpenAiConfig(runtimeConfig);
-  const text = await extractResumeText({
+  const text = await extractInterviewFileText({
     data: Buffer.from(file.data),
     fileName: file.filename || null,
     mimeType: file.type || null,
+    maxChars: 10_000,
     imageExtractor: async (image) =>
       extractTextFromImageWithOpenAi({
         data: image.data,
@@ -37,16 +35,10 @@ export default defineApiHandler(async (event) => {
           null,
         userId: session?.userId ?? null,
         anonymousSessionId: session?.id ?? null,
-        usageKind: 'resume_extract',
-        instruction: [
-          'Извлеки читаемый текст резюме с изображения.',
-          'Сохрани секции, должности, даты, компании, навыки и достижения отдельными строками.',
-          'Верни только текст без комментариев.',
-        ].join(' '),
       }),
   });
 
-  return ResumeExtractResponseDto.parse({
+  return QuestionInputExtractResponseDto.parse({
     text,
     fileName: file.filename || null,
     mimeType: file.type || null,

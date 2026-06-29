@@ -24,6 +24,7 @@
     CreateInterviewSessionRequestInput,
     InterviewerAvatarId,
     InterviewStateResponse,
+    QuestionInputExtractResponse,
     ResumeExtractResponse,
   } from '@/shared/dto';
   import VoiceTextarea from '@/app/components/form/VoiceTextarea.vue';
@@ -42,6 +43,12 @@
     group: string;
   }
 
+  type ResumePreviewBlock =
+    | { id: string; type: 'heading' | 'paragraph'; text: string }
+    | { id: string; type: 'list'; items: string[] };
+
+  const MAX_RESUME_CONTEXT_CHARS = 30_000;
+
   const { t } = useI18n();
   const route = useRoute();
   const api = useAPI();
@@ -57,11 +64,15 @@
   const isExtractingResume = ref(false);
   const errorMessage = ref('');
   const errorCode = ref('');
+  const isExtractingQuestionsFile = ref(false);
   const rolePickerOpen = ref(false);
   const rolePickerRequested = ref(false);
   const roleSearchTerm = ref('');
   const selectedRoleOption = ref<RoleOption | null>(null);
   const resumeFileName = ref('');
+  const resumeExtractedText = ref('');
+  const questionsFileName = ref('');
+  const questionsFileText = ref('');
 
   const form = reactive({
     hhUrl: '',
@@ -69,7 +80,7 @@
     vacancyTitle: '',
     professionRole: String(route.query.role || ''),
     specialization: '',
-    resumeText: '',
+    resumeNotes: '',
     level: (route.query.level === 'junior' ||
     route.query.level === 'middle' ||
     route.query.level === 'senior'
@@ -208,15 +219,6 @@
     },
   ];
 
-  const questionSourceOptions: Array<{
-    value: QuestionSourceMode;
-    label: string;
-  }> = [
-    { value: 'jobai', label: 'interview.questionSource.jobai' },
-    { value: 'mixed', label: 'interview.questionSource.mixed' },
-    { value: 'custom', label: 'interview.questionSource.custom' },
-  ];
-
   const avatarByMode: Record<InterviewerMode, InterviewerAvatarId> = {
     soft: 'warm-hr',
     neutral: 'neutral-pro',
@@ -250,11 +252,128 @@
     return t('interview.new.sourceHint.profession');
   });
 
+  const customQuestionsCombinedText = computed(() =>
+    [questionsFileText.value, form.customQuestionsText]
+      .map((value) => value.trim())
+      .filter(Boolean)
+      .join('\n')
+  );
+
+  const customOnlyEnabled = computed({
+    get: () => form.questionSourceMode === 'custom',
+    set: (enabled: boolean) => {
+      form.questionSourceMode = enabled ? 'custom' : 'mixed';
+    },
+  });
+
+  const resumeContextText = computed(() => {
+    const parts: string[] = [];
+    const extracted = resumeExtractedText.value.trim();
+    const notes = form.resumeNotes.trim();
+
+    if (extracted) {
+      parts.push(
+        `Резюме из файла ${resumeFileName.value ? `"${resumeFileName.value}"` : ''}:\n${extracted}`
+      );
+    }
+
+    if (notes) {
+      parts.push(`Дополнительно от кандидата:\n${notes}`);
+    }
+
+    return trimResumeContext(parts.join('\n\n'));
+  });
+
+  const resumePreviewBlocks = computed(() =>
+    buildResumePreviewBlocks(resumeExtractedText.value)
+  );
+
+  const resumePreviewMeta = computed(() => {
+    const count = resumeExtractedText.value.length;
+    return count
+      ? t('interview.new.resume.previewMeta', { count })
+      : t('interview.new.resume.previewEmptyMeta');
+  });
+
+  function trimResumeContext(value: string): string {
+    if (value.length <= MAX_RESUME_CONTEXT_CHARS) return value;
+    return value.slice(0, MAX_RESUME_CONTEXT_CHARS - 96).trimEnd();
+  }
+
+  function buildResumePreviewBlocks(value: string): ResumePreviewBlock[] {
+    const normalized = value.replace(/\r\n?/g, '\n').trim();
+    if (!normalized) return [];
+
+    const lines = splitResumePreviewLines(normalized);
+    const blocks: ResumePreviewBlock[] = [];
+    let listItems: string[] = [];
+
+    const flushList = () => {
+      if (!listItems.length) return;
+      blocks.push({
+        id: `resume-list-${blocks.length}`,
+        type: 'list',
+        items: listItems,
+      });
+      listItems = [];
+    };
+
+    lines.forEach((rawLine) => {
+      const line = compactResumeLine(rawLine);
+      const bullet = line.match(/^([•*-]|\d+[.)])\s+(.+)$/);
+
+      if (bullet?.[2]) {
+        listItems.push(bullet[2]);
+        return;
+      }
+
+      flushList();
+      blocks.push({
+        id: `resume-line-${blocks.length}`,
+        type: isResumeHeading(line) ? 'heading' : 'paragraph',
+        text: line,
+      });
+    });
+
+    flushList();
+    return blocks.slice(0, 24);
+  }
+
+  function splitResumePreviewLines(value: string): string[] {
+    const directLines = value
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    if (directLines.length > 1) return directLines;
+
+    return value
+      .replace(/([.!?])\s+(?=[А-ЯA-Z0-9])/g, '$1\n')
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean);
+  }
+
+  function compactResumeLine(value: string): string {
+    return value.replace(/[ \t]+/g, ' ').trim();
+  }
+
+  function isResumeHeading(value: string): boolean {
+    const text = value.replace(/[:：]$/, '').trim();
+    if (!text || text.length > 56) return false;
+
+    return (
+      /^(контакты|о себе|профиль|summary|опыт|experience|проекты|projects|достижения|achievements|навыки|skills|стек|stack|образование|education|языки|languages)$/i.test(
+        text
+      ) || /^[A-ZА-ЯЁ0-9\s/&+-]{3,}$/.test(text)
+    );
+  }
+
   const canSubmit = computed(() => {
     if (isSubmitting.value) return false;
     if (
       form.questionSourceMode === 'custom' &&
-      form.customQuestionsText.trim().length < 8
+      customQuestionsCombinedText.value.length < 8
     ) {
       return false;
     }
@@ -296,12 +415,12 @@
 
   function buildPayload(): CreateInterviewSessionRequestInput {
     const base = {
-      resumeText: form.resumeText.trim() || undefined,
+      resumeText: resumeContextText.value || undefined,
       role: form.professionRole.trim() || undefined,
       level: form.level,
       sessionGoal: form.sessionGoal,
       questionSourceMode: form.questionSourceMode,
-      customQuestionsText: form.customQuestionsText.trim() || undefined,
+      customQuestionsText: customQuestionsCombinedText.value || undefined,
       language: 'ru' as const,
       interviewerMode: form.interviewerMode,
       interviewerAvatarId: avatarByMode[form.interviewerMode],
@@ -355,6 +474,7 @@
     if (!file) return;
 
     resumeFileName.value = file.name;
+    resumeExtractedText.value = '';
     isExtractingResume.value = true;
     errorMessage.value = '';
     errorCode.value = '';
@@ -368,11 +488,43 @@
           body,
         }
       );
-      form.resumeText = response.text;
+      resumeExtractedText.value = response.text;
+      resumeFileName.value = response.fileName || file.name;
     } catch (err) {
+      resumeFileName.value = '';
+      resumeExtractedText.value = '';
       errorMessage.value = extractApiError(err);
     } finally {
       isExtractingResume.value = false;
+      input.value = '';
+    }
+  }
+
+  async function onCustomQuestionsFileChange(event: Event) {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+
+    questionsFileName.value = file.name;
+    isExtractingQuestionsFile.value = true;
+    errorMessage.value = '';
+    errorCode.value = '';
+    try {
+      const body = new FormData();
+      body.append('file', file);
+      const response = await api<QuestionInputExtractResponse>(
+        '/api/interview/custom-questions/extract',
+        {
+          method: 'POST',
+          body,
+        }
+      );
+      questionsFileText.value = response.text;
+      questionsFileName.value = response.fileName || file.name;
+    } catch (err) {
+      errorMessage.value = extractApiError(err);
+    } finally {
+      isExtractingQuestionsFile.value = false;
       input.value = '';
     }
   }
@@ -673,24 +825,62 @@
           />
         </div>
 
-        <div class="parameter-group">
-          <div>
-            <h3>{{ t('interview.new.fields.questionSourceMode') }}</h3>
-            <p>{{ t('interview.new.fields.questionSourceModeHint') }}</p>
+        <div class="question-options">
+          <div class="field">
+            <label for="custom-questions-file">{{
+              t('interview.new.customQuestions.file')
+            }}</label>
+            <div class="file-upload file-upload--compact">
+              <input
+                id="custom-questions-file"
+                class="file-input"
+                type="file"
+                accept=".pdf,.txt,.md,.png,.jpg,.jpeg,text/plain,text/markdown,application/pdf,image/png,image/jpeg"
+                :disabled="isExtractingQuestionsFile"
+                @change="onCustomQuestionsFileChange"
+              />
+              <label class="file-drop file-drop--compact" for="custom-questions-file">
+                <span class="file-drop__icon" aria-hidden="true">
+                  <FileTextIcon />
+                </span>
+                <span class="file-drop__copy">
+                  <strong>
+                    {{
+                      isExtractingQuestionsFile
+                        ? t('interview.new.customQuestions.extracting')
+                        : t('interview.new.customQuestions.uploadTitle')
+                    }}
+                  </strong>
+                  <small>
+                    {{
+                      questionsFileName ||
+                      t('interview.new.customQuestions.uploadHint')
+                    }}
+                  </small>
+                </span>
+              </label>
+            </div>
+            <p v-if="questionsFileText" class="file-note">
+              {{
+                t('interview.new.customQuestions.fileAdded', {
+                  count: questionsFileText.length,
+                })
+              }}
+            </p>
           </div>
-          <div class="segmented" role="radiogroup">
-            <button
-              v-for="option in questionSourceOptions"
-              :key="option.value"
-              type="button"
-              class="segment"
-              :class="{
-                'segment--active': form.questionSourceMode === option.value,
-              }"
-              @click="form.questionSourceMode = option.value"
-            >
-              {{ t(option.label) }}
-            </button>
+
+          <label class="toggle-option">
+            <input v-model="customOnlyEnabled" type="checkbox" />
+            <span class="toggle-switch" aria-hidden="true"></span>
+            <span class="toggle-copy">
+              <strong>{{ t('interview.new.customQuestions.onlyMine') }}</strong>
+              <small>{{ t('interview.new.customQuestions.onlyMineHint') }}</small>
+            </span>
+          </label>
+
+          <div class="question-mode-note">
+            <strong>{{ t('interview.new.customQuestions.defaultMode') }}</strong>
+            <span>{{ t('interview.new.customQuestions.defaultModeHint') }}</span>
           </div>
         </div>
       </div>
@@ -713,7 +903,7 @@
               id="resume-file"
               class="file-input"
               type="file"
-              accept=".pdf,.txt,.md,text/plain,application/pdf"
+              accept=".pdf,.txt,.md,.png,.jpg,.jpeg,text/plain,text/markdown,application/pdf,image/png,image/jpeg"
               :disabled="isExtractingResume"
               @change="onResumeFileChange"
             />
@@ -738,14 +928,47 @@
             </label>
           </div>
         </div>
-        <div class="field">
-          <label for="resume-text">{{ t('interview.new.resume.text') }}</label>
-          <VoiceTextarea
-            id="resume-text"
-            v-model="form.resumeText"
-            :rows="5"
-            :placeholder="t('interview.new.placeholders.resumeText')"
-          />
+
+        <div class="resume-content-stack">
+          <section
+            class="resume-preview"
+            :class="{ 'resume-preview--empty': !resumePreviewBlocks.length }"
+          >
+            <div class="resume-preview__head">
+              <div>
+                <span>{{ t('interview.new.resume.previewKicker') }}</span>
+                <strong>{{ t('interview.new.resume.previewTitle') }}</strong>
+              </div>
+              <small>{{ resumePreviewMeta }}</small>
+            </div>
+
+            <div v-if="resumePreviewBlocks.length" class="resume-preview__body">
+              <template v-for="block in resumePreviewBlocks" :key="block.id">
+                <h3 v-if="block.type === 'heading'" class="resume-preview__heading">
+                  {{ block.text }}
+                </h3>
+                <ul v-else-if="block.type === 'list'" class="resume-preview__list">
+                  <li v-for="item in block.items" :key="item">{{ item }}</li>
+                </ul>
+                <p v-else class="resume-preview__paragraph">{{ block.text }}</p>
+              </template>
+            </div>
+
+            <div v-else class="resume-preview__empty">
+              <strong>{{ t('interview.new.resume.previewEmptyTitle') }}</strong>
+              <p>{{ t('interview.new.resume.previewEmptyHint') }}</p>
+            </div>
+          </section>
+
+          <div class="field">
+            <label for="resume-notes">{{ t('interview.new.resume.notes') }}</label>
+            <VoiceTextarea
+              id="resume-notes"
+              v-model="form.resumeNotes"
+              :rows="4"
+              :placeholder="t('interview.new.placeholders.resumeText')"
+            />
+          </div>
         </div>
       </div>
     </section>
@@ -1128,6 +1351,102 @@
     align-items: start;
   }
 
+  .question-options {
+    display: grid;
+    gap: 12px;
+  }
+
+  .toggle-option,
+  .question-mode-note {
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-sm);
+    background: var(--surface-soft);
+    padding: 14px;
+  }
+
+  .toggle-option {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 12px;
+    align-items: center;
+    cursor: pointer;
+  }
+
+  .toggle-option input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+  }
+
+  .toggle-switch {
+    position: relative;
+    width: 46px;
+    height: 26px;
+    border: 1px solid var(--glass-border-strong);
+    border-radius: 999px;
+    background: var(--surface-raised);
+    transition:
+      background var(--motion-normal) var(--ease-out),
+      border-color var(--motion-normal) var(--ease-out);
+  }
+
+  .toggle-switch::after {
+    content: '';
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 18px;
+    height: 18px;
+    border-radius: 999px;
+    background: var(--text-muted);
+    transition:
+      transform var(--motion-normal) var(--ease-out),
+      background var(--motion-normal) var(--ease-out);
+  }
+
+  .toggle-option input:checked + .toggle-switch {
+    border-color: color-mix(in srgb, var(--accent) 55%, var(--glass-border));
+    background: color-mix(in srgb, var(--accent) 22%, var(--surface-raised));
+  }
+
+  .toggle-option input:checked + .toggle-switch::after {
+    background: var(--accent-2);
+    transform: translateX(20px);
+  }
+
+  .toggle-option input:focus-visible + .toggle-switch {
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--focus-ring) 18%, transparent);
+  }
+
+  .toggle-copy,
+  .question-mode-note {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+  }
+
+  .toggle-copy strong,
+  .question-mode-note strong {
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 900;
+  }
+
+  .toggle-copy small,
+  .question-mode-note span,
+  .file-note {
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.4;
+  }
+
+  .file-note {
+    margin: 0;
+  }
+
   .goal-grid {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1204,9 +1523,134 @@
     grid-template-columns: minmax(220px, 0.8fr) minmax(0, 1.2fr);
   }
 
+  .resume-content-stack {
+    display: grid;
+    gap: 14px;
+    min-width: 0;
+  }
+
+  .resume-preview {
+    overflow: hidden;
+    min-height: 244px;
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-control);
+    background: linear-gradient(
+      145deg,
+      color-mix(in srgb, var(--surface-raised) 86%, transparent),
+      color-mix(in srgb, var(--accent) 8%, var(--surface-soft))
+    );
+    box-shadow: inset 0 1px 0 var(--inner-highlight);
+  }
+
+  .resume-preview__head {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: flex-start;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--glass-border);
+  }
+
+  .resume-preview__head div {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+  }
+
+  .resume-preview__head span {
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 900;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+
+  .resume-preview__head strong {
+    color: var(--text-primary);
+    font-size: 15px;
+    font-weight: 900;
+  }
+
+  .resume-preview__head small {
+    flex: 0 0 auto;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 800;
+    line-height: 1.4;
+    text-align: right;
+  }
+
+  .resume-preview__body {
+    display: grid;
+    gap: 10px;
+    max-height: 294px;
+    overflow-y: auto;
+    padding: 16px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--glass-border-strong) transparent;
+  }
+
+  .resume-preview__heading {
+    margin-top: 6px;
+    color: var(--accent-2);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+  }
+
+  .resume-preview__heading:first-child {
+    margin-top: 0;
+  }
+
+  .resume-preview__paragraph,
+  .resume-preview__list {
+    color: var(--text-secondary);
+    font-size: 13px;
+    line-height: 1.55;
+  }
+
+  .resume-preview__paragraph {
+    margin: 0;
+  }
+
+  .resume-preview__list {
+    display: grid;
+    gap: 6px;
+    margin: 0;
+    padding-left: 18px;
+  }
+
+  .resume-preview__empty {
+    display: grid;
+    gap: 8px;
+    align-content: center;
+    min-height: 178px;
+    padding: 20px 16px;
+  }
+
+  .resume-preview__empty strong {
+    color: var(--text-primary);
+    font-size: 15px;
+    font-weight: 900;
+  }
+
+  .resume-preview__empty p {
+    max-width: 48ch;
+    color: var(--text-muted);
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
   .file-upload {
     position: relative;
     min-height: 132px;
+  }
+
+  .file-upload--compact {
+    min-height: 112px;
   }
 
   .file-input {
@@ -1239,6 +1683,10 @@
       background var(--motion-normal) var(--ease-out),
       box-shadow var(--motion-normal) var(--ease-out),
       transform var(--motion-normal) var(--ease-out);
+  }
+
+  .file-drop--compact {
+    min-height: 112px;
   }
 
   .file-input:focus-visible + .file-drop,

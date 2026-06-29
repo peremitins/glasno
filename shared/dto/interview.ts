@@ -150,6 +150,12 @@ export const ResumeExtractResponseDto = z.object({
   mimeType: z.string().nullable(),
 });
 
+export const QuestionInputExtractResponseDto = z.object({
+  text: z.string(),
+  fileName: z.string().nullable(),
+  mimeType: z.string().nullable(),
+});
+
 export type InterviewSourceType = z.infer<typeof InterviewSourceTypeDto>;
 export type InterviewLevel = z.infer<typeof InterviewLevelDto>;
 export type InterviewerMode = z.infer<typeof InterviewerModeDto>;
@@ -182,3 +188,6 @@ export type InterviewSession = z.infer<typeof InterviewSessionDto>;
 export type InterviewTurn = z.infer<typeof InterviewTurnDto>;
 export type InterviewStateResponse = z.infer<typeof InterviewStateResponseDto>;
 export type ResumeExtractResponse = z.infer<typeof ResumeExtractResponseDto>;
+export type QuestionInputExtractResponse = z.infer<
+  typeof QuestionInputExtractResponseDto
+>;
