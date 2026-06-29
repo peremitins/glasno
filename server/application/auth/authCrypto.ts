@@ -1,0 +1,88 @@
+import {
+  createHash,
+  createHmac,
+  randomBytes,
+  randomInt,
+  timingSafeEqual,
+} from 'node:crypto';
+
+export interface TelegramLoginPayload {
+  id: string | number;
+  first_name?: string;
+  last_name?: string;
+  username?: string;
+  photo_url?: string;
+  auth_date: string | number;
+  hash: string;
+}
+
+export function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
+
+export function hashEmail(email: string, pepper: string): string {
+  return hmacHex(pepper, normalizeEmail(email));
+}
+
+export function hashEmailCode(
+  normalizedEmail: string,
+  code: string,
+  secret: string
+): string {
+  return hmacHex(secret, `${normalizeEmail(normalizedEmail)}:${code.trim()}`);
+}
+
+export function hashOpaqueToken(token: string): string {
+  return createHash('sha256').update(token).digest('hex');
+}
+
+export function createOpaqueToken(bytes = 32): string {
+  return randomBytes(bytes).toString('base64url');
+}
+
+export function generateNumericCode(length = 6): string {
+  let code = '';
+  for (let index = 0; index < length; index += 1) {
+    code += String(randomInt(0, 10));
+  }
+  return code;
+}
+
+export function hmacHex(secret: string, value: string): string {
+  return createHmac('sha256', secret).update(value).digest('hex');
+}
+
+export function safeEqual(left: string, right: string): boolean {
+  const a = Buffer.from(left);
+  const b = Buffer.from(right);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+export function verifyTelegramLoginPayload(
+  payload: TelegramLoginPayload,
+  botToken: string,
+  options: { nowSeconds?: number; maxAgeSeconds?: number } = {}
+): boolean {
+  if (!botToken || !payload.hash) return false;
+
+  const authDate = Number(payload.auth_date);
+  if (!Number.isFinite(authDate) || authDate <= 0) return false;
+
+  const nowSeconds = options.nowSeconds ?? Math.floor(Date.now() / 1000);
+  const maxAgeSeconds = options.maxAgeSeconds ?? 60 * 60 * 24;
+  if (nowSeconds - authDate > maxAgeSeconds) return false;
+
+  const dataCheckString = Object.entries(payload)
+    .filter(([key, value]) => key !== 'hash' && value !== undefined && value !== null)
+    .map(([key, value]) => [key, String(value)] as const)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => `${key}=${value}`)
+    .join('\n');
+
+  const secret = createHash('sha256').update(botToken).digest();
+  const expected = createHmac('sha256', secret)
+    .update(dataCheckString)
+    .digest('hex');
+
+  return safeEqual(expected, payload.hash);
+}

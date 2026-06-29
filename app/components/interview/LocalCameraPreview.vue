@@ -1,0 +1,136 @@
+<script setup lang="ts">
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
+
+// Камера полностью управляется родителем через prop `active`.
+// Своей кнопки у компонента нет — единственный переключатель живёт
+// в нижнем доке экрана собеседования (как в Zoom/Телемост).
+const props = defineProps<{ active?: boolean }>();
+
+const { t } = useI18n();
+
+const videoRef = ref<HTMLVideoElement | null>(null);
+const stream = ref<MediaStream | null>(null);
+const errorMessage = ref('');
+const isStarting = ref(false);
+
+const isActive = computed(() => Boolean(stream.value));
+
+async function startCamera() {
+  if (!import.meta.client || isActive.value || isStarting.value) return;
+  if (!navigator.mediaDevices?.getUserMedia) {
+    errorMessage.value = t('camera.unsupported');
+    return;
+  }
+
+  isStarting.value = true;
+  errorMessage.value = '';
+  try {
+    const nextStream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: 'user',
+        width: { ideal: 960 },
+        height: { ideal: 540 },
+      },
+      audio: false,
+    });
+    stream.value = nextStream;
+    if (videoRef.value) {
+      videoRef.value.srcObject = nextStream;
+      await videoRef.value.play();
+    }
+  } catch {
+    errorMessage.value = t('camera.blocked');
+  } finally {
+    isStarting.value = false;
+  }
+}
+
+function stopCamera() {
+  stream.value?.getTracks().forEach((track) => track.stop());
+  stream.value = null;
+  if (videoRef.value) {
+    videoRef.value.srcObject = null;
+  }
+}
+
+// Запуск/остановка потока следуют за prop `active`.
+watch(
+  () => props.active,
+  (active) => {
+    if (active) void startCamera();
+    else stopCamera();
+  }
+);
+
+onMounted(() => {
+  if (props.active) void startCamera();
+});
+
+onBeforeUnmount(stopCamera);
+</script>
+
+<template>
+  <div class="camera" :class="{ 'camera--active': isActive }">
+    <video
+      ref="videoRef"
+      class="video"
+      autoplay
+      playsinline
+      muted
+      aria-label="local camera"
+    />
+    <div v-if="!isActive" class="placeholder">
+      <span class="dot" aria-hidden="true"></span>
+      <span>{{ errorMessage || t('camera.idle') }}</span>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.camera {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: #0c1022;
+}
+
+.video,
+.placeholder {
+  position: absolute;
+  inset: 0;
+}
+
+.video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  /* Зеркалим себя, как делают все видеозвонки. */
+  transform: scaleX(-1);
+  opacity: 0;
+}
+
+.camera--active .video {
+  opacity: 1;
+}
+
+.placeholder {
+  display: grid;
+  place-items: center;
+  gap: 10px;
+  align-content: center;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 13px;
+  text-align: center;
+  padding: 14px;
+}
+
+.dot {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0.04)),
+    #273142;
+}
+</style>

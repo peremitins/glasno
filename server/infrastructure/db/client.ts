@@ -6,9 +6,20 @@ import * as schema from './schema';
 // (NUXT_DATABASE_URL). Отдельная база jobai, не общая с Mentala.
 let pool: Pool | null = null;
 
+function resolveDatabaseUrl(): string {
+  // В Nitro берём из runtimeConfig; в standalone-скриптах (tsx) — из env.
+  try {
+    const url = useRuntimeConfig().databaseUrl as string;
+    if (url) return url;
+  } catch {
+    // useRuntimeConfig недоступен вне Nuxt — ок, идём в env
+  }
+  return process.env.NUXT_DATABASE_URL || '';
+}
+
 export function getDb() {
   if (!pool) {
-    const url = useRuntimeConfig().databaseUrl;
+    const url = resolveDatabaseUrl();
     if (!url) {
       throw new Error('NUXT_DATABASE_URL is not set');
     }
