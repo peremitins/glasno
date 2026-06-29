@@ -4,6 +4,7 @@ import type {
   EvaluateAnswerParams,
   GenerateQuestionParams,
   InterviewEngine,
+  NormalizeCustomQuestionsParams,
 } from '@/server/interface/interviewEngine';
 import type {
   InterviewSessionRecord,
@@ -108,6 +109,42 @@ export class OpenAiInterviewEngine implements InterviewEngine {
     }
   ) {}
 
+  async normalizeCustomQuestions(
+    params: NormalizeCustomQuestionsParams
+  ): Promise<{ questions: string[] }> {
+    const raw = await this.requestJson({
+      instruction:
+        'Ты редактор плана интервью JobAI. Из пользовательского текста выдели только вопросы для тренировки собеседования. ' +
+        'Убери дубли, мусор, комментарии и слишком общие повторы. Если фраза является просьбой вроде "спроси про конфликт", преврати её в естественный вопрос интервьюера. ' +
+        'Не добавляй свои новые темы, если их нет в исходном тексте. Верни строго JSON вида {"questions":["..."]}.',
+      userText: [
+        `Роль: ${params.role || 'не указана'}`,
+        `Уровень: ${params.level || 'middle'}`,
+        `Вакансия: ${params.vacancyTitle || 'не указана'}`,
+        `Описание вакансии: ${params.vacancyRaw || 'нет'}`,
+        `Резюме кандидата: ${params.resumeText || 'нет'}`,
+        `Режим источника вопросов: ${params.questionSourceMode || 'mixed'}`,
+        '',
+        `Пользовательский текст:\n${params.rawText}`,
+      ].join('\n'),
+      maxOutputTokens: 700,
+      kind: 'custom_question_normalize',
+      context: {
+        userId: params.userId ?? null,
+        anonymousSessionId: params.anonymousSessionId,
+        interviewSessionId: null,
+      },
+    });
+
+    const questions = Array.isArray(raw.questions)
+      ? raw.questions
+          .map((item) => (typeof item === 'string' ? item.trim() : ''))
+          .filter(Boolean)
+      : [];
+
+    return { questions };
+  }
+
   async generateQuestion(
     params: GenerateQuestionParams
   ): Promise<{ question: string }> {
@@ -158,7 +195,7 @@ export class OpenAiInterviewEngine implements InterviewEngine {
     context: {
       userId: string | null;
       anonymousSessionId: string;
-      interviewSessionId: string;
+      interviewSessionId: string | null;
     };
   }): Promise<Record<string, any>> {
     if (!this.options.apiKey) {
