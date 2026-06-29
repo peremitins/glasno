@@ -1,0 +1,26 @@
+# nuxt
+.nuxt
+.output
+.data
+dist
+
+# deps
+node_modules
+
+# env / secrets
+.env
+.env.*
+!.env.example
+
+# logs / os
+*.log
+.DS_Store
+
+# editor
+.vscode/*
+!.vscode/extensions.json
+.idea
+
+# секреты агентов (могут содержать ключи/пароли)
+.cursor/mcp.json
+.claude/settings.local.json

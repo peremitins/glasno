@@ -1,0 +1,25 @@
+@import 'tailwindcss';
+
+/* Базовые токены проекта. Расширим при подключении shadcn-vue/reka-ui. */
+:root {
+  --font-sans: 'Nunito', system-ui, -apple-system, sans-serif;
+  --color-bg: #f7f8fa;
+  --color-surface: #ffffff;
+  --color-text: #1a1d23;
+  --color-muted: #6b7280;
+  --color-accent: #2f6bff;
+  --color-border: #e6e8ec;
+  --radius: 12px;
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+}
+
+* {
+  box-sizing: border-box;
+}
