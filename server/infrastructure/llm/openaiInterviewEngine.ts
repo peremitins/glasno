@@ -1,6 +1,8 @@
 import { $fetch } from 'ofetch';
+import OpenAI from 'openai';
 import { apiError } from '@/server/utils/errors';
 import type {
+  ConverseParams,
   EvaluateAnswerParams,
   GenerateQuestionParams,
   InterviewEngine,
@@ -11,6 +13,11 @@ import type {
   InterviewTurnRecord,
 } from '@/server/interface/interviewRepository';
 import type { RecordAiUsageInput } from '@/server/application/aiUsage/aiUsageService';
+import {
+  buildInterviewerGenderInstruction,
+  getInterviewerGender,
+} from '@/shared/interviewerVoice';
+import type { InterviewerFaceId } from '@/shared/dto';
 
 // Извлекает usage из ответа Responses API в наши поля.
 export function extractUsageAmounts(response: any): {
@@ -85,17 +92,86 @@ function formatTurns(turns: InterviewTurnRecord[]): string {
 }
 
 function sessionContext(params: GenerateQuestionParams | EvaluateAnswerParams) {
-  const { session } = params;
+  return sessionContextForConverse(params.session);
+}
+
+function sessionContextForConverse(session: InterviewSessionRecord) {
   return [
     `Роль: ${session.role || 'не указана'}`,
     `Уровень: ${session.level || 'middle'}`,
     `Режим интервьюера: ${session.interviewerMode}`,
+    buildInterviewerGenderInstruction(
+      getInterviewerGender(readInterviewerFaceId(session))
+    ),
     `Язык: ${session.language}`,
     `Компания: ${session.companyName || 'не указана'}`,
     `Вакансия: ${session.vacancyTitle || 'не указана'}`,
     `Описание вакансии: ${session.vacancyRaw || 'нет'}`,
     `Резюме кандидата: ${session.resumeRaw || 'нет'}`,
   ].join('\n');
+}
+
+function readInterviewerFaceId(
+  session: InterviewSessionRecord
+): InterviewerFaceId | null {
+  const value = session.metadata?.interviewerFaceId;
+  return typeof value === 'string' ? (value as InterviewerFaceId) : null;
+}
+
+// Текст диалога по текущему вопросу для промпта converse/converseStream.
+function formatConverseDialogue(params: ConverseParams): string {
+  return params.dialogue.length
+    ? params.dialogue
+        .map(
+          (message) =>
+            `${message.role === 'user' ? 'Кандидат' : 'Интервьюер'}: ${message.content}`
+        )
+        .join('\n')
+    : 'Кандидат ещё ничего не сказал.';
+}
+
+function converseUserText(params: ConverseParams): string {
+  return [
+    sessionContextForConverse(params.session),
+    '',
+    `Текущий вопрос: ${params.turn.question}`,
+    `Реплик кандидата по этому вопросу: ${params.exchanges}`,
+    '',
+    `Диалог по текущему вопросу:\n${formatConverseDialogue(params)}`,
+  ].join('\n');
+}
+
+// Общая часть инструкции интервьюера (без формата вывода).
+const CONVERSE_RULES =
+  'Ты — интервьюер JobAI, ведёшь живое собеседование голосом и текстом. Веди диалог по ТЕКУЩЕМУ вопросу как живой человек. ' +
+  'Реагируй кратко (1–3 предложения), по-русски, в роли интервьюера. ' +
+  'Строго соблюдай указанный пол интервьюера и грамматический род в репликах от своего лица. ' +
+  'Если кандидат не понял вопрос или просит пояснить — переформулируй вопрос проще, другими словами, приведи пример того, что тебя интересует. ' +
+  'Можно задать короткий уточняющий вопрос по ответу. ' +
+  'СТРОГО запрещено: отвечать ВМЕСТО кандидата, подсказывать готовый ответ, решать задачу за него — ты проверяешь кандидата, а не учишь. ' +
+  'НЕ переходи к следующему вопросу из плана сам и не меняй тему. ' +
+  'Решение о переходе принимает пользователь — ты только предлагаешь.';
+
+const CONVERSE_MOVE_ON_RULE =
+  'Если кандидат ответил достаточно полно, либо по этому вопросу уже было много реплик, либо он явно «плавает» и продолжать смысла нет — предложи перейти к следующему вопросу (например: «Хорошо, здесь всё понятно. Готовы перейти к следующему вопросу?»).';
+
+const NEXT_MARKER = '<<<NEXT>>>';
+const STAY_MARKER = '<<<STAY>>>';
+// Запас в хвосте стрима, чтобы маркер перехода никогда не «утёк» в чат,
+// даже если разрезан между чанками.
+const MARKER_GUARD = 24;
+
+// Отрезает завершающий маркер перехода и хвостовые пробелы, сохраняя
+// начало текста без изменений (важно для корректного склеивания чанков).
+function splitMoveOnMarker(text: string): {
+  clean: string;
+  suggestMoveOn: boolean;
+} {
+  const markerMatch = text.match(/<<<\s*(NEXT|STAY)\s*>>>/i);
+  const suggestMoveOn = /<<<\s*NEXT\s*>>>/i.test(text);
+  const cut = markerMatch?.index ?? -1;
+  const clean = (cut >= 0 ? text.slice(0, cut) : text).replace(/\s+$/, '');
+  return { clean, suggestMoveOn };
 }
 
 export class OpenAiInterviewEngine implements InterviewEngine {
@@ -185,6 +261,133 @@ export class OpenAiInterviewEngine implements InterviewEngine {
       question: typeof raw.question === 'string' ? raw.question.trim() : undefined,
       reason: typeof raw.reason === 'string' ? raw.reason : undefined,
     };
+  }
+
+  async converse(params: ConverseParams): Promise<{
+    reply: string;
+    suggestMoveOn: boolean;
+  }> {
+    const raw = await this.requestJson({
+      instruction:
+        `${CONVERSE_RULES} ` +
+        `${CONVERSE_MOVE_ON_RULE} ` +
+        'Если предлагаешь перейти дальше — поставь suggestMoveOn=true, иначе false. ' +
+        'Верни строго JSON вида {"reply":"...","suggestMoveOn":true|false}.',
+      userText: converseUserText(params),
+      maxOutputTokens: 320,
+      kind: 'interview_converse',
+      context: usageContext(params.session),
+    });
+
+    const reply = typeof raw.reply === 'string' ? raw.reply.trim() : '';
+    if (!reply) {
+      throw apiError('E_UPSTREAM', 'OpenAI не вернул ответ интервьюера');
+    }
+    return {
+      reply,
+      suggestMoveOn: Boolean(raw.suggestMoveOn),
+    };
+  }
+
+  async *converseStream(
+    params: ConverseParams
+  ): AsyncGenerator<string, { suggestMoveOn: boolean }, void> {
+    if (!this.options.apiKey) {
+      throw apiError('E_UPSTREAM', 'NUXT_OPENAI_API_KEY не задан');
+    }
+
+    const instruction =
+      `${CONVERSE_RULES} ` +
+      `${CONVERSE_MOVE_ON_RULE} ` +
+      'Сначала выдай ТОЛЬКО текст реплики интервьюера (без префиксов и кавычек). ' +
+      `В самом конце на отдельной строке поставь ровно один служебный маркер: «${NEXT_MARKER}» — если предлагаешь перейти к следующему вопросу, иначе «${STAY_MARKER}». ` +
+      'Маркер — последнее, что ты выводишь; ничего после него не пиши.';
+
+    const model = this.options.model || DEFAULT_MODEL;
+    const client = new OpenAI({
+      apiKey: this.options.apiKey,
+      ...(this.options.organization
+        ? { organization: this.options.organization }
+        : {}),
+      ...(this.options.project ? { project: this.options.project } : {}),
+    });
+
+    const startedAt = Date.now();
+    let full = '';
+    let emitted = 0;
+    let completedResponse: any = null;
+
+    try {
+      const stream = await client.responses.create({
+        model,
+        max_output_tokens: 380,
+        stream: true,
+        input: [
+          {
+            role: 'developer',
+            content: [{ type: 'input_text', text: instruction }],
+          },
+          {
+            role: 'user',
+            content: [{ type: 'input_text', text: converseUserText(params) }],
+          },
+        ],
+      } as any);
+
+      for await (const ev of stream as any) {
+        if (ev?.type === 'response.output_text.delta' && typeof ev.delta === 'string') {
+          full += ev.delta;
+          // Не выпускаем последние MARKER_GUARD символов — там может быть маркер.
+          const safeLen = full.length - MARKER_GUARD;
+          if (safeLen > emitted) {
+            yield full.slice(emitted, safeLen);
+            emitted = safeLen;
+          }
+        } else if (
+          ev?.type === 'response.completed' ||
+          ev?.type === 'response.done'
+        ) {
+          completedResponse =
+            ev?.response && typeof ev.response === 'object' ? ev.response : null;
+        } else if (ev?.type === 'response.error') {
+          throw apiError(
+            'E_UPSTREAM',
+            ev?.error?.message || 'OpenAI Realtime stream error'
+          );
+        }
+      }
+    } catch (err) {
+      if (err && typeof err === 'object' && 'data' in err) throw err;
+      throw apiError('E_UPSTREAM', 'OpenAI не смог сгенерировать ответ интервьюера', {
+        cause: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    const { clean, suggestMoveOn } = splitMoveOnMarker(full);
+    if (!clean) {
+      throw apiError('E_UPSTREAM', 'OpenAI вернул пустой ответ интервьюера');
+    }
+    if (clean.length > emitted) {
+      yield clean.slice(emitted);
+      emitted = clean.length;
+    }
+
+    if (this.options.recordUsage && completedResponse) {
+      const usage = extractUsageAmounts(completedResponse);
+      this.options.recordUsage({
+        ...usageContext(params.session),
+        kind: 'interview_converse_stream',
+        model,
+        ...usage,
+        latencyMs: Date.now() - startedAt,
+        requestId:
+          typeof completedResponse?.id === 'string'
+            ? completedResponse.id
+            : null,
+      });
+    }
+
+    return { suggestMoveOn };
   }
 
   private async requestJson(params: {

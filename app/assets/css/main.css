@@ -12,7 +12,8 @@
 }
 
 :root {
-  --font-manrope: 'Manrope', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-manrope: 'Manrope', system-ui, -apple-system, BlinkMacSystemFont,
+    'Segoe UI', sans-serif;
   --font-space: 'Space Grotesk', 'Manrope', system-ui, sans-serif;
   --font-jetbrains: 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace;
   --font-ui: var(--font-manrope);
@@ -44,7 +45,11 @@
   --surface: rgba(16, 20, 43, 0.58);
   --surface-soft: rgba(255, 255, 255, 0.075);
   --surface-raised: rgba(255, 255, 255, 0.13);
-  --surface-glare: linear-gradient(180deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.035));
+  --surface-glare: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.12),
+    rgba(255, 255, 255, 0.035)
+  );
   --button-icon-bg: rgba(255, 255, 255, 0.16);
   --surface-solid: #11162c;
   --glass-border: rgba(255, 255, 255, 0.14);
@@ -57,14 +62,32 @@
   --text-muted: rgba(219, 224, 247, 0.55);
   --focus-ring: rgba(124, 92, 255, 0.62);
   --button-bg: linear-gradient(135deg, #5f7cff 0%, #8a5cff 58%, #b75cff 100%);
-  --button-bg-hover: linear-gradient(135deg, #6d88ff 0%, #976bff 58%, #c472ff 100%);
+  --button-bg-hover: linear-gradient(
+    135deg,
+    #6d88ff 0%,
+    #976bff 58%,
+    #c472ff 100%
+  );
   --button-text: var(--on-accent);
   --button-shadow: 0 18px 42px rgba(96, 79, 255, 0.34);
   --shadow-soft: 0 24px 80px rgba(0, 0, 0, 0.42);
-  --shadow-panel: 0 20px 60px rgba(0, 0, 0, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.12);
-  --ambient-primary: radial-gradient(circle, rgba(124, 92, 255, 0.38), rgba(124, 92, 255, 0) 68%);
-  --ambient-secondary: radial-gradient(circle, rgba(72, 215, 255, 0.24), rgba(72, 215, 255, 0) 68%);
-  --ambient-tertiary: radial-gradient(circle, rgba(255, 126, 205, 0.16), rgba(255, 126, 205, 0) 72%);
+  --shadow-panel: 0 20px 60px rgba(0, 0, 0, 0.32),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  --ambient-primary: radial-gradient(
+    circle,
+    rgba(124, 92, 255, 0.38),
+    rgba(124, 92, 255, 0) 68%
+  );
+  --ambient-secondary: radial-gradient(
+    circle,
+    rgba(72, 215, 255, 0.24),
+    rgba(72, 215, 255, 0) 68%
+  );
+  --ambient-tertiary: radial-gradient(
+    circle,
+    rgba(255, 126, 205, 0.16),
+    rgba(255, 126, 205, 0) 72%
+  );
   --page-grid: rgba(255, 255, 255, 0.038);
 
   /* Совместимость со старым слоем страниц. */
@@ -97,7 +120,11 @@ html[data-theme='light'] {
   --surface: rgba(255, 255, 255, 0.62);
   --surface-soft: rgba(255, 255, 255, 0.58);
   --surface-raised: rgba(255, 255, 255, 0.82);
-  --surface-glare: linear-gradient(180deg, rgba(255, 255, 255, 0.7), rgba(255, 255, 255, 0.2));
+  --surface-glare: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.7),
+    rgba(255, 255, 255, 0.2)
+  );
   --button-icon-bg: rgba(255, 255, 255, 0.18);
   --surface-solid: #ffffff;
   --glass-border: rgba(82, 93, 142, 0.16);
@@ -109,13 +136,31 @@ html[data-theme='light'] {
   --text-muted: rgba(59, 65, 101, 0.58);
   --focus-ring: rgba(111, 83, 244, 0.46);
   --button-bg: linear-gradient(135deg, #536eff 0%, #795cff 58%, #a85cff 100%);
-  --button-bg-hover: linear-gradient(135deg, #4663f7 0%, #6b4cf0 58%, #9a50ef 100%);
+  --button-bg-hover: linear-gradient(
+    135deg,
+    #4663f7 0%,
+    #6b4cf0 58%,
+    #9a50ef 100%
+  );
   --button-shadow: 0 18px 44px rgba(96, 79, 255, 0.26);
   --shadow-soft: 0 24px 80px rgba(82, 91, 142, 0.18);
-  --shadow-panel: 0 20px 60px rgba(82, 91, 142, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.78);
-  --ambient-primary: radial-gradient(circle, rgba(124, 92, 255, 0.24), rgba(124, 92, 255, 0) 68%);
-  --ambient-secondary: radial-gradient(circle, rgba(72, 215, 255, 0.2), rgba(72, 215, 255, 0) 68%);
-  --ambient-tertiary: radial-gradient(circle, rgba(255, 161, 205, 0.18), rgba(255, 161, 205, 0) 72%);
+  --shadow-panel: 0 20px 60px rgba(82, 91, 142, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.78);
+  --ambient-primary: radial-gradient(
+    circle,
+    rgba(124, 92, 255, 0.24),
+    rgba(124, 92, 255, 0) 68%
+  );
+  --ambient-secondary: radial-gradient(
+    circle,
+    rgba(72, 215, 255, 0.2),
+    rgba(72, 215, 255, 0) 68%
+  );
+  --ambient-tertiary: radial-gradient(
+    circle,
+    rgba(255, 161, 205, 0.18),
+    rgba(255, 161, 205, 0) 72%
+  );
   --page-grid: rgba(77, 88, 132, 0.052);
 
   --background: 224 100% 98%;
@@ -165,10 +210,7 @@ body {
   background: var(--color-bg);
   color: var(--color-text);
   font-family: var(--font-ui);
-  font-feature-settings:
-    'liga' 1,
-    'calt' 1,
-    'tnum' 1;
+  font-feature-settings: 'liga' 1, 'calt' 1, 'tnum' 1;
   overflow-x: hidden;
 }
 
@@ -178,8 +220,10 @@ body::before {
   inset: 0;
   z-index: -2;
   pointer-events: none;
-  background:
-    linear-gradient(rgba(var(--app-bg-rgb) / 0.06) 1px, transparent 1px),
+  background: linear-gradient(
+      rgba(var(--app-bg-rgb) / 0.06) 1px,
+      transparent 1px
+    ),
     linear-gradient(90deg, rgba(var(--app-bg-rgb) / 0.06) 1px, transparent 1px),
     var(--app-bg);
   background-size: 42px 42px, 42px 42px, auto;
@@ -192,8 +236,7 @@ body::after {
   z-index: -1;
   pointer-events: none;
   opacity: 0.42;
-  background:
-    linear-gradient(var(--page-grid) 1px, transparent 1px),
+  background: linear-gradient(var(--page-grid) 1px, transparent 1px),
     linear-gradient(90deg, var(--page-grid) 1px, transparent 1px);
   background-size: 72px 72px;
   mask-image: radial-gradient(circle at 50% 18%, black, transparent 72%);
@@ -203,6 +246,51 @@ body::after {
 *::before,
 *::after {
   box-sizing: border-box;
+}
+
+/* Стилизация скроллбара для всего приложения */
+* {
+  /* Firefox */
+  scrollbar-width: thin;
+  scrollbar-color: var(--accent) transparent;
+}
+
+/* Webkit браузеры (Chrome, Safari, Edge) */
+*::-webkit-scrollbar {
+  width: 2px;
+  height: 2px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+  border-radius: 10px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--accent);
+  border-radius: 10px;
+  transition: background 0.2s ease;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--accent);
+}
+
+*::-webkit-scrollbar-thumb:active {
+  background: var(--accent);
+}
+
+/* Скроллбар для темной темы (единственный режим) */
+*::-webkit-scrollbar-thumb {
+  background: var(--accent);
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--accent);
+}
+
+*::-webkit-scrollbar-thumb:active {
+  background: var(--accent);
 }
 
 ::selection {
@@ -306,14 +394,12 @@ a {
   overflow: hidden;
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-lg);
-  background:
-    linear-gradient(
+  background: linear-gradient(
       135deg,
       color-mix(in srgb, var(--accent) 9%, transparent),
       color-mix(in srgb, var(--accent-2) 9%, transparent)
     ),
-    var(--surface-glare),
-    var(--surface);
+    var(--surface-glare), var(--surface);
   box-shadow: var(--shadow-panel);
   backdrop-filter: blur(20px) saturate(175%);
   -webkit-backdrop-filter: blur(20px) saturate(175%);
@@ -336,9 +422,7 @@ a {
     transparent 208deg,
     transparent 360deg
   );
-  mask:
-    linear-gradient(#000 0 0) content-box,
-    linear-gradient(#000 0 0);
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   mask-composite: exclude;
   opacity: 0.92;
   animation: glass-border-flow 8s linear infinite;
@@ -354,8 +438,7 @@ a {
 }
 
 .glass-frame--interactive {
-  transition:
-    transform var(--motion-normal) var(--ease-out),
+  transition: transform var(--motion-normal) var(--ease-out),
     border-color var(--motion-normal) var(--ease-out),
     box-shadow var(--motion-normal) var(--ease-out),
     background var(--motion-normal) var(--ease-out);
@@ -372,8 +455,7 @@ a {
   border-radius: var(--radius-control);
   background: var(--surface-soft);
   color: var(--text-primary);
-  transition:
-    transform var(--motion-fast) var(--ease-out),
+  transition: transform var(--motion-fast) var(--ease-out),
     background var(--motion-normal) var(--ease-out),
     border-color var(--motion-normal) var(--ease-out),
     box-shadow var(--motion-normal) var(--ease-out);
@@ -408,8 +490,7 @@ a {
   cursor: pointer;
   font-weight: 800;
   text-decoration: none;
-  transition:
-    transform var(--motion-normal) var(--ease-out),
+  transition: transform var(--motion-normal) var(--ease-out),
     box-shadow var(--motion-normal) var(--ease-out),
     filter var(--motion-normal) var(--ease-out);
 }

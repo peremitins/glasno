@@ -1,6 +1,9 @@
 import type { InterviewReport } from '@/shared/dto';
 import { apiError } from '@/server/utils/errors';
-import type { InterviewRepository } from '@/server/interface/interviewRepository';
+import type {
+  InterviewRepository,
+  InterviewTurnRecord,
+} from '@/server/interface/interviewRepository';
 import type { ReportEngine } from '@/server/interface/reportEngine';
 import type {
   ReportRecord,
@@ -42,7 +45,9 @@ export class ReportService {
     await this.deps.reportRepository.markProcessing(report.id);
 
     try {
-      const turns = await this.deps.interviewRepository.listTurns(session.id);
+      const turns = withDialogueAnswerFallback(
+        await this.deps.interviewRepository.listTurns(session.id)
+      );
       const answeredMainTurns = turns.filter(
         (turn) => turn.kind === 'main' && turn.answerTranscript
       );
@@ -110,6 +115,33 @@ export class ReportService {
     }
     return session;
   }
+}
+
+function withDialogueAnswerFallback(
+  turns: InterviewTurnRecord[]
+): InterviewTurnRecord[] {
+  return turns.map((turn) => {
+    if (turn.answerTranscript || turn.kind !== 'main') return turn;
+    const answer = extractUserDialogueAnswer(turn.metadata);
+    return answer ? { ...turn, answerTranscript: answer } : turn;
+  });
+}
+
+function extractUserDialogueAnswer(metadata: unknown): string {
+  if (!metadata || typeof metadata !== 'object') return '';
+  const dialogue = (metadata as { dialogue?: unknown }).dialogue;
+  if (!Array.isArray(dialogue)) return '';
+
+  return dialogue
+    .map((item) => {
+      if (!item || typeof item !== 'object') return '';
+      const raw = item as { role?: unknown; content?: unknown };
+      if (raw.role !== 'user') return '';
+      return typeof raw.content === 'string' ? raw.content.trim() : '';
+    })
+    .filter(Boolean)
+    .join('\n')
+    .trim();
 }
 
 function toIso(value: Date | string): string {

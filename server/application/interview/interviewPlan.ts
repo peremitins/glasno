@@ -1,6 +1,7 @@
 import type {
   CreateInterviewSessionRequest,
   InterviewSessionGoal,
+  InterviewerFaceId,
   InterviewHintMode,
   InterviewPlan,
   InterviewPlanItem,
@@ -11,6 +12,10 @@ import type {
   RealtimeSessionLimits,
 } from '@/shared/dto';
 import type { InterviewTurnRecord } from '@/server/interface/interviewRepository';
+import {
+  defaultFaceForMode,
+  isInterviewerFaceId,
+} from '@/server/application/interview/interviewerFace';
 
 export interface InterviewSessionMetadata {
   sessionGoal: InterviewSessionGoal;
@@ -19,6 +24,7 @@ export interface InterviewSessionMetadata {
   responseMode: 'text' | 'dictation' | 'realtime';
   hintMode: InterviewHintMode;
   realtimeLimits: RealtimeSessionLimits;
+  interviewerFaceId: InterviewerFaceId;
   plan: InterviewPlan;
 }
 
@@ -130,6 +136,9 @@ export function buildInterviewPlanMetadata(params: {
       softLimitMinutes: config.softLimitMinutes,
       hardLimitMinutes: config.hardLimitMinutes,
     },
+    interviewerFaceId:
+      params.input.interviewerFaceId ??
+      defaultFaceForMode(params.input.interviewerMode ?? 'neutral'),
     plan: {
       goal: sessionGoal,
       expectedDurationMinutes: config.expectedDurationMinutes,
@@ -153,6 +162,7 @@ export function parseInterviewSessionMetadata(
         language: 'ru',
         interviewerMode: 'neutral',
         interviewerAvatarId: 'neutral-pro',
+        interviewerFaceId: 'male-neutral',
       },
     });
   }
@@ -182,6 +192,9 @@ export function parseInterviewSessionMetadata(
         : 'text',
     hintMode: isHintMode(raw.hintMode) ? raw.hintMode : 'off',
     realtimeLimits: normalizeRealtimeLimits(raw.realtimeLimits, config),
+    interviewerFaceId: isInterviewerFaceId(raw.interviewerFaceId)
+      ? raw.interviewerFaceId
+      : defaultFaceForMode('neutral'),
     plan,
   };
 }
@@ -241,14 +254,14 @@ export function buildHintPack(params: {
   const roleContext = params.vacancyTitle || params.role || 'выбранной роли';
   return {
     structure:
-      'STAR: коротко опишите ситуацию, вашу задачу, конкретные действия и измеримый результат.',
+      'Отвечайте по шагам: ситуация → ваша задача → конкретные действия → измеримый результат.',
     bullets: [
       `Свяжите ответ с контекстом ${roleContext}.`,
       'Добавьте конкретный пример, а не общую оценку.',
       'Назовите результат: число, срок, масштаб или вывод.',
       'Закончите ответ тем, чему научились или как примените опыт дальше.',
     ],
-    terms: [roleContext, 'STAR', 'результат', 'конкретика'],
+    terms: [roleContext, 'результат', 'конкретика'],
     avoid: [
       'Не уходите в длинную предысторию без результата.',
       'Не отвечайте только «мы сделали» — выделите личный вклад.',

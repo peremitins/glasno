@@ -6,6 +6,9 @@ describe('RealtimeInterviewChatAdapter', () => {
     const messages = new Map<string, { role: 'user' | 'assistant'; content: string }>();
     let counter = 0;
     const completedUserTranscripts: string[] = [];
+    const completedAssistantTranscripts: string[] = [];
+    let assistantSpeechStarted = 0;
+    let assistantSpeechEnded = 0;
 
     const adapter = new RealtimeInterviewChatAdapter({
       createMessage(role, content) {
@@ -29,6 +32,15 @@ describe('RealtimeInterviewChatAdapter', () => {
       },
       onUserTranscriptCompleted(transcript) {
         completedUserTranscripts.push(transcript);
+      },
+      onAssistantTranscriptCompleted(transcript) {
+        completedAssistantTranscripts.push(transcript);
+      },
+      onAssistantSpeechStarted() {
+        assistantSpeechStarted += 1;
+      },
+      onAssistantSpeechEnded() {
+        assistantSpeechEnded += 1;
       },
     });
 
@@ -63,6 +75,142 @@ describe('RealtimeInterviewChatAdapter', () => {
       { role: 'assistant', content: 'Хорошо, добавьте контекст задачи.' },
     ]);
     expect(completedUserTranscripts).toEqual(['Я увеличил конверсию на 18%.']);
+    expect(completedAssistantTranscripts).toEqual([
+      'Хорошо, добавьте контекст задачи.',
+    ]);
+    expect(assistantSpeechStarted).toBe(1);
+    expect(assistantSpeechEnded).toBe(1);
+  });
+
+  it('supports current realtime output audio transcript events', () => {
+    const messages = new Map<string, { role: 'user' | 'assistant'; content: string }>();
+    let counter = 0;
+    const completedAssistantTranscripts: string[] = [];
+    let assistantSpeechStarted = 0;
+    let assistantSpeechEnded = 0;
+
+    const adapter = new RealtimeInterviewChatAdapter({
+      createMessage(role, content) {
+        counter += 1;
+        const id = `message_${counter}`;
+        messages.set(id, { role, content });
+        return id;
+      },
+      appendContent(messageId, delta) {
+        const message = messages.get(messageId);
+        if (message) message.content += delta;
+      },
+      replaceContent(messageId, content) {
+        const message = messages.get(messageId);
+        if (message) message.content = content;
+      },
+      removeMessage(messageId) {
+        messages.delete(messageId);
+      },
+      onAssistantTranscriptCompleted(transcript) {
+        completedAssistantTranscripts.push(transcript);
+      },
+      onAssistantSpeechStarted() {
+        assistantSpeechStarted += 1;
+      },
+      onAssistantSpeechEnded() {
+        assistantSpeechEnded += 1;
+      },
+    });
+
+    adapter.handleServerEvent({
+      type: 'response.created',
+      response: { id: 'response_1' },
+    });
+    adapter.handleServerEvent({
+      type: 'response.output_audio_transcript.delta',
+      response_id: 'response_1',
+      item_id: 'assistant_item_1',
+      delta: 'Да, ',
+    });
+    adapter.handleServerEvent({
+      type: 'response.output_audio_transcript.delta',
+      response_id: 'response_1',
+      item_id: 'assistant_item_1',
+      delta: 'продолжайте.',
+    });
+    adapter.handleServerEvent({
+      type: 'response.output_audio_transcript.done',
+      response_id: 'response_1',
+      transcript: 'Да, продолжайте.',
+    });
+
+    expect([...messages.values()]).toEqual([
+      { role: 'assistant', content: 'Да, продолжайте.' },
+    ]);
+    expect(completedAssistantTranscripts).toEqual(['Да, продолжайте.']);
+    expect(assistantSpeechStarted).toBe(1);
+    expect(assistantSpeechEnded).toBe(1);
+  });
+
+  it('ends assistant speaking state when realtime response finishes without transcript', () => {
+    let assistantSpeechStarted = 0;
+    let assistantSpeechEnded = 0;
+    const adapter = new RealtimeInterviewChatAdapter({
+      createMessage() {
+        return 'message_1';
+      },
+      appendContent() {},
+      replaceContent() {},
+      removeMessage() {},
+      onAssistantSpeechStarted() {
+        assistantSpeechStarted += 1;
+      },
+      onAssistantSpeechEnded() {
+        assistantSpeechEnded += 1;
+      },
+    });
+
+    adapter.handleServerEvent({
+      type: 'response.created',
+      response: { id: 'response_1' },
+    });
+    adapter.handleServerEvent({
+      type: 'response.done',
+      response: {
+        id: 'response_1',
+        output: [],
+      },
+    });
+
+    expect(assistantSpeechStarted).toBe(1);
+    expect(assistantSpeechEnded).toBe(1);
+  });
+
+  it('clears assistant speaking state when response done has no id', () => {
+    let assistantSpeechStarted = 0;
+    let assistantSpeechEnded = 0;
+    const adapter = new RealtimeInterviewChatAdapter({
+      createMessage() {
+        return 'message_1';
+      },
+      appendContent() {},
+      replaceContent() {},
+      removeMessage() {},
+      onAssistantSpeechStarted() {
+        assistantSpeechStarted += 1;
+      },
+      onAssistantSpeechEnded() {
+        assistantSpeechEnded += 1;
+      },
+    });
+
+    adapter.handleServerEvent({
+      type: 'response.created',
+      response: { id: 'response_1' },
+    });
+    adapter.handleServerEvent({
+      type: 'response.done',
+      response: {},
+    });
+
+    expect(assistantSpeechStarted).toBe(1);
+    expect(assistantSpeechEnded).toBe(1);
   });
 
   it('removes empty user bubbles when transcription fails', () => {

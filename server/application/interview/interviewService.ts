@@ -1,12 +1,17 @@
 import type {
+  AppendInterviewTurnMessageRequest,
   AnswerInterviewTurnRequest,
   CreateInterviewSessionRequest,
+  InterviewDialogueMessage,
   InterviewPlan,
   InterviewPlanItem,
   InterviewSession,
   InterviewStateResponse,
   InterviewTurn,
+  NextInterviewQuestionRequest,
   QuestionHintPack,
+  ReplyInterviewTurnRequest,
+  UpdateInterviewerRequest,
 } from '@/shared/dto';
 import { apiError } from '@/server/utils/errors';
 import type { HhClient } from '@/server/interface/hh';
@@ -22,6 +27,10 @@ import {
   parseInterviewSessionMetadata,
   resolveNextPlannedQuestion,
 } from './interviewPlan';
+import {
+  avatarFromMode,
+  modeFromFaceId,
+} from './interviewerFace';
 import { prepareInterviewSource } from './source';
 
 export class InterviewService {
@@ -76,6 +85,42 @@ export class InterviewService {
     });
 
     await this.createNextMainQuestionOrFinish(session, []);
+
+    return this.getStateForSession(
+      params.anonymousSessionId,
+      session.id,
+      params.userId
+    );
+  }
+
+  // Смена интервьюера в кабинете: новое лицо задаёт и внешность (фото-аватар),
+  // и тон ИИ. Тон берётся из выбранного лица и применяется к следующим
+  // репликам (replyTurnStream каждый раз перечитывает сессию).
+  async updateInterviewer(params: {
+    anonymousSessionId: string;
+    userId?: string | null;
+    sessionId: string;
+    input: UpdateInterviewerRequest;
+  }): Promise<InterviewStateResponse> {
+    const session = await this.requireOwnedSession(
+      params.anonymousSessionId,
+      params.sessionId,
+      params.userId
+    );
+
+    const faceId = params.input.faceId;
+    const mode = modeFromFaceId(faceId);
+    const avatarId = avatarFromMode(mode);
+    const metadata = {
+      ...toMetaRecord(session.metadata),
+      interviewerFaceId: faceId,
+    };
+
+    await this.deps.repository.updateSessionInterviewer(session.id, {
+      interviewerMode: mode,
+      interviewerAvatarId: avatarId,
+      metadata,
+    });
 
     return this.getStateForSession(
       params.anonymousSessionId,
@@ -196,6 +241,254 @@ export class InterviewService {
     );
   }
 
+  // Реплика кандидата в диалоге по текущему вопросу. Интервью НЕ двигается
+  // дальше — ИИ ведёт живой диалог и при необходимости предлагает перейти.
+  async replyTurn(params: {
+    anonymousSessionId: string;
+    userId?: string | null;
+    sessionId: string;
+    input: ReplyInterviewTurnRequest;
+  }): Promise<InterviewStateResponse> {
+    const session = await this.requireOwnedSession(
+      params.anonymousSessionId,
+      params.sessionId,
+      params.userId
+    );
+    if (session.status !== 'running') {
+      throw apiError('E_CONFLICT', 'Интервью уже завершено');
+    }
+
+    const turn = await this.deps.repository.findTurnById(
+      session.id,
+      params.input.turnId
+    );
+    if (!turn) {
+      throw apiError('E_NOT_FOUND', 'Вопрос не найден');
+    }
+
+    const baseMeta = toMetaRecord(turn.metadata);
+    const dialogue = parseDialogue(baseMeta.dialogue);
+    dialogue.push({
+      role: 'user',
+      content: params.input.message.trim(),
+      at: new Date().toISOString(),
+    });
+    const exchanges = dialogue.filter((message) => message.role === 'user').length;
+
+    const { reply, suggestMoveOn } = await this.deps.engine.converse({
+      session,
+      turn,
+      dialogue: dialogue.map((message) => ({
+        role: message.role,
+        content: message.content,
+      })),
+      exchanges,
+    });
+
+    dialogue.push({
+      role: 'interviewer',
+      content: reply,
+      at: new Date().toISOString(),
+    });
+
+    await this.deps.repository.updateTurnMetadata(session.id, turn.id, {
+      ...baseMeta,
+      dialogue,
+      suggestMoveOn,
+    });
+
+    return this.getStateForSession(
+      params.anonymousSessionId,
+      session.id,
+      params.userId
+    );
+  }
+
+  // Стримовая версия replyTurn: yield'ит дельты текста ответа интервьюера по
+  // мере генерации, после завершения сохраняет диалог и отдаёт финальное
+  // состояние интервью. Используется для «постепенного появления» ответа.
+  async *replyTurnStream(params: {
+    anonymousSessionId: string;
+    userId?: string | null;
+    sessionId: string;
+    input: ReplyInterviewTurnRequest;
+  }): AsyncGenerator<
+    | { type: 'delta'; text: string }
+    | { type: 'done'; state: InterviewStateResponse },
+    void,
+    void
+  > {
+    const session = await this.requireOwnedSession(
+      params.anonymousSessionId,
+      params.sessionId,
+      params.userId
+    );
+    if (session.status !== 'running') {
+      throw apiError('E_CONFLICT', 'Интервью уже завершено');
+    }
+
+    const turn = await this.deps.repository.findTurnById(
+      session.id,
+      params.input.turnId
+    );
+    if (!turn) {
+      throw apiError('E_NOT_FOUND', 'Вопрос не найден');
+    }
+
+    const baseMeta = toMetaRecord(turn.metadata);
+    const dialogue = parseDialogue(baseMeta.dialogue);
+    dialogue.push({
+      role: 'user',
+      content: params.input.message.trim(),
+      at: new Date().toISOString(),
+    });
+    const exchanges = dialogue.filter((message) => message.role === 'user').length;
+
+    const generator = this.deps.engine.converseStream({
+      session,
+      turn,
+      dialogue: dialogue.map((message) => ({
+        role: message.role,
+        content: message.content,
+      })),
+      exchanges,
+    });
+
+    let reply = '';
+    let suggestMoveOn = false;
+    while (true) {
+      const next = await generator.next();
+      if (next.done) {
+        suggestMoveOn = next.value?.suggestMoveOn ?? false;
+        break;
+      }
+      if (next.value) {
+        reply += next.value;
+        yield { type: 'delta', text: next.value };
+      }
+    }
+
+    reply = reply.trim();
+    if (!reply) {
+      throw apiError('E_UPSTREAM', 'OpenAI не вернул ответ интервьюера');
+    }
+
+    dialogue.push({
+      role: 'interviewer',
+      content: reply,
+      at: new Date().toISOString(),
+    });
+
+    await this.deps.repository.updateTurnMetadata(session.id, turn.id, {
+      ...baseMeta,
+      dialogue,
+      suggestMoveOn,
+    });
+
+    const state = await this.getStateForSession(
+      params.anonymousSessionId,
+      session.id,
+      params.userId
+    );
+    yield { type: 'done', state };
+  }
+
+  // Фактическая реплика realtime-диалога. Ничего не генерируем и не двигаем:
+  // только сохраняем транскрипт для чата, перехода между вопросами и отчёта.
+  async appendTurnMessage(params: {
+    anonymousSessionId: string;
+    userId?: string | null;
+    sessionId: string;
+    input: AppendInterviewTurnMessageRequest;
+  }): Promise<InterviewStateResponse> {
+    const session = await this.requireOwnedSession(
+      params.anonymousSessionId,
+      params.sessionId,
+      params.userId
+    );
+    const turn = await this.deps.repository.findTurnById(
+      session.id,
+      params.input.turnId
+    );
+    if (!turn) {
+      throw apiError('E_NOT_FOUND', 'Вопрос не найден');
+    }
+
+    const content = params.input.content.trim();
+    if (!content) {
+      throw apiError('E_VALIDATION', 'Пустая реплика не сохраняется');
+    }
+
+    const baseMeta = toMetaRecord(turn.metadata);
+    const dialogue = parseDialogue(baseMeta.dialogue);
+    dialogue.push({
+      role: params.input.role,
+      content,
+      at: new Date().toISOString(),
+    });
+
+    await this.deps.repository.updateTurnMetadata(session.id, turn.id, {
+      ...baseMeta,
+      dialogue,
+    });
+
+    return this.getStateForSession(
+      params.anonymousSessionId,
+      session.id,
+      params.userId
+    );
+  }
+
+  // Явный переход к следующему вопросу (кнопка / голосовая команда / согласие
+  // с предложением ИИ). Фиксируем ответ текущего вопроса из диалога и двигаемся.
+  async nextQuestion(params: {
+    anonymousSessionId: string;
+    userId?: string | null;
+    sessionId: string;
+    input: NextInterviewQuestionRequest;
+  }): Promise<InterviewStateResponse> {
+    const session = await this.requireOwnedSession(
+      params.anonymousSessionId,
+      params.sessionId,
+      params.userId
+    );
+    if (session.status !== 'running') {
+      throw apiError('E_CONFLICT', 'Интервью уже завершено');
+    }
+
+    const turn = await this.deps.repository.findTurnById(
+      session.id,
+      params.input.turnId
+    );
+    if (!turn) {
+      throw apiError('E_NOT_FOUND', 'Вопрос не найден');
+    }
+
+    if (!turn.answerTranscript) {
+      const baseMeta = toMetaRecord(turn.metadata);
+      const dialogue = parseDialogue(baseMeta.dialogue);
+      const answerText = dialogue
+        .filter((message) => message.role === 'user')
+        .map((message) => message.content)
+        .join('\n')
+        .trim();
+      // Пустую строку сохранять нельзя — currentTurn ищется по !answerTranscript.
+      await this.deps.repository.saveTurnAnswer(
+        session.id,
+        turn.id,
+        answerText || '—'
+      );
+    }
+
+    const turnsAfter = await this.deps.repository.listTurns(session.id);
+    await this.createNextMainQuestionOrFinish(session, turnsAfter);
+    return this.getStateForSession(
+      params.anonymousSessionId,
+      session.id,
+      params.userId
+    );
+  }
+
   private async createNextMainQuestionOrFinish(
     session: InterviewSessionRecord,
     turns: InterviewTurnRecord[]
@@ -240,6 +533,7 @@ export class InterviewService {
           language: session.language,
           interviewerMode: session.interviewerMode,
           interviewerAvatarId: session.interviewerAvatarId,
+          interviewerFaceId: metadata.interviewerFaceId,
         },
       });
       question = generated.question;
@@ -386,6 +680,7 @@ function toSessionDto(
     language: session.language,
     interviewerMode: session.interviewerMode,
     interviewerAvatarId: session.interviewerAvatarId,
+    interviewerFaceId: metadata.interviewerFaceId,
     currentQuestionIndex,
     totalQuestions: session.questionCount,
     createdAt: toIso(session.createdAt)!,
@@ -407,7 +702,32 @@ function toTurnDto(turn: InterviewTurnRecord): InterviewTurn {
     followUpForTurnId: turn.followUpForTurnId,
     answeredAt: toIso(turn.answeredAt),
     createdAt: toIso(turn.createdAt)!,
+    messages: metadata.dialogue,
+    suggestMoveOn: metadata.suggestMoveOn,
   };
+}
+
+// Приводит metadata турна к объекту (или пустому), чтобы безопасно мёржить.
+function toMetaRecord(metadata: unknown): Record<string, unknown> {
+  return metadata && typeof metadata === 'object'
+    ? { ...(metadata as Record<string, unknown>) }
+    : {};
+}
+
+// Разбирает массив реплик диалога из metadata.
+function parseDialogue(value: unknown): InterviewDialogueMessage[] {
+  if (!Array.isArray(value)) return [];
+  const result: InterviewDialogueMessage[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== 'object') continue;
+    const raw = item as { role?: unknown; content?: unknown; at?: unknown };
+    const role = raw.role === 'interviewer' ? 'interviewer' : 'user';
+    const content = typeof raw.content === 'string' ? raw.content : '';
+    if (!content) continue;
+    const at = typeof raw.at === 'string' ? raw.at : new Date().toISOString();
+    result.push({ role, content, at });
+  }
+  return result;
 }
 
 function toPlanDto(
@@ -442,18 +762,24 @@ function normalizeTurnMetadata(metadata: unknown): {
   planItemId: string | null;
   questionSource: 'jobai' | 'user';
   hintPack: QuestionHintPack | null;
+  dialogue: InterviewDialogueMessage[];
+  suggestMoveOn: boolean;
 } {
   if (!metadata || typeof metadata !== 'object') {
     return {
       planItemId: null,
       questionSource: 'jobai',
       hintPack: null,
+      dialogue: [],
+      suggestMoveOn: false,
     };
   }
   const raw = metadata as {
     planItemId?: unknown;
     questionSource?: unknown;
     hintPack?: unknown;
+    dialogue?: unknown;
+    suggestMoveOn?: unknown;
   };
   return {
     planItemId:
@@ -465,6 +791,8 @@ function normalizeTurnMetadata(metadata: unknown): {
       raw.hintPack && typeof raw.hintPack === 'object'
         ? (raw.hintPack as QuestionHintPack)
         : null,
+    dialogue: parseDialogue(raw.dialogue),
+    suggestMoveOn: raw.suggestMoveOn === true,
   };
 }
 

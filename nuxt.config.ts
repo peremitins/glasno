@@ -72,6 +72,9 @@ export default defineNuxtConfig({
     authEmailCodeSecret: '',
     emailHashPepper: '',
     hhApiBaseUrl: 'https://api.hh.ru',
+    hhAccessToken: '',
+    hhClientId: '',
+    hhClientSecret: '',
     yookassaShopId: '',
     yookassaSecretKey: '',
     yookassaTestMode: process.env.NUXT_YOOKASSA_TEST_MODE === 'true',
@@ -88,5 +91,8 @@ export default defineNuxtConfig({
 
   nitro: {
     preset: 'node-server',
+    experimental: {
+      websocket: true,
+    },
   },
 });

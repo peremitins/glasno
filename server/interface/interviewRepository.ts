@@ -85,6 +85,15 @@ export interface InterviewRepository {
     id: string,
     status: InterviewSessionStatus
   ): Promise<InterviewSessionRecord | null>;
+  // Смена интервьюера: тон (mode), персона-аватар и metadata (с faceId).
+  updateSessionInterviewer(
+    id: string,
+    fields: {
+      interviewerMode: InterviewerMode;
+      interviewerAvatarId: InterviewerAvatarId;
+      metadata: Record<string, unknown>;
+    }
+  ): Promise<InterviewSessionRecord | null>;
   listTurns(sessionId: string): Promise<InterviewTurnRecord[]>;
   findTurnById(
     sessionId: string,
@@ -95,5 +104,11 @@ export interface InterviewRepository {
     sessionId: string,
     turnId: string,
     answer: string
+  ): Promise<InterviewTurnRecord | null>;
+  // Перезаписывает metadata турна целиком (для хранения диалога/suggestMoveOn).
+  updateTurnMetadata(
+    sessionId: string,
+    turnId: string,
+    metadata: Record<string, unknown>
   ): Promise<InterviewTurnRecord | null>;
 }

@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ReportService } from './reportService';
 
-function createInterviewRepository(sessionOverrides: Record<string, unknown>) {
+function createInterviewRepository(
+  sessionOverrides: Record<string, unknown>,
+  turnOverrides: Record<string, unknown> = {}
+) {
   const session = {
     id: 'session_1',
     anonymousSessionId: 'anon_1',
@@ -31,8 +34,10 @@ function createInterviewRepository(sessionOverrides: Record<string, unknown>) {
       question: 'Как вы ищете новых B2B-клиентов?',
       answerTranscript: 'Через холодные письма и партнёрские рекомендации.',
       followUpForTurnId: null,
+      metadata: null,
       answeredAt: new Date('2026-06-28T10:05:00.000Z'),
       createdAt: new Date('2026-06-28T10:01:00.000Z'),
+      ...turnOverrides,
     },
   ];
 
@@ -168,5 +173,66 @@ describe('ReportService', () => {
     });
     expect(engine.analyze).toHaveBeenCalledOnce();
     expect(reportRepository.reports).toHaveLength(1);
+  });
+
+  it('uses realtime dialogue messages as report answers when answer transcript is not finalized', async () => {
+    const reportRepository = createReportRepository();
+    const engine = {
+      analyze: vi.fn().mockResolvedValue({
+        overallScore: 76,
+        verdict: 'Ответ сохранён из realtime диалога.',
+        summary: 'Есть пример, нужно больше метрик.',
+        criteria: {
+          structure: 70,
+          specificity: 72,
+          relevance: 82,
+          confidence: 76,
+          riskPhrases: 80,
+          brevity: 78,
+        },
+        recommendations: { topFixes: ['Добавить цифры'] },
+        questionAnalysis: [],
+        model: 'gpt-4o-mini',
+      }),
+    };
+    const service = new ReportService({
+      interviewRepository: createInterviewRepository(
+        {},
+        {
+          answerTranscript: null,
+          metadata: {
+            dialogue: [
+              {
+                role: 'user',
+                content: 'В realtime я рассказал про холодные письма.',
+                at: '2026-06-28T10:05:00.000Z',
+              },
+              {
+                role: 'interviewer',
+                content: 'Хорошо, добавьте результат.',
+                at: '2026-06-28T10:06:00.000Z',
+              },
+            ],
+          },
+        }
+      ) as any,
+      reportRepository: reportRepository as any,
+      engine,
+    });
+
+    await service.ensureReport({
+      anonymousSessionId: 'anon_1',
+      sessionId: 'session_1',
+    });
+
+    expect(engine.analyze).toHaveBeenCalledWith(
+      expect.objectContaining({
+        turns: [
+          expect.objectContaining({
+            answerTranscript: 'В realtime я рассказал про холодные письма.',
+          }),
+        ],
+      })
+    );
   });
 });

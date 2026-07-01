@@ -17,13 +17,15 @@ function buildErrorSignature(error: unknown): string {
   return `${name} ${message}`.toLowerCase();
 }
 
-function isWebPermissionDeniedError(error: unknown): boolean {
+export function isWebMicrophonePermissionDeniedError(error: unknown): boolean {
   const signature = buildErrorSignature(error);
   return (
     signature.includes('notallowederror') ||
+    signature.includes('not allowed') ||
     signature.includes('permission denied') ||
     signature.includes('permission dismissed') ||
-    signature.includes('service-not-allowed')
+    signature.includes('service-not-allowed') ||
+    signature.includes('user denied')
   );
 }
 
@@ -49,10 +51,21 @@ function hasWebDeniedFlag(): boolean {
   }
 }
 
+function isSafariPermissionPreflightUnreliable(
+  userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : ''
+): boolean {
+  return (
+    /Safari\//i.test(userAgent) &&
+    !/(Chrome|CriOS|Chromium|Edg|EdgiOS|Firefox|FxiOS|YaBrowser)\//i.test(
+      userAgent
+    )
+  );
+}
+
 async function queryBrowserMicrophonePermission(): Promise<MicPermissionState> {
   if (typeof navigator === 'undefined') return null;
   if (!navigator.permissions?.query) {
-    return hasWebDeniedFlag() ? 'denied' : null;
+    return null;
   }
 
   try {
@@ -61,11 +74,31 @@ async function queryBrowserMicrophonePermission(): Promise<MicPermissionState> {
     });
     const state = normalizePermissionState(status.state);
     if (state === 'granted') setWebDeniedFlag(false);
+    if (state === 'prompt') setWebDeniedFlag(false);
     if (state === 'denied') setWebDeniedFlag(true);
     return state;
   } catch {
-    return hasWebDeniedFlag() ? 'denied' : null;
+    return null;
   }
+}
+
+export function shouldBlockMicCaptureBeforeRequest(input: {
+  permissionState: MicPermissionState;
+  userAgent?: string;
+}): boolean {
+  if (input.permissionState !== 'denied') return false;
+  return !isSafariPermissionPreflightUnreliable(input.userAgent);
+}
+
+export function shouldShowMicDeniedFallbackAfterFailure(input: {
+  priorPermissionState?: MicPermissionState;
+  currentPermissionState: MicPermissionState;
+  hadDeniedFlag: boolean;
+}): boolean {
+  // handleStartFailure calls this only after getUserMedia failed with a
+  // permission-denied error. Safari may still report "prompt" afterwards, so
+  // any non-granted state must show recovery instructions.
+  return input.currentPermissionState !== 'granted';
 }
 
 export function useMicPermissionGate() {
@@ -81,7 +114,11 @@ export function useMicPermissionGate() {
 
   async function ensureCanStartCapture() {
     const state = await getPermissionState();
-    if (state === 'denied') {
+    if (
+      shouldBlockMicCaptureBeforeRequest({
+        permissionState: state,
+      })
+    ) {
       showMicDeniedModal.value = true;
       return false;
     }
@@ -92,7 +129,7 @@ export function useMicPermissionGate() {
     error: unknown,
     options?: { priorPermissionState?: MicPermissionState }
   ) {
-    if (!isWebPermissionDeniedError(error)) return false;
+    if (!isWebMicrophonePermissionDeniedError(error)) return false;
     const hadDeniedFlag = hasWebDeniedFlag();
     const currentState = await queryBrowserMicrophonePermission();
     if (currentState === 'granted') {
@@ -102,9 +139,11 @@ export function useMicPermissionGate() {
 
     setWebDeniedFlag(true);
     if (
-      options?.priorPermissionState === 'denied' ||
-      hadDeniedFlag ||
-      currentState === null
+      shouldShowMicDeniedFallbackAfterFailure({
+        priorPermissionState: options?.priorPermissionState,
+        currentPermissionState: currentState,
+        hadDeniedFlag,
+      })
     ) {
       showMicDeniedModal.value = true;
       return true;

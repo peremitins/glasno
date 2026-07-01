@@ -14,6 +14,10 @@ import {
   endRealtimeVoiceSession,
   startRealtimeVoiceSession,
 } from '@/server/application/realtime/realtimeVoiceSessionService';
+import {
+  getInterviewerGender,
+  resolveRealtimeVoiceForFace,
+} from '@/shared/interviewerVoice';
 import { apiError } from '@/server/utils/errors';
 import { defineApiHandler } from '@/server/utils/handler';
 import { readDto } from '@/server/utils/validate';
@@ -45,7 +49,10 @@ export default defineApiHandler(async (event) => {
     throw apiError('E_CONFLICT', 'Нет активного вопроса для голосового режима');
   }
 
-  const realtimeConfig = resolveRealtimeConfig(runtimeConfig);
+  const realtimeConfig = {
+    ...resolveRealtimeConfig(runtimeConfig),
+    voice: resolveRealtimeVoiceForFace(state.session.interviewerFaceId),
+  };
   const billingStatus = await createBillingService(event).getStatus({
     anonymousSessionId: session.id,
     userId: session.userId ?? null,
@@ -65,6 +72,7 @@ export default defineApiHandler(async (event) => {
       role: state.session.role,
       level: state.session.level,
       interviewerMode: state.session.interviewerMode,
+      interviewerGender: getInterviewerGender(state.session.interviewerFaceId),
       vacancyTitle: state.session.vacancyTitle,
       companyName: state.session.companyName,
       currentQuestion: currentTurn.question,

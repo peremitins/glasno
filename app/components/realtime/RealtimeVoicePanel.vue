@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRealtimeVoiceSession } from '@/app/composables/useRealtimeVoiceSession';
+import { useRealtimeVoiceCallFeedback } from '@/app/composables/useRealtimeVoiceCallFeedback';
 import type { RealtimeSessionLimits } from '@/shared/dto';
 
 const props = defineProps<{
@@ -9,6 +10,7 @@ const props = defineProps<{
   disabled?: boolean;
   realtimeLimits?: RealtimeSessionLimits;
   onEvent?: (event: unknown) => void;
+  voiceProfileKey?: string | null;
   // 'panel' — полная карточка; 'icon' — компактная иконка-кнопка для композера.
   variant?: 'panel' | 'icon';
 }>();
@@ -18,6 +20,24 @@ const realtimeVoice = useRealtimeVoiceSession({
   sessionId: props.sessionId,
   onEvent: (event) => props.onEvent?.(event),
 });
+
+// Звуковая обратная связь звонка: гудок при соединении, сигнал «можно
+// говорить» при коннекте, глушение при ошибке/разъединении.
+const callFeedback = useRealtimeVoiceCallFeedback({
+  status: realtimeVoice.status,
+  errorMessage: realtimeVoice.errorMessage,
+});
+
+// Обёртка над toggle: запускаем фидбэк в рамках жеста пользователя
+// (это же разблокирует аудио для гудка/сигнала готовности).
+function onToggle() {
+  if (realtimeVoice.isActive.value) {
+    callFeedback.notifyHangupIntent();
+  } else {
+    void callFeedback.notifyCallIntent();
+  }
+  void realtimeVoice.toggle();
+}
 const elapsedSeconds = ref(0);
 const limitMessage = ref('');
 let timer: ReturnType<typeof setInterval> | null = null;
@@ -25,6 +45,7 @@ let startedAt = 0;
 let warningShown = false;
 let softShown = false;
 let hardStopped = false;
+let restartAfterBusyProfileChange = false;
 
 const statusLabel = computed(() =>
   t(`voice.realtime.status.${realtimeVoice.status.value}`)
@@ -94,12 +115,29 @@ watch(
   (status) => {
     if (status === 'connected') {
       startTimer();
+      if (restartAfterBusyProfileChange) {
+        restartAfterBusyProfileChange = false;
+        void realtimeVoice.restart();
+      }
       return;
     }
     if (status === 'idle' || status === 'error') {
       clearTimer();
       elapsedSeconds.value = 0;
     }
+  }
+);
+
+watch(
+  () => props.voiceProfileKey,
+  (nextKey, previousKey) => {
+    if (!previousKey || !nextKey || nextKey === previousKey) return;
+    if (realtimeVoice.isBusy.value) {
+      restartAfterBusyProfileChange = true;
+      return;
+    }
+    if (!realtimeVoice.isActive.value) return;
+    void realtimeVoice.restart();
   }
 );
 
@@ -121,7 +159,7 @@ onBeforeUnmount(() => {
         ? t('voice.realtime.stop')
         : t('voice.realtime.start')
     "
-    @click="realtimeVoice.toggle"
+    @click="onToggle"
   >
     <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <path
@@ -152,7 +190,7 @@ onBeforeUnmount(() => {
         class="voice-action"
         type="button"
         :disabled="disabled || realtimeVoice.isBusy.value"
-        @click="realtimeVoice.toggle"
+        @click="onToggle"
       >
         {{
           realtimeVoice.isActive.value
