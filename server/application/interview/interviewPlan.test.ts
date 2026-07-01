@@ -102,7 +102,7 @@ describe('interviewPlan', () => {
       vacancyTitle: 'B2B sales manager',
     });
 
-    expect(hintPack.structure).toContain('STAR');
+    expect(hintPack.structure).toContain('результат');
     expect(hintPack.bullets.length).toBeGreaterThanOrEqual(3);
     expect(hintPack.terms).toContain('B2B sales manager');
     expect(hintPack.strongDirection).toContain('сложных переговорах');

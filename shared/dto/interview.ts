@@ -23,6 +23,18 @@ export const InterviewerAvatarIdDto = z.enum([
   'warm-hr',
 ]);
 
+// Лицо (внешность) интервьюера для фото-аватара. Кодирует пол + тон:
+// <gender>-<mode>. Тон части совпадает с InterviewerMode и определяет
+// поведение ИИ — внешность и тон меняются вместе (в кабинете интервью).
+export const InterviewerFaceIdDto = z.enum([
+  'male-soft',
+  'male-neutral',
+  'male-strict',
+  'female-soft',
+  'female-neutral',
+  'female-strict',
+]);
+
 export const InterviewSourceDto = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('hh_url'),
@@ -91,6 +103,7 @@ export const CreateInterviewSessionRequestDto = z.object({
   language: InterviewLanguageDto.default('ru'),
   interviewerMode: InterviewerModeDto.default('neutral'),
   interviewerAvatarId: InterviewerAvatarIdDto.default('neutral-pro'),
+  interviewerFaceId: InterviewerFaceIdDto.optional(),
 });
 
 export const InterviewSessionDto = z.object({
@@ -113,9 +126,18 @@ export const InterviewSessionDto = z.object({
   language: InterviewLanguageDto,
   interviewerMode: InterviewerModeDto,
   interviewerAvatarId: InterviewerAvatarIdDto,
+  interviewerFaceId: InterviewerFaceIdDto.default('male-neutral'),
   currentQuestionIndex: z.number().int().nonnegative(),
   totalQuestions: z.number().int().positive(),
   createdAt: z.string(),
+});
+
+// Реплика диалога внутри одного вопроса (живое общение «вопрос ↔ ответ»).
+export const InterviewDialogueRoleDto = z.enum(['user', 'interviewer']);
+export const InterviewDialogueMessageDto = z.object({
+  role: InterviewDialogueRoleDto,
+  content: z.string(),
+  at: z.string(),
 });
 
 export const InterviewTurnDto = z.object({
@@ -131,6 +153,10 @@ export const InterviewTurnDto = z.object({
   followUpForTurnId: z.string().nullable(),
   answeredAt: z.string().nullable(),
   createdAt: z.string(),
+  // Диалог по этому вопросу: реплики кандидата и интервьюера.
+  messages: z.array(InterviewDialogueMessageDto).default([]),
+  // ИИ-интервьюер предлагает перейти к следующему вопросу.
+  suggestMoveOn: z.boolean().default(false),
 });
 
 export const InterviewStateResponseDto = z.object({
@@ -139,9 +165,44 @@ export const InterviewStateResponseDto = z.object({
   currentTurn: InterviewTurnDto.nullable(),
 });
 
+// Чанк SSE-стрима ответа интервьюера (текстовый режим, постепенное появление).
+// output_text_delta — очередной фрагмент текста; done+state — финальное
+// состояние интервью после сохранения диалога; error — ошибка стрима.
+export const InterviewReplyStreamChunkDto = z.object({
+  output_text_delta: z.string().optional(),
+  done: z.boolean().optional(),
+  state: InterviewStateResponseDto.optional(),
+  error: z
+    .object({ code: z.string(), message: z.string() })
+    .optional(),
+});
+
 export const AnswerInterviewTurnRequestDto = z.object({
   turnId: z.string().min(1),
   answer: z.string().trim().min(2).max(20_000),
+});
+
+// Реплика кандидата в диалоге по текущему вопросу (без перехода дальше).
+export const ReplyInterviewTurnRequestDto = z.object({
+  turnId: z.string().min(1),
+  message: z.string().trim().min(1).max(20_000),
+});
+
+// Сохранение фактической realtime-реплики без генерации нового ответа ИИ.
+export const AppendInterviewTurnMessageRequestDto = z.object({
+  turnId: z.string().min(1),
+  role: InterviewDialogueRoleDto,
+  content: z.string().trim().min(1).max(20_000),
+});
+
+// Явный переход к следующему вопросу (кнопка / голосовая команда).
+export const NextInterviewQuestionRequestDto = z.object({
+  turnId: z.string().min(1),
+});
+
+// Смена интервьюера в кабинете: выбор лица меняет и внешность, и тон ИИ.
+export const UpdateInterviewerRequestDto = z.object({
+  faceId: InterviewerFaceIdDto,
 });
 
 export const ResumeExtractResponseDto = z.object({
@@ -160,6 +221,7 @@ export type InterviewSourceType = z.infer<typeof InterviewSourceTypeDto>;
 export type InterviewLevel = z.infer<typeof InterviewLevelDto>;
 export type InterviewerMode = z.infer<typeof InterviewerModeDto>;
 export type InterviewerAvatarId = z.infer<typeof InterviewerAvatarIdDto>;
+export type InterviewerFaceId = z.infer<typeof InterviewerFaceIdDto>;
 export type InterviewSessionStatus = z.infer<typeof InterviewSessionStatusDto>;
 export type InterviewTurnKind = z.infer<typeof InterviewTurnKindDto>;
 export type InterviewLanguage = z.infer<typeof InterviewLanguageDto>;
@@ -170,6 +232,7 @@ export type InterviewQuestionSourceMode = z.infer<
 export type InterviewQuestionSource = z.infer<typeof InterviewQuestionSourceDto>;
 export type InterviewResponseMode = z.infer<typeof InterviewResponseModeDto>;
 export type InterviewHintMode = z.infer<typeof InterviewHintModeDto>;
+export type InterviewDialogueRole = z.infer<typeof InterviewDialogueRoleDto>;
 export type RealtimeSessionLimits = z.infer<typeof RealtimeSessionLimitsDto>;
 export type QuestionHintPack = z.infer<typeof QuestionHintPackDto>;
 export type InterviewPlanItem = z.infer<typeof InterviewPlanItemDto>;
@@ -183,6 +246,24 @@ export type CreateInterviewSessionRequestInput = z.input<
 >;
 export type AnswerInterviewTurnRequest = z.infer<
   typeof AnswerInterviewTurnRequestDto
+>;
+export type ReplyInterviewTurnRequest = z.infer<
+  typeof ReplyInterviewTurnRequestDto
+>;
+export type AppendInterviewTurnMessageRequest = z.infer<
+  typeof AppendInterviewTurnMessageRequestDto
+>;
+export type NextInterviewQuestionRequest = z.infer<
+  typeof NextInterviewQuestionRequestDto
+>;
+export type UpdateInterviewerRequest = z.infer<
+  typeof UpdateInterviewerRequestDto
+>;
+export type InterviewDialogueMessage = z.infer<
+  typeof InterviewDialogueMessageDto
+>;
+export type InterviewReplyStreamChunk = z.infer<
+  typeof InterviewReplyStreamChunkDto
 >;
 export type InterviewSession = z.infer<typeof InterviewSessionDto>;
 export type InterviewTurn = z.infer<typeof InterviewTurnDto>;

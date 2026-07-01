@@ -21,7 +21,18 @@ describe('realtimeConfig', () => {
     expect(instructions).toContain('говори по-русски');
     expect(instructions).toContain('Senior Product Manager');
     expect(instructions).toContain('Расскажите о запуске сложного продукта.');
-    expect(instructions).toContain('не сохраняешь ответ');
+    expect(instructions).toContain('переход выполняет приложение');
+    expect(instructions).not.toContain('не сохраняешь ответ');
+  });
+
+  it('includes interviewer gender grammar instruction', () => {
+    const instructions = buildRealtimeInstructions({
+      ...context,
+      interviewerGender: 'female',
+    });
+
+    expect(instructions).toContain('женский');
+    expect(instructions).toContain('поняла');
   });
 
   it('builds an OpenAI Realtime session payload with audio modalities', () => {

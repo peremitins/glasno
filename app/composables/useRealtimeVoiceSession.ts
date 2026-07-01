@@ -4,10 +4,11 @@ import type {
   RealtimeSessionResponse,
 } from '@/shared/dto';
 import {
-  startRealtimeWebrtcClient,
-  type RealtimeWebrtcClient,
-} from '@/app/services/realtime/realtimeWebrtcClient';
+  startRealtimeVoiceClient,
+  type RealtimeVoiceClient,
+} from '@/app/services/realtime/realtimeTransport';
 import { useMicPermissionGate } from './useMicPermissionGate';
+import { useAudioPermissionGate } from './useAudioPermissionGate';
 import { useRealtimeVoiceUiStore } from '@/app/stores/realtimeVoiceUi';
 
 export function useRealtimeVoiceSession(options: {
@@ -16,9 +17,12 @@ export function useRealtimeVoiceSession(options: {
 }) {
   const api = useAPI();
   const micPermissionGate = useMicPermissionGate();
+  const audioPermissionGate = useAudioPermissionGate();
   const realtimeVoiceUi = useRealtimeVoiceUiStore();
-  const client = ref<RealtimeWebrtcClient | null>(null);
+  const client = ref<RealtimeVoiceClient | null>(null);
   const realtimeSession = ref<RealtimeSessionResponse | null>(null);
+  const assistantMicrophoneMuteResponseIds = new Set<string>();
+  const physicalMicrophoneMuteEnabled = shouldPhysicallyMuteRealtimeMicrophone();
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
   let hardLimitTimer: ReturnType<typeof setTimeout> | null = null;
   let lastActivitySentAt = 0;
@@ -46,10 +50,16 @@ export function useRealtimeVoiceSession(options: {
       );
       realtimeSession.value = session;
       scheduleSessionTimers(session);
-      client.value = await startRealtimeWebrtcClient(session, {
-        onEvent: options.onEvent,
+      client.value = await startRealtimeVoiceClient(session, {
+        onEvent(event) {
+          handleRealtimeTransportEvent(event);
+          options.onEvent?.(event);
+        },
         onActivity() {
           void registerRealtimeActivity();
+        },
+        onPlaybackBlocked(error) {
+          audioPermissionGate.handlePlaybackFailure(error);
         },
         onError(error) {
           const message =
@@ -71,20 +81,31 @@ export function useRealtimeVoiceSession(options: {
       );
       client.value?.stop();
       client.value = null;
+      resetAssistantMicrophoneMute();
       clearSessionTimers();
       await endServerSession('network_error').catch(() => {});
     }
   }
 
   async function stop(reason: RealtimeSessionEndReason = 'user_stop') {
-    if (!client.value && !realtimeSession.value && realtimeVoiceUi.status === 'idle') {
+    if (
+      !client.value &&
+      !realtimeSession.value &&
+      realtimeVoiceUi.status === 'idle'
+    ) {
       return;
     }
     realtimeVoiceUi.setStatus('stopping');
     try {
+      resetAssistantMicrophoneMute();
       client.value?.stop();
       clearSessionTimers();
-      await endServerSession(reason);
+      await endServerSession(reason).catch((error) => {
+        console.warn(
+          '[RealtimeVoiceSession] failed to end server session',
+          error
+        );
+      });
     } finally {
       client.value = null;
       realtimeVoiceUi.reset();
@@ -97,6 +118,89 @@ export function useRealtimeVoiceSession(options: {
       return;
     }
     await start();
+  }
+
+  async function restart() {
+    if (
+      !client.value &&
+      !realtimeSession.value &&
+      realtimeVoiceUi.status === 'idle'
+    ) {
+      return;
+    }
+    try {
+      await stop('user_stop');
+    } finally {
+      await start();
+    }
+  }
+
+  function handleRealtimeTransportEvent(event: unknown) {
+    if (!event || typeof event !== 'object') return;
+    const type = (event as { type?: unknown }).type;
+    if (typeof type !== 'string') return;
+
+    if (type === 'response.created') {
+      muteMicrophoneForAssistantResponse(
+        readResponseId((event as { response?: unknown }).response)
+      );
+      void registerRealtimeActivity();
+      return;
+    }
+
+    if (type === 'output_audio_buffer.started') {
+      muteMicrophoneForAssistantResponse(
+        stringValue((event as { response_id?: unknown }).response_id)
+      );
+      void registerRealtimeActivity();
+      return;
+    }
+
+    if (
+      type === 'output_audio_buffer.stopped' ||
+      type === 'response.done' ||
+      type === 'response.cancelled' ||
+      type === 'response.failed'
+    ) {
+      const responseId =
+        type === 'response.done' ||
+        type === 'response.cancelled' ||
+        type === 'response.failed'
+          ? readResponseId((event as { response?: unknown }).response)
+          : stringValue((event as { response_id?: unknown }).response_id);
+      if (!responseId) {
+        resetAssistantMicrophoneMute();
+        void registerRealtimeActivity();
+        return;
+      }
+      unmuteMicrophoneForAssistantResponse(responseId);
+      void registerRealtimeActivity();
+    }
+  }
+
+  function updateAssistantMicrophoneMute() {
+    if (!physicalMicrophoneMuteEnabled) return;
+    client.value?.setMicrophoneEnabled(
+      assistantMicrophoneMuteResponseIds.size < 1
+    );
+  }
+
+  function muteMicrophoneForAssistantResponse(responseId: string) {
+    if (!responseId) return;
+    assistantMicrophoneMuteResponseIds.add(responseId);
+    updateAssistantMicrophoneMute();
+  }
+
+  function unmuteMicrophoneForAssistantResponse(responseId: string) {
+    if (!responseId) return;
+    assistantMicrophoneMuteResponseIds.delete(responseId);
+    updateAssistantMicrophoneMute();
+  }
+
+  function resetAssistantMicrophoneMute() {
+    assistantMicrophoneMuteResponseIds.clear();
+    if (!physicalMicrophoneMuteEnabled) return;
+    client.value?.setMicrophoneEnabled(true);
   }
 
   async function registerRealtimeActivity() {
@@ -124,6 +228,10 @@ export function useRealtimeVoiceSession(options: {
   function scheduleIdleStop(idleTimeoutSeconds: number) {
     if (idleTimer) clearTimeout(idleTimer);
     idleTimer = setTimeout(() => {
+      if (shouldDeferRealtimeIdleStop(assistantMicrophoneMuteResponseIds.size)) {
+        void registerRealtimeActivity();
+        return;
+      }
       void stop('idle_timeout');
     }, Math.max(1, idleTimeoutSeconds) * 1000);
   }
@@ -170,6 +278,7 @@ export function useRealtimeVoiceSession(options: {
 
   function stopBeforePageLeave(reason: RealtimeSessionEndReason) {
     if (!client.value && !realtimeSession.value) return;
+    resetAssistantMicrophoneMute();
     client.value?.stop();
     client.value = null;
     clearSessionTimers();
@@ -206,6 +315,7 @@ export function useRealtimeVoiceSession(options: {
     activeSession: computed(() => realtimeSession.value),
     start,
     stop,
+    restart,
     toggle,
   };
 }
@@ -215,7 +325,39 @@ function extractApiError(error: unknown): string {
     const data = (error as { data?: { error?: { message?: string } } }).data;
     return data?.error?.message || 'Не удалось запустить голосовой режим';
   }
-  return error instanceof Error ? error.message : 'Не удалось запустить голосовой режим';
+  return error instanceof Error
+    ? error.message
+    : 'Не удалось запустить голосовой режим';
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === 'string' ? value : '';
+}
+
+function readResponseId(response: unknown): string {
+  return stringValue((response as { id?: unknown } | undefined)?.id);
+}
+
+export function shouldPhysicallyMuteRealtimeMicrophone(
+  userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : ''
+): boolean {
+  if (!userAgent) return true;
+  // Firefox uses the WebSocket fallback: muting only gates outgoing PCM chunks
+  // and does not disable the browser's MediaStreamTrack.
+  if (/Firefox\//i.test(userAgent) || /FxiOS/i.test(userAgent)) return true;
+  if (
+    /Safari\//i.test(userAgent) &&
+    !/(Chrome|CriOS|Chromium|Edg|YaBrowser)\//i.test(userAgent)
+  ) {
+    return false;
+  }
+  return true;
+}
+
+export function shouldDeferRealtimeIdleStop(
+  activeAssistantResponseCount: number
+): boolean {
+  return activeAssistantResponseCount > 0;
 }
 
 function csrfHeader(): Record<string, string> {
@@ -225,5 +367,7 @@ function csrfHeader(): Record<string, string> {
     .split(';')
     .map((value) => value.trim())
     .find((value) => value.startsWith(prefix));
-  return raw ? { 'x-csrf-token': decodeURIComponent(raw.slice(prefix.length)) } : {};
+  return raw
+    ? { 'x-csrf-token': decodeURIComponent(raw.slice(prefix.length)) }
+    : {};
 }

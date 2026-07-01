@@ -28,6 +28,7 @@
     ResumeExtractResponse,
   } from '@/shared/dto';
   import VoiceTextarea from '@/app/components/form/VoiceTextarea.vue';
+  import { buildResumePreviewBlocks } from '@/app/utils/resumePreview';
 
   type SourceType = CreateInterviewSessionRequest['source']['type'];
   type InterviewLevel = CreateInterviewSessionRequest['level'];
@@ -42,10 +43,6 @@
     specialization: string;
     group: string;
   }
-
-  type ResumePreviewBlock =
-    | { id: string; type: 'heading' | 'paragraph'; text: string }
-    | { id: string; type: 'list'; items: string[] };
 
   const MAX_RESUME_CONTEXT_CHARS = 30_000;
 
@@ -253,10 +250,7 @@
   });
 
   const customQuestionsCombinedText = computed(() =>
-    [questionsFileText.value, form.customQuestionsText]
-      .map((value) => value.trim())
-      .filter(Boolean)
-      .join('\n')
+    form.customQuestionsText.trim()
   );
 
   const customOnlyEnabled = computed({
@@ -273,7 +267,9 @@
 
     if (extracted) {
       parts.push(
-        `Резюме из файла ${resumeFileName.value ? `"${resumeFileName.value}"` : ''}:\n${extracted}`
+        `Резюме из файла ${
+          resumeFileName.value ? `"${resumeFileName.value}"` : ''
+        }:\n${extracted}`
       );
     }
 
@@ -298,75 +294,6 @@
   function trimResumeContext(value: string): string {
     if (value.length <= MAX_RESUME_CONTEXT_CHARS) return value;
     return value.slice(0, MAX_RESUME_CONTEXT_CHARS - 96).trimEnd();
-  }
-
-  function buildResumePreviewBlocks(value: string): ResumePreviewBlock[] {
-    const normalized = value.replace(/\r\n?/g, '\n').trim();
-    if (!normalized) return [];
-
-    const lines = splitResumePreviewLines(normalized);
-    const blocks: ResumePreviewBlock[] = [];
-    let listItems: string[] = [];
-
-    const flushList = () => {
-      if (!listItems.length) return;
-      blocks.push({
-        id: `resume-list-${blocks.length}`,
-        type: 'list',
-        items: listItems,
-      });
-      listItems = [];
-    };
-
-    lines.forEach((rawLine) => {
-      const line = compactResumeLine(rawLine);
-      const bullet = line.match(/^([•*-]|\d+[.)])\s+(.+)$/);
-
-      if (bullet?.[2]) {
-        listItems.push(bullet[2]);
-        return;
-      }
-
-      flushList();
-      blocks.push({
-        id: `resume-line-${blocks.length}`,
-        type: isResumeHeading(line) ? 'heading' : 'paragraph',
-        text: line,
-      });
-    });
-
-    flushList();
-    return blocks.slice(0, 24);
-  }
-
-  function splitResumePreviewLines(value: string): string[] {
-    const directLines = value
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean);
-
-    if (directLines.length > 1) return directLines;
-
-    return value
-      .replace(/([.!?])\s+(?=[А-ЯA-Z0-9])/g, '$1\n')
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean);
-  }
-
-  function compactResumeLine(value: string): string {
-    return value.replace(/[ \t]+/g, ' ').trim();
-  }
-
-  function isResumeHeading(value: string): boolean {
-    const text = value.replace(/[:：]$/, '').trim();
-    if (!text || text.length > 56) return false;
-
-    return (
-      /^(контакты|о себе|профиль|summary|опыт|experience|проекты|projects|достижения|achievements|навыки|skills|стек|stack|образование|education|языки|languages)$/i.test(
-        text
-      ) || /^[A-ZА-ЯЁ0-9\s/&+-]{3,}$/.test(text)
-    );
   }
 
   const canSubmit = computed(() => {
@@ -521,12 +448,23 @@
       );
       questionsFileText.value = response.text;
       questionsFileName.value = response.fileName || file.name;
+      form.customQuestionsText = appendTextBlock(
+        form.customQuestionsText,
+        response.text
+      );
     } catch (err) {
       errorMessage.value = extractApiError(err);
     } finally {
       isExtractingQuestionsFile.value = false;
       input.value = '';
     }
+  }
+
+  function appendTextBlock(current: string, next: string): string {
+    const normalized = next.trim();
+    if (!normalized) return current;
+    const base = current.trim();
+    return base ? `${base}\n\n${normalized}` : normalized;
   }
 
   async function submit() {
@@ -729,7 +667,6 @@
           <section class="parameter-group">
             <div>
               <h3>{{ t('interview.new.fields.level') }}</h3>
-              <p>{{ t('interview.new.fields.levelHint') }}</p>
             </div>
             <div class="segmented segmented--cards" role="radiogroup">
               <button
@@ -751,7 +688,6 @@
           <section class="parameter-group">
             <div>
               <h3>{{ t('interview.new.fields.interviewerMode') }}</h3>
-              <p>{{ t('interview.new.fields.interviewerModeHint') }}</p>
             </div>
             <div class="segmented segmented--compact" role="radiogroup">
               <button
@@ -772,7 +708,6 @@
           <section class="parameter-group">
             <div>
               <h3>{{ t('interview.new.fields.sessionGoal') }}</h3>
-              <p>{{ t('interview.new.fields.sessionGoalHint') }}</p>
             </div>
             <div class="goal-grid" role="radiogroup">
               <button
@@ -791,7 +726,6 @@
               </button>
             </div>
           </section>
-
         </div>
       </article>
     </section>
@@ -835,11 +769,14 @@
                 id="custom-questions-file"
                 class="file-input"
                 type="file"
-                accept=".pdf,.txt,.md,.png,.jpg,.jpeg,text/plain,text/markdown,application/pdf,image/png,image/jpeg"
+                accept=".pdf,.txt,.md,.csv,.xls,.xlsx,.png,.jpg,.jpeg,text/plain,text/markdown,text/csv,application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,image/png,image/jpeg"
                 :disabled="isExtractingQuestionsFile"
                 @change="onCustomQuestionsFileChange"
               />
-              <label class="file-drop file-drop--compact" for="custom-questions-file">
+              <label
+                class="file-drop file-drop--compact"
+                for="custom-questions-file"
+              >
                 <span class="file-drop__icon" aria-hidden="true">
                   <FileTextIcon />
                 </span>
@@ -874,13 +811,19 @@
             <span class="toggle-switch" aria-hidden="true"></span>
             <span class="toggle-copy">
               <strong>{{ t('interview.new.customQuestions.onlyMine') }}</strong>
-              <small>{{ t('interview.new.customQuestions.onlyMineHint') }}</small>
+              <small>{{
+                t('interview.new.customQuestions.onlyMineHint')
+              }}</small>
             </span>
           </label>
 
           <div class="question-mode-note">
-            <strong>{{ t('interview.new.customQuestions.defaultMode') }}</strong>
-            <span>{{ t('interview.new.customQuestions.defaultModeHint') }}</span>
+            <strong>{{
+              t('interview.new.customQuestions.defaultMode')
+            }}</strong>
+            <span>{{
+              t('interview.new.customQuestions.defaultModeHint')
+            }}</span>
           </div>
         </div>
       </div>
@@ -920,9 +863,7 @@
                   }}
                 </strong>
                 <small>
-                  {{
-                    resumeFileName || t('interview.new.resume.uploadHint')
-                  }}
+                  {{ resumeFileName || t('interview.new.resume.uploadHint') }}
                 </small>
               </span>
             </label>
@@ -944,10 +885,16 @@
 
             <div v-if="resumePreviewBlocks.length" class="resume-preview__body">
               <template v-for="block in resumePreviewBlocks" :key="block.id">
-                <h3 v-if="block.type === 'heading'" class="resume-preview__heading">
+                <h3
+                  v-if="block.type === 'heading'"
+                  class="resume-preview__heading"
+                >
                   {{ block.text }}
                 </h3>
-                <ul v-else-if="block.type === 'list'" class="resume-preview__list">
+                <ul
+                  v-else-if="block.type === 'list'"
+                  class="resume-preview__list"
+                >
                   <li v-for="item in block.items" :key="item">{{ item }}</li>
                 </ul>
                 <p v-else class="resume-preview__paragraph">{{ block.text }}</p>
@@ -956,12 +903,13 @@
 
             <div v-else class="resume-preview__empty">
               <strong>{{ t('interview.new.resume.previewEmptyTitle') }}</strong>
-              <p>{{ t('interview.new.resume.previewEmptyHint') }}</p>
             </div>
           </section>
 
           <div class="field">
-            <label for="resume-notes">{{ t('interview.new.resume.notes') }}</label>
+            <label for="resume-notes">{{
+              t('interview.new.resume.notes')
+            }}</label>
             <VoiceTextarea
               id="resume-notes"
               v-model="form.resumeNotes"
@@ -1388,8 +1336,7 @@
     border: 1px solid var(--glass-border-strong);
     border-radius: 999px;
     background: var(--surface-raised);
-    transition:
-      background var(--motion-normal) var(--ease-out),
+    transition: background var(--motion-normal) var(--ease-out),
       border-color var(--motion-normal) var(--ease-out);
   }
 
@@ -1402,8 +1349,7 @@
     height: 18px;
     border-radius: 999px;
     background: var(--text-muted);
-    transition:
-      transform var(--motion-normal) var(--ease-out),
+    transition: transform var(--motion-normal) var(--ease-out),
       background var(--motion-normal) var(--ease-out);
   }
 
@@ -1454,6 +1400,7 @@
   }
 
   .goal-card {
+    position: relative;
     display: grid;
     gap: 5px;
     min-height: 104px;
@@ -1468,6 +1415,21 @@
       background var(--motion-normal) var(--ease-out),
       border-color var(--motion-normal) var(--ease-out),
       box-shadow var(--motion-normal) var(--ease-out);
+  }
+
+  .goal-card::after {
+    content: '';
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    width: 9px;
+    height: 9px;
+    border-radius: 999px;
+    background: transparent;
+    box-shadow: inset 0 0 0 1px var(--glass-border-strong);
+    transition: background var(--motion-normal) var(--ease-out),
+      box-shadow var(--motion-normal) var(--ease-out),
+      transform var(--motion-normal) var(--ease-out);
   }
 
   .goal-card strong {
@@ -1489,11 +1451,19 @@
 
   .goal-card:hover,
   .goal-card--active {
-    border-color: var(--glass-border-strong);
+    border-color: color-mix(in srgb, var(--accent) 52%, var(--glass-border));
     background: var(--surface-raised);
     box-shadow: inset 0 1px 0 var(--inner-highlight),
-      0 12px 26px color-mix(in srgb, var(--accent) 14%, transparent);
+      0 18px 38px color-mix(in srgb, var(--accent) 20%, transparent),
+      0 0 0 4px color-mix(in srgb, var(--accent) 10%, transparent);
     transform: translateY(-1px);
+  }
+
+  .goal-card--active::after {
+    background: var(--accent-2);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 16%, transparent),
+      0 0 22px color-mix(in srgb, var(--accent) 30%, transparent);
+    transform: scale(1.08);
   }
 
   .segmented--cards {
@@ -1678,8 +1648,7 @@
     color: var(--text-secondary);
     cursor: pointer;
     padding: 16px;
-    transition:
-      border-color var(--motion-normal) var(--ease-out),
+    transition: border-color var(--motion-normal) var(--ease-out),
       background var(--motion-normal) var(--ease-out),
       box-shadow var(--motion-normal) var(--ease-out),
       transform var(--motion-normal) var(--ease-out);

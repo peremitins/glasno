@@ -9,6 +9,12 @@ export type RealtimeInterviewChatSink = {
   replaceContent: (messageId: string, content: string) => void;
   removeMessage: (messageId: string) => void;
   onUserTranscriptCompleted?: (transcript: string) => void;
+  onAssistantTranscriptCompleted?: (transcript: string) => void;
+  // Интервьюер начал/закончил говорить (realtime-аудио). Нужно для анимации
+  // «говорящего» аватара: старт — на первой транскрипт-дельте ответа,
+  // конец — на завершении ответа.
+  onAssistantSpeechStarted?: () => void;
+  onAssistantSpeechEnded?: () => void;
 };
 
 function extractFinalAssistantText(response: unknown): string {
@@ -38,6 +44,9 @@ export class RealtimeInterviewChatAdapter {
   private readonly assistantMessagesByResponseId = new Map<string, string>();
   private readonly assistantContentByResponseId = new Map<string, string>();
   private readonly finalizedAssistantResponses = new Set<string>();
+  // Ответы, по которым уже сообщили «интервьюер заговорил» (чтобы старт
+  // анимации срабатывал один раз на ответ).
+  private readonly speakingResponses = new Set<string>();
 
   constructor(private readonly sink: RealtimeInterviewChatSink) {}
 
@@ -87,7 +96,41 @@ export class RealtimeInterviewChatAdapter {
         return;
       }
 
+      case 'response.created': {
+        const responseId = stringValue(
+          (event.response as { id?: unknown } | undefined)?.id
+        );
+        if (responseId) this.startAssistantSpeech(responseId);
+        return;
+      }
+
+      case 'output_audio_buffer.started': {
+        const responseId = stringValue(event.response_id);
+        if (responseId) this.startAssistantSpeech(responseId);
+        return;
+      }
+
+      case 'output_audio_buffer.stopped': {
+        const responseId = stringValue(event.response_id);
+        if (responseId) this.endAssistantSpeech(responseId);
+        return;
+      }
+
+      case 'response.output_item.added': {
+        return;
+      }
+
       case 'response.audio_transcript.delta': {
+        const responseId = stringValue(event.response_id);
+        const itemId = stringValue(event.item_id);
+        const delta = stringValue(event.delta);
+        if (!responseId || !delta) return;
+        if (this.finalizedAssistantResponses.has(responseId)) return;
+        this.appendAssistantContent(responseId, itemId, delta);
+        return;
+      }
+
+      case 'response.output_audio_transcript.delta': {
         const responseId = stringValue(event.response_id);
         const itemId = stringValue(event.item_id);
         const delta = stringValue(event.delta);
@@ -103,10 +146,23 @@ export class RealtimeInterviewChatAdapter {
         return;
       }
 
+      case 'response.output_audio_transcript.done': {
+        const responseId = stringValue(event.response_id);
+        if (responseId) {
+          this.finalizeAssistantResponse(responseId, stringValue(event.transcript));
+        }
+        return;
+      }
+
       case 'response.done': {
         const response = event.response;
         const responseId = stringValue((response as { id?: unknown } | undefined)?.id);
-        if (!responseId || this.finalizedAssistantResponses.has(responseId)) {
+        if (!responseId) {
+          this.endAllAssistantSpeech();
+          return;
+        }
+        this.endAssistantSpeech(responseId);
+        if (this.finalizedAssistantResponses.has(responseId)) {
           return;
         }
         const fallbackText = extractFinalAssistantText(response);
@@ -175,18 +231,22 @@ export class RealtimeInterviewChatAdapter {
     delta: string
   ) {
     const messageId = this.ensureAssistantMessage(responseId);
+    this.startAssistantSpeech(responseId);
     const content = `${this.assistantContentByResponseId.get(responseId) || ''}${delta}`;
     this.assistantContentByResponseId.set(responseId, content);
     this.sink.appendContent(messageId, delta);
   }
 
   private finalizeAssistantResponse(responseId: string, finalText: string) {
+    // Ответ завершён — интервьюер закончил говорить (снимаем анимацию).
+    this.endAssistantSpeech(responseId);
     const messageId = this.assistantMessagesByResponseId.get(responseId);
     if (!messageId) return;
     const normalized = finalText.trim();
     if (normalized) {
       this.assistantContentByResponseId.set(responseId, normalized);
       this.sink.replaceContent(messageId, normalized);
+      this.sink.onAssistantTranscriptCompleted?.(normalized);
     }
     if (!this.assistantContentByResponseId.get(responseId)?.trim()) {
       this.sink.removeMessage(messageId);
@@ -194,6 +254,24 @@ export class RealtimeInterviewChatAdapter {
       this.assistantContentByResponseId.delete(responseId);
     }
     this.finalizedAssistantResponses.add(responseId);
+  }
+
+  private startAssistantSpeech(responseId: string) {
+    if (this.speakingResponses.has(responseId)) return;
+    this.speakingResponses.add(responseId);
+    this.sink.onAssistantSpeechStarted?.();
+  }
+
+  private endAssistantSpeech(responseId: string) {
+    if (!this.speakingResponses.has(responseId)) return;
+    this.speakingResponses.delete(responseId);
+    this.sink.onAssistantSpeechEnded?.();
+  }
+
+  private endAllAssistantSpeech() {
+    if (!this.speakingResponses.size) return;
+    this.speakingResponses.clear();
+    this.sink.onAssistantSpeechEnded?.();
   }
 }
 

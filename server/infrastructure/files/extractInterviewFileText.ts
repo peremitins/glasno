@@ -1,4 +1,5 @@
 import { PDFParse } from 'pdf-parse';
+import { read, utils } from 'xlsx';
 import { apiError } from '@/server/utils/errors';
 
 const DEFAULT_MAX_BYTES = 6 * 1024 * 1024;
@@ -28,6 +29,10 @@ export async function extractInterviewFileText(
   const fileName = params.fileName?.toLowerCase() || '';
   const mimeType = params.mimeType?.toLowerCase() || '';
 
+  if (isSpreadsheetFile(fileName, mimeType)) {
+    return extractSpreadsheetText(params);
+  }
+
   if (isTextFile(fileName, mimeType)) {
     return normalizeExtractedDocumentText(
       params.data.toString('utf8'),
@@ -56,7 +61,7 @@ export async function extractInterviewFileText(
 
   throw apiError(
     'E_VALIDATION',
-    'Поддерживаются PDF, TXT, Markdown, PNG и JPEG'
+    'Поддерживаются PDF, TXT, Markdown, CSV, Excel, PNG и JPEG'
   );
 }
 
@@ -105,6 +110,20 @@ function isTextFile(fileName: string, mimeType: string): boolean {
   );
 }
 
+function isSpreadsheetFile(fileName: string, mimeType: string): boolean {
+  return (
+    isCsvFile(fileName, mimeType) ||
+    mimeType.includes('spreadsheet') ||
+    mimeType.includes('excel') ||
+    fileName.endsWith('.xls') ||
+    fileName.endsWith('.xlsx')
+  );
+}
+
+function isCsvFile(fileName: string, mimeType: string): boolean {
+  return mimeType.includes('csv') || fileName.endsWith('.csv');
+}
+
 function isPdfFile(fileName: string, mimeType: string): boolean {
   return mimeType.includes('pdf') || fileName.endsWith('.pdf');
 }
@@ -121,4 +140,59 @@ function isImageFile(fileName: string, mimeType: string): boolean {
 
 function inferImageMimeType(fileName: string): string {
   return fileName.endsWith('.png') ? 'image/png' : 'image/jpeg';
+}
+
+function extractSpreadsheetText(
+  params: ExtractInterviewFileTextParams
+): string {
+  try {
+    const fileName = params.fileName?.toLowerCase() || '';
+    const mimeType = params.mimeType?.toLowerCase() || '';
+    const workbook = isCsvFile(fileName, mimeType)
+      ? read(params.data.toString('utf8'), {
+          type: 'string',
+          cellDates: true,
+          raw: false,
+        })
+      : read(params.data, {
+          type: 'buffer',
+          cellDates: true,
+          raw: false,
+        });
+    const sections: string[] = [];
+
+    for (const sheetName of workbook.SheetNames) {
+      const sheet = workbook.Sheets[sheetName];
+      if (!sheet) continue;
+      const rows = utils.sheet_to_json<Array<string | number | boolean | null>>(
+        sheet,
+        {
+          header: 1,
+          blankrows: false,
+          defval: '',
+          raw: false,
+        }
+      );
+      const lines = rows
+        .map((row) =>
+          row
+            .map((cell) => String(cell ?? '').replace(/[ \t]+/g, ' ').trim())
+            .filter(Boolean)
+            .join(' | ')
+        )
+        .filter(Boolean);
+      if (lines.length) {
+        sections.push([`Лист: ${sheetName}`, ...lines].join('\n'));
+      }
+    }
+
+    return normalizeExtractedDocumentText(
+      sections.join('\n\n'),
+      params.maxChars
+    );
+  } catch (err) {
+    throw apiError('E_UPSTREAM', 'Не удалось извлечь текст из таблицы', {
+      cause: err instanceof Error ? err.message : String(err),
+    });
+  }
 }

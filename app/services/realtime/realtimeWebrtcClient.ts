@@ -1,16 +1,32 @@
 import type { RealtimeSessionResponse } from '@/shared/dto';
 
+type RealtimeVoiceWindow = Window &
+  typeof globalThis & {
+    webkitAudioContext?: typeof AudioContext;
+  };
+
+const INPUT_ACTIVITY_VOLUME_THRESHOLD = 4;
+const INPUT_ACTIVITY_CHECK_INTERVAL_MS = 750;
+const INPUT_ACTIVITY_THROTTLE_MS = 1_500;
+const REMOTE_AUDIO_ACTIVITY_THROTTLE_MS = 4_000;
+const ICE_GATHERING_TIMEOUT_MS = 3_000;
+
 export interface RealtimeWebrtcClient {
   stop(): void;
+  setMicrophoneEnabled(enabled: boolean): void;
+  sendEvent(event: Record<string, unknown>): void;
+}
+
+export interface RealtimeVoiceClientOptions {
+  onEvent?: (event: unknown) => void;
+  onError?: (error: unknown) => void;
+  onActivity?: () => void;
+  onPlaybackBlocked?: (error: unknown) => void;
 }
 
 export async function startRealtimeWebrtcClient(
   session: RealtimeSessionResponse,
-  options: {
-    onEvent?: (event: unknown) => void;
-    onError?: (error: unknown) => void;
-    onActivity?: () => void;
-  } = {}
+  options: RealtimeVoiceClientOptions = {}
 ): Promise<RealtimeWebrtcClient> {
   if (typeof window === 'undefined') {
     throw new Error('Realtime voice доступен только в браузере');
@@ -20,16 +36,77 @@ export async function startRealtimeWebrtcClient(
   }
 
   const peerConnection = new RTCPeerConnection();
-  const remoteAudio = new Audio();
-  remoteAudio.autoplay = true;
-  const mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  let stopped = false;
+  let inputActivityInterval: ReturnType<typeof setInterval> | null = null;
+  let inputAudioContext: AudioContext | null = null;
+  let inputAudioSource: MediaStreamAudioSourceNode | null = null;
+  let inputAnalyser: AnalyserNode | null = null;
+  let lastInputActivityAtMs = 0;
+  let lastRemoteAudioActivityAtMs = 0;
 
+  // Элемент воспроизведения голоса ассистента. Важно: «отвязанный»
+  // (не добавленный в DOM) <audio> с autoplay браузеры часто глушат,
+  // поэтому добавляем скрытый элемент в DOM и явно вызываем play().
+  const remoteAudio = document.createElement('audio');
+  remoteAudio.autoplay = true;
+  // playsInline — чтобы iOS/Safari не открывали нативный плеер.
+  remoteAudio.setAttribute('playsinline', '');
+  remoteAudio.muted = false;
+  remoteAudio.volume = 1;
+  remoteAudio.style.display = 'none';
+  document.body.appendChild(remoteAudio);
+
+  const notifyRemoteAudioActivity = () => {
+    if (stopped) return;
+    const now = Date.now();
+    if (
+      !shouldNotifyRemoteAudioPlaybackActivity({
+        now,
+        lastRemoteAudioActivityAtMs,
+      })
+    ) {
+      return;
+    }
+
+    lastRemoteAudioActivityAtMs = now;
+    options.onActivity?.();
+  };
+
+  remoteAudio.addEventListener('playing', notifyRemoteAudioActivity);
+  remoteAudio.addEventListener('timeupdate', notifyRemoteAudioActivity);
+  remoteAudio.addEventListener('ended', notifyRemoteAudioActivity);
+
+  const playRemoteAudio = () => {
+    const promise = remoteAudio.play();
+    if (promise && typeof promise.catch === 'function') {
+      promise
+        .then(() => {
+          notifyRemoteAudioActivity();
+        })
+        .catch((error) => {
+          // Автовоспроизведение могли заблокировать. Сессию не рвём (это
+          // оборвало бы и распознавание) — показываем пользователю инструкцию.
+          console.warn('Realtime remote audio play() blocked', error);
+          options.onPlaybackBlocked?.(error);
+        });
+    }
+  };
+
+  const mediaStream = await navigator.mediaDevices.getUserMedia(
+    buildRealtimeAudioConstraints()
+  );
+
+  // addTrack создаёт sendrecv аудио-трансивер: на нём же ассистент
+  // присылает свой голос обратно (ontrack ниже).
   for (const track of mediaStream.getTracks()) {
     peerConnection.addTrack(track, mediaStream);
   }
+  startInputActivityMonitor();
 
   peerConnection.ontrack = (event) => {
-    remoteAudio.srcObject = event.streams[0] ?? null;
+    const [stream] = event.streams;
+    remoteAudio.srcObject = stream ?? new MediaStream([event.track]);
+    playRemoteAudio();
   };
 
   peerConnection.onconnectionstatechange = () => {
@@ -47,6 +124,7 @@ export async function startRealtimeWebrtcClient(
   };
 
   const dataChannel = peerConnection.createDataChannel('oai-events');
+  dataChannel.onopen = () => options.onActivity?.();
   dataChannel.onmessage = (event) => {
     try {
       const payload = JSON.parse(event.data);
@@ -61,8 +139,15 @@ export async function startRealtimeWebrtcClient(
   };
   dataChannel.onerror = (event) => options.onError?.(event);
 
-  const offer = await peerConnection.createOffer();
+  const offer = await peerConnection.createOffer({
+    offerToReceiveAudio: true,
+  });
   await peerConnection.setLocalDescription(offer);
+  await waitForRealtimeIceGatheringComplete(peerConnection);
+  const localDescription = peerConnection.localDescription;
+  if (!localDescription?.sdp) {
+    throw new Error('Realtime voice offer SDP is empty');
+  }
 
   // GA Realtime API: SDP-обмен идёт на /v1/realtime/calls (beta /v1/realtime отключён).
   const sdpResponse = await fetch(
@@ -73,7 +158,7 @@ export async function startRealtimeWebrtcClient(
         Authorization: `Bearer ${session.clientSecret}`,
         'Content-Type': 'application/sdp',
       },
-      body: offer.sdp,
+      body: localDescription.sdp,
     }
   );
 
@@ -90,7 +175,13 @@ export async function startRealtimeWebrtcClient(
   });
 
   function stop() {
-    dataChannel.close();
+    stopped = true;
+    stopInputActivityMonitor();
+    try {
+      dataChannel.close();
+    } catch {
+      // Канал мог быть уже закрыт браузером.
+    }
     for (const sender of peerConnection.getSenders()) {
       sender.track?.stop();
     }
@@ -99,13 +190,171 @@ export async function startRealtimeWebrtcClient(
     }
     remoteAudio.pause();
     remoteAudio.srcObject = null;
+    remoteAudio.remove();
     peerConnection.close();
   }
 
-  return { stop };
+  function setMicrophoneEnabled(enabled: boolean) {
+    for (const track of mediaStream.getAudioTracks()) {
+      track.enabled = enabled;
+    }
+  }
+
+  function sendEvent(event: Record<string, unknown>) {
+    if (dataChannel.readyState !== 'open') return;
+    dataChannel.send(JSON.stringify(event));
+  }
+
+  return { stop, setMicrophoneEnabled, sendEvent };
+
+  function startInputActivityMonitor() {
+    if (!options.onActivity || typeof window === 'undefined') return;
+    const AudioContextCtor =
+      window.AudioContext ||
+      (window as RealtimeVoiceWindow).webkitAudioContext ||
+      null;
+    if (!AudioContextCtor) return;
+
+    try {
+      stopInputActivityMonitor();
+      inputAudioContext = new AudioContextCtor();
+      inputAnalyser = inputAudioContext.createAnalyser();
+      inputAnalyser.fftSize = 256;
+      inputAnalyser.smoothingTimeConstant = 0.8;
+      inputAudioSource = inputAudioContext.createMediaStreamSource(mediaStream);
+      inputAudioSource.connect(inputAnalyser);
+      lastInputActivityAtMs = 0;
+
+      inputActivityInterval = window.setInterval(() => {
+        if (!inputAnalyser || stopped) return;
+        const data = new Uint8Array(inputAnalyser.frequencyBinCount);
+        inputAnalyser.getByteTimeDomainData(data);
+
+        const now = Date.now();
+        const volume = computeRealtimeInputVolume(data);
+        if (
+          !shouldNotifyRealtimeInputActivity({
+            volume,
+            now,
+            lastInputActivityAtMs,
+          })
+        ) {
+          return;
+        }
+
+        lastInputActivityAtMs = now;
+        options.onActivity?.();
+      }, INPUT_ACTIVITY_CHECK_INTERVAL_MS);
+    } catch (error) {
+      console.warn(
+        '[RealtimeWebrtcClient] Failed to start input activity monitor',
+        error
+      );
+      stopInputActivityMonitor();
+    }
+  }
+
+  function stopInputActivityMonitor() {
+    if (inputActivityInterval) {
+      clearInterval(inputActivityInterval);
+      inputActivityInterval = null;
+    }
+    if (inputAudioSource) {
+      try {
+        inputAudioSource.disconnect();
+      } catch {
+        // Already disconnected.
+      }
+      inputAudioSource = null;
+    }
+    inputAnalyser = null;
+    if (inputAudioContext) {
+      void inputAudioContext.close().catch(() => {});
+      inputAudioContext = null;
+    }
+    lastInputActivityAtMs = 0;
+  }
 }
 
-function isRealtimeActivityEvent(event: unknown): boolean {
+export function buildRealtimeAudioConstraints(): MediaStreamConstraints {
+  return {
+    audio: {
+      channelCount: { ideal: 1 },
+      echoCancellation: { ideal: true },
+      noiseSuppression: { ideal: true },
+      autoGainControl: { ideal: true },
+    },
+  };
+}
+
+export function computeRealtimeInputVolume(data: Uint8Array): number {
+  if (data.length < 1) return 0;
+
+  let sum = 0;
+  for (let index = 0; index < data.length; index += 1) {
+    const sample = data[index] ?? 128;
+    const normalized = (sample - 128) / 128;
+    sum += normalized * normalized;
+  }
+
+  return Math.round(Math.sqrt(sum / data.length) * 100);
+}
+
+export function shouldNotifyRealtimeInputActivity(input: {
+  volume: number;
+  now: number;
+  lastInputActivityAtMs: number;
+}): boolean {
+  return (
+    input.volume > INPUT_ACTIVITY_VOLUME_THRESHOLD &&
+    input.now - input.lastInputActivityAtMs >= INPUT_ACTIVITY_THROTTLE_MS
+  );
+}
+
+export function shouldNotifyRemoteAudioPlaybackActivity(input: {
+  now: number;
+  lastRemoteAudioActivityAtMs: number;
+}): boolean {
+  return (
+    input.lastRemoteAudioActivityAtMs <= 0 ||
+    input.now - input.lastRemoteAudioActivityAtMs >=
+      REMOTE_AUDIO_ACTIVITY_THROTTLE_MS
+  );
+}
+
+export async function waitForRealtimeIceGatheringComplete(
+  connection: RTCPeerConnection,
+  timeoutMs = ICE_GATHERING_TIMEOUT_MS
+) {
+  if (connection.iceGatheringState === 'complete') return;
+
+  await new Promise<void>((resolve) => {
+    const timeoutId = setTimeout(() => {
+      connection.removeEventListener(
+        'icegatheringstatechange',
+        handleIceGatheringChange
+      );
+      resolve();
+    }, timeoutMs);
+
+    function handleIceGatheringChange() {
+      if (connection.iceGatheringState !== 'complete') return;
+      clearTimeout(timeoutId);
+      connection.removeEventListener(
+        'icegatheringstatechange',
+        handleIceGatheringChange
+      );
+      resolve();
+    }
+
+    connection.addEventListener(
+      'icegatheringstatechange',
+      handleIceGatheringChange
+    );
+  });
+}
+
+export function isRealtimeActivityEvent(event: unknown): boolean {
   if (!event || typeof event !== 'object') return false;
   const type = (event as { type?: unknown }).type;
   if (typeof type !== 'string') return false;
@@ -114,6 +363,8 @@ function isRealtimeActivityEvent(event: unknown): boolean {
     type === 'input_audio_buffer.speech_stopped' ||
     type.startsWith('conversation.item.input_audio_transcription.') ||
     type.startsWith('response.audio_transcript.') ||
+    type.startsWith('response.output_audio_transcript.') ||
+    type.startsWith('output_audio_buffer.') ||
     type === 'response.created' ||
     type === 'response.done'
   );

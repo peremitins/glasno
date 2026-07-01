@@ -14,12 +14,21 @@
     ReaderIcon,
     SunIcon,
   } from '@radix-icons/vue';
+  import { defineComponent, useSlots } from 'vue';
   import { useI18n } from 'vue-i18n';
   import AuroraField from '@/app/components/design/AuroraField.vue';
 
   const { t } = useI18n();
+  const slots = useSlots();
   const { theme, toggleTheme } = useDesignPreferences();
   const isSidebarCollapsed = useLocalStorage('jobai-sidebar-collapsed', false);
+
+  const SlotOutlet = defineComponent({
+    name: 'DefaultLayoutSlotOutlet',
+    setup() {
+      return () => slots.default?.() ?? [];
+    },
+  });
 
   const nav = [
     { to: '/', key: 'dashboard', icon: HomeIcon },
@@ -133,7 +142,7 @@
       </header>
 
       <section class="content-surface">
-        <slot />
+        <SlotOutlet />
       </section>
     </main>
 
@@ -501,7 +510,7 @@
 
   .content-surface {
     min-width: 0;
-    width: min(1180px, 100%);
+    /* width: min(1180px, 100%); */
     padding: clamp(4px, 1vw, 14px) 0 72px;
   }
 

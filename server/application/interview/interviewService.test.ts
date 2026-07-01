@@ -27,6 +27,14 @@ function createInMemoryRepository() {
       session.status = status;
       return session;
     },
+    async updateSessionInterviewer(id: string, fields: any) {
+      const session = sessions.find((item) => item.id === id);
+      if (!session) return null;
+      session.interviewerMode = fields.interviewerMode;
+      session.interviewerAvatarId = fields.interviewerAvatarId;
+      session.metadata = fields.metadata;
+      return session;
+    },
     async listTurns(sessionId: string) {
       return turns
         .filter((turn) => turn.sessionId === sessionId)
@@ -59,6 +67,18 @@ function createInMemoryRepository() {
       turn.answeredAt = new Date('2026-06-28T10:05:00.000Z');
       return turn;
     },
+    async updateTurnMetadata(
+      sessionId: string,
+      turnId: string,
+      metadata: Record<string, unknown>
+    ) {
+      const turn = turns.find(
+        (item) => item.sessionId === sessionId && item.id === turnId
+      );
+      if (!turn) return null;
+      turn.metadata = metadata;
+      return turn;
+    },
   };
 }
 
@@ -71,6 +91,8 @@ describe('InterviewService', () => {
         .fn()
         .mockResolvedValue({ question: 'Расскажите о релевантном опыте.' }),
       evaluateAnswer: vi.fn(),
+      converse: vi.fn(),
+      converseStream: vi.fn(),
     };
 
     const service = new InterviewService({
@@ -113,6 +135,8 @@ describe('InterviewService', () => {
   it('normalizes custom questions through the interview engine before building the plan', async () => {
     const repository = createInMemoryRepository();
     const engine = {
+      converse: vi.fn(),
+      converseStream: vi.fn(),
       normalizeCustomQuestions: vi.fn().mockResolvedValue({
         questions: [
           'Как вы выстраиваете план продаж?',
@@ -164,10 +188,128 @@ describe('InterviewService', () => {
     });
   });
 
+  it('appends realtime dialogue messages to the current turn without generating a reply', async () => {
+    const repository = createInMemoryRepository();
+    const engine = {
+      converse: vi.fn(),
+      converseStream: vi.fn(),
+      normalizeCustomQuestions: vi.fn(),
+      generateQuestion: vi
+        .fn()
+        .mockResolvedValue({ question: 'Как вы ищете новых клиентов?' }),
+      evaluateAnswer: vi.fn(),
+    };
+
+    const service = new InterviewService({
+      repository,
+      engine,
+      hhClient: null,
+    });
+
+    const created = await service.createSession({
+      anonymousSessionId: 'anon_1',
+      input: {
+        source: { type: 'profession', role: 'Менеджер по продажам' },
+        level: 'middle',
+        sessionGoal: 'quick',
+        responseMode: 'realtime',
+        hintMode: 'realtime',
+        language: 'ru',
+        interviewerMode: 'neutral',
+        interviewerAvatarId: 'neutral-pro',
+      },
+    });
+
+    const state = await service.appendTurnMessage({
+      anonymousSessionId: 'anon_1',
+      sessionId: created.session.id,
+      input: {
+        turnId: created.currentTurn!.id,
+        role: 'user',
+        content: 'В realtime я рассказал про холодные письма.',
+      },
+    });
+
+    expect(engine.converse).not.toHaveBeenCalled();
+    expect(state.currentTurn?.messages).toEqual([
+      expect.objectContaining({
+        role: 'user',
+        content: 'В realtime я рассказал про холодные письма.',
+      }),
+    ]);
+  });
+
+  it('streams interviewer reply deltas before returning the final interview state', async () => {
+    const repository = createInMemoryRepository();
+    async function* converseStream() {
+      yield 'Хорошо, ';
+      yield 'продолжайте.';
+      return { suggestMoveOn: true };
+    }
+    const engine = {
+      converse: vi.fn(),
+      converseStream: vi.fn(converseStream),
+      normalizeCustomQuestions: vi.fn(),
+      generateQuestion: vi
+        .fn()
+        .mockResolvedValue({ question: 'Как вы работаете с приоритетами?' }),
+      evaluateAnswer: vi.fn(),
+    };
+
+    const service = new InterviewService({
+      repository,
+      engine,
+      hhClient: null,
+    });
+
+    const created = await service.createSession({
+      anonymousSessionId: 'anon_1',
+      input: {
+        source: { type: 'profession', role: 'Project Manager' },
+        level: 'middle',
+        sessionGoal: 'quick',
+        responseMode: 'text',
+        hintMode: 'off',
+        language: 'ru',
+        interviewerMode: 'neutral',
+        interviewerAvatarId: 'neutral-pro',
+      },
+    });
+
+    const chunks = [];
+    for await (const chunk of service.replyTurnStream({
+      anonymousSessionId: 'anon_1',
+      sessionId: created.session.id,
+      input: {
+        turnId: created.currentTurn!.id,
+        message: 'Я сначала оцениваю влияние и срочность.',
+      },
+    })) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks[0]).toEqual({ type: 'delta', text: 'Хорошо, ' });
+    expect(chunks[1]).toEqual({ type: 'delta', text: 'продолжайте.' });
+    expect(chunks[2]).toMatchObject({ type: 'done' });
+    expect(chunks[2].state.currentTurn?.messages).toEqual([
+      expect.objectContaining({
+        role: 'user',
+        content: 'Я сначала оцениваю влияние и срочность.',
+      }),
+      expect.objectContaining({
+        role: 'interviewer',
+        content: 'Хорошо, продолжайте.',
+      }),
+    ]);
+    expect(chunks[2].state.currentTurn?.suggestMoveOn).toBe(true);
+  });
+
   it('asks one clarification after a shallow answer and then moves to the next main question', async () => {
     const repository = createInMemoryRepository();
     const engine = {
       normalizeCustomQuestions: vi.fn(),
+      converse: vi.fn(),
+      converseStream: vi.fn(),
       generateQuestion: vi
         .fn()
         .mockResolvedValueOnce({ question: 'Расскажите о сложной задаче.' })

@@ -12,7 +12,11 @@ export function createInterviewService(event: H3Event): InterviewService {
 
   return new InterviewService({
     repository: new DrizzleInterviewRepository(),
-    hhClient: new HhHttpClient(config.hhApiBaseUrl as string),
+    hhClient: new HhHttpClient(config.hhApiBaseUrl as string, {
+      accessToken: config.hhAccessToken as string,
+      clientId: config.hhClientId as string,
+      clientSecret: config.hhClientSecret as string,
+    }),
     engine: new OpenAiInterviewEngine({
       apiKey: openai.apiKey,
       model: openai.model,

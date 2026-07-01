@@ -1,13 +1,19 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { useCameraPermissionGate } from '@/app/composables/useCameraPermissionGate';
 
 // Камера полностью управляется родителем через prop `active`.
 // Своей кнопки у компонента нет — единственный переключатель живёт
 // в нижнем доке экрана собеседования (как в Zoom/Телемост).
 const props = defineProps<{ active?: boolean }>();
+const emit = defineEmits<{
+  'active-change': [value: boolean];
+  'start-failed': [];
+}>();
 
 const { t } = useI18n();
+const cameraPermissionGate = useCameraPermissionGate();
 
 const videoRef = ref<HTMLVideoElement | null>(null);
 const stream = ref<MediaStream | null>(null);
@@ -20,6 +26,15 @@ async function startCamera() {
   if (!import.meta.client || isActive.value || isStarting.value) return;
   if (!navigator.mediaDevices?.getUserMedia) {
     errorMessage.value = t('camera.unsupported');
+    emit('active-change', false);
+    emit('start-failed');
+    return;
+  }
+  const priorPermissionState = await cameraPermissionGate.getPermissionState();
+  if (!(await cameraPermissionGate.ensureCanStartCapture())) {
+    errorMessage.value = t('camera.blocked');
+    emit('active-change', false);
+    emit('start-failed');
     return;
   }
 
@@ -34,13 +49,23 @@ async function startCamera() {
       },
       audio: false,
     });
+    if (!props.active) {
+      nextStream.getTracks().forEach((track) => track.stop());
+      return;
+    }
     stream.value = nextStream;
+    emit('active-change', true);
     if (videoRef.value) {
       videoRef.value.srcObject = nextStream;
       await videoRef.value.play();
     }
-  } catch {
+  } catch (error) {
+    await cameraPermissionGate.handleStartFailure(error, {
+      priorPermissionState,
+    });
     errorMessage.value = t('camera.blocked');
+    emit('active-change', false);
+    emit('start-failed');
   } finally {
     isStarting.value = false;
   }
@@ -49,6 +74,7 @@ async function startCamera() {
 function stopCamera() {
   stream.value?.getTracks().forEach((track) => track.stop());
   stream.value = null;
+  emit('active-change', false);
   if (videoRef.value) {
     videoRef.value.srcObject = null;
   }

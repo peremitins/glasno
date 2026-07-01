@@ -21,6 +21,15 @@ export interface EvaluateAnswerParams {
   answer: string;
 }
 
+export interface ConverseParams {
+  session: InterviewSessionRecord;
+  turn: InterviewTurnRecord;
+  // Полный диалог по текущему вопросу (последняя реплика — кандидата).
+  dialogue: Array<{ role: 'user' | 'interviewer'; content: string }>;
+  // Сколько реплик кандидата уже было по этому вопросу.
+  exchanges: number;
+}
+
 export interface NormalizeCustomQuestionsParams {
   rawText: string;
   anonymousSessionId: string;
@@ -43,4 +52,14 @@ export interface InterviewEngine {
     question?: string;
     reason?: string;
   }>;
+  // Живой диалог интервьюера по текущему вопросу (без перехода дальше).
+  converse(params: ConverseParams): Promise<{
+    reply: string;
+    suggestMoveOn: boolean;
+  }>;
+  // Стримовая версия converse: yield'ит фрагменты текста ответа по мере
+  // генерации и возвращает итоговый флаг suggestMoveOn после завершения.
+  converseStream(
+    params: ConverseParams
+  ): AsyncGenerator<string, { suggestMoveOn: boolean }, void>;
 }

@@ -1,7 +1,10 @@
 import { ResumeExtractResponseDto } from '@/shared/dto';
 import { resolveOpenAiConfig } from '@/server/application/config/openaiConfig';
 import { extractResumeText } from '@/server/infrastructure/resume/extractResumeText';
-import { extractTextFromImageWithOpenAi } from '@/server/infrastructure/llm/openaiImageTextExtractor';
+import {
+  extractTextFromImageWithOpenAi,
+  resolveImageExtractionModel,
+} from '@/server/infrastructure/llm/openaiImageTextExtractor';
 import { apiError } from '@/server/utils/errors';
 import { defineApiHandler } from '@/server/utils/handler';
 
@@ -28,7 +31,7 @@ export default defineApiHandler(async (event) => {
         data: image.data,
         mimeType: image.mimeType,
         apiKey: openai.apiKey,
-        model: openai.model,
+        model: resolveImageExtractionModel(),
         organization:
           process.env.NUXT_OPENAI_ORG_ID || process.env.OPENAI_ORG_ID || null,
         project:

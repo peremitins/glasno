@@ -125,6 +125,26 @@ export class DrizzleInterviewRepository implements InterviewRepository {
     return row ? mapSession(row) : null;
   }
 
+  async updateSessionInterviewer(
+    id: string,
+    fields: {
+      interviewerMode: InterviewerMode;
+      interviewerAvatarId: InterviewerAvatarId;
+      metadata: Record<string, unknown>;
+    }
+  ): Promise<InterviewSessionRecord | null> {
+    const [row] = await this.db
+      .update(schema.interviewSessions)
+      .set({
+        interviewerMode: fields.interviewerMode,
+        interviewerAvatarId: fields.interviewerAvatarId,
+        metadata: fields.metadata,
+      })
+      .where(eq(schema.interviewSessions.id, id))
+      .returning();
+    return row ? mapSession(row) : null;
+  }
+
   async listTurns(sessionId: string): Promise<InterviewTurnRecord[]> {
     const rows = await this.db
       .select()
@@ -170,6 +190,21 @@ export class DrizzleInterviewRepository implements InterviewRepository {
         answerTranscript: answer,
         answeredAt: new Date(),
       })
+      .where(eq(schema.interviewTurns.id, turnId))
+      .returning();
+
+    if (!row || row.sessionId !== sessionId) return null;
+    return mapTurn(row);
+  }
+
+  async updateTurnMetadata(
+    sessionId: string,
+    turnId: string,
+    metadata: Record<string, unknown>
+  ): Promise<InterviewTurnRecord | null> {
+    const [row] = await this.db
+      .update(schema.interviewTurns)
+      .set({ metadata })
       .where(eq(schema.interviewTurns.id, turnId))
       .returning();
 

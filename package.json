@@ -55,12 +55,15 @@
     "vue-router": "^4.5.1",
     "vue-sonner": "^2.0.9",
     "vue3-apexcharts": "^1.11.1",
+    "ws": "^8.21.0",
+    "xlsx": "^0.18.5",
     "zod": "^3.25.8"
   },
   "devDependencies": {
     "@types/nodemailer": "^6.4.15",
     "@types/pdfkit": "^0.17.6",
     "@types/pg": "^8.11.10",
+    "@types/ws": "^8.18.1",
     "dotenv": "^16.4.5",
     "drizzle-kit": "^0.30.0",
     "tsx": "^4.19.2",

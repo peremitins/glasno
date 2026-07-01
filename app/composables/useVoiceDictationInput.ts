@@ -3,6 +3,7 @@ import { computed, onUnmounted, ref } from 'vue';
 import { appendFinalDictationTranscript } from './speech/dictationMerge';
 import { useMicPermissionGate } from './useMicPermissionGate';
 import { useSpeechEngine } from './useSpeechEngine';
+import { useTTS } from './useTTS';
 import { useSpeechStore } from '@/app/stores/speech';
 
 interface UseVoiceDictationInputOptions {
@@ -15,6 +16,7 @@ export function useVoiceDictationInput(options: UseVoiceDictationInputOptions) {
   const speechStore = useSpeechStore();
   const speechEngine = useSpeechEngine();
   const micPermissionGate = useMicPermissionGate();
+  const tts = useTTS();
   const sessionId = Symbol('voice-dictation');
 
   const partialText = ref('');
@@ -33,12 +35,16 @@ export function useVoiceDictationInput(options: UseVoiceDictationInputOptions) {
   // блока под кнопкой. Пользователь видит распознавание в реальном времени.
   const removePartial = speechEngine.onPartial((text) => {
     if (activeSessionId !== sessionId) return;
+    // Пока интервьюер озвучивается через динамики, микрофон ловит его голос.
+    // Не пишем это эхо в поле ответа — текстере только для речи кандидата.
+    if (tts.isPlaying.value) return;
     partialText.value = text;
     options.value.value = composeLiveDictation(committedText.value, text);
   });
 
   const removeFinal = speechEngine.onFinal((text) => {
     if (activeSessionId !== sessionId) return;
+    if (tts.isPlaying.value) return;
     const result = appendFinalDictationTranscript({
       currentText: committedText.value,
       sessionTranscript: sessionTranscript.value,
