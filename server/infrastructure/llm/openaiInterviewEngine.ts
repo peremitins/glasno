@@ -4,7 +4,9 @@ import { apiError } from '@/server/utils/errors';
 import type {
   ConverseParams,
   EvaluateAnswerParams,
+  GenerateQuestionHintsParams,
   GenerateQuestionParams,
+  GenerateSampleAnswerHintParams,
   InterviewEngine,
   NormalizeCustomQuestionsParams,
 } from '@/server/interface/interviewEngine';
@@ -17,7 +19,11 @@ import {
   buildInterviewerGenderInstruction,
   getInterviewerGender,
 } from '@/shared/interviewerVoice';
-import type { InterviewerFaceId } from '@/shared/dto';
+import type {
+  InterviewerFaceId,
+  InterviewFocus,
+  QuestionHintDetails,
+} from '@/shared/dto';
 
 // Извлекает usage из ответа Responses API в наши поля.
 export function extractUsageAmounts(response: any): {
@@ -79,6 +85,83 @@ function extractObjectCandidate(value: string): string {
   return value.slice(start, end + 1);
 }
 
+function compactText(value: unknown, fallback: string, maxLength: number): string {
+  const raw = typeof value === 'string' ? value : '';
+  const compacted = raw.trim().replace(/\s+/g, ' ');
+  const text = compacted || fallback;
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength - 1).trimEnd()}…`;
+}
+
+function compactTextList(
+  value: unknown,
+  fallback: string[],
+  maxItems: number,
+  maxLength: number
+): string[] {
+  const source = Array.isArray(value) ? value : fallback;
+  const result: string[] = [];
+  const seen = new Set<string>();
+  for (const item of source) {
+    const text = compactText(item, '', maxLength);
+    if (!text) continue;
+    const key = text.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(text);
+    if (result.length >= maxItems) break;
+  }
+  return result;
+}
+
+export function normalizeQuestionHintDetails(value: unknown): QuestionHintDetails {
+  const raw =
+    value && typeof value === 'object'
+      ? (value as Record<string, unknown>)
+      : {};
+
+  return {
+    focus: compactText(
+      raw.focus,
+      'Проверяет, насколько ответ связан с текущим вопросом и ролью.',
+      260
+    ),
+    answerPlan: compactTextList(
+      raw.answerPlan,
+      [
+        'Коротко ответьте на сам вопрос без длинной предыстории.',
+        'Добавьте один релевантный пример из опыта или учебного проекта.',
+        'Назовите личное действие и понятный результат.',
+      ],
+      4,
+      220
+    ),
+    keyDefinitions: compactTextList(raw.keyDefinitions, [], 4, 220),
+    sampleAnswer: compactText(
+      raw.sampleAnswer,
+      'Я бы ответил от первого лица: коротко задал контекст, назвал своё действие и завершил результатом, не добавляя факты, которых нет в моём опыте.',
+      700
+    ),
+  };
+}
+
+export function normalizeSampleAnswerHint(value: unknown): {
+  sampleAnswer: string;
+} {
+  const raw =
+    value && typeof value === 'object'
+      ? (value as Record<string, unknown>)
+      : {};
+
+  return {
+    sampleAnswer: compactText(
+      raw.sampleAnswer,
+      'Я бы ответил от первого лица: коротко ответил на уточняющий вопрос, добавил один релевантный пример и не выдумывал факты, которых нет в моём опыте.',
+      700
+    ),
+  };
+}
+
 function formatTurns(turns: InterviewTurnRecord[]): string {
   if (!turns.length) return 'Пока нет предыдущих вопросов.';
   return turns
@@ -96,6 +179,7 @@ function sessionContext(params: GenerateQuestionParams | EvaluateAnswerParams) {
 }
 
 function sessionContextForConverse(session: InterviewSessionRecord) {
+  const focus = readInterviewFocus(session);
   return [
     `Роль: ${session.role || 'не указана'}`,
     `Уровень: ${session.level || 'middle'}`,
@@ -108,6 +192,7 @@ function sessionContextForConverse(session: InterviewSessionRecord) {
     `Вакансия: ${session.vacancyTitle || 'не указана'}`,
     `Описание вакансии: ${session.vacancyRaw || 'нет'}`,
     `Резюме кандидата: ${session.resumeRaw || 'нет'}`,
+    `Фокус интервью: ${describeInterviewFocus(focus)}`,
   ].join('\n');
 }
 
@@ -118,10 +203,38 @@ function readInterviewerFaceId(
   return typeof value === 'string' ? (value as InterviewerFaceId) : null;
 }
 
+function readInterviewFocus(session: InterviewSessionRecord): InterviewFocus | null {
+  const value = session.metadata?.focus;
+  return typeof value === 'string' ? (value as InterviewFocus) : null;
+}
+
+// Короткая инструкция для LLM о том, какие вопросы задавать в этом фокусе.
+// null — фокус не задан пользователем, движок сам балансирует типы вопросов.
+function describeInterviewFocus(focus: InterviewFocus | null): string {
+  switch (focus) {
+    case 'hr_screening':
+      return 'HR-скрининг — вопросы про мотивацию, ожидания от роли, причины поиска, soft skills. Без глубоких технических/профессиональных задач.';
+    case 'professional':
+      return 'Профессиональное интервью — хард-скиллы и практические задачи именно по роли/вакансии, минимум общих HR-вопросов.';
+    case 'behavioral':
+      return 'Поведенческое интервью — вопросы про прошлый опыт в формате STAR (ситуация, задача, действие, результат), про конфликты, решения, командную работу.';
+    case 'salary_negotiation':
+      return 'Зарплатные переговоры — вопросы про ожидания по компенсации, аргументацию цифры, реакцию на встречное предложение и возражения работодателя.';
+    default:
+      return 'не задан — смешивай HR, профессиональные и поведенческие вопросы сбалансированно.';
+  }
+}
+
 // Текст диалога по текущему вопросу для промпта converse/converseStream.
 function formatConverseDialogue(params: ConverseParams): string {
-  return params.dialogue.length
-    ? params.dialogue
+  return formatDialogue(params.dialogue);
+}
+
+function formatDialogue(
+  dialogue: Array<{ role: 'user' | 'interviewer'; content: string }>
+): string {
+  return dialogue.length
+    ? dialogue
         .map(
           (message) =>
             `${message.role === 'user' ? 'Кандидат' : 'Интервьюер'}: ${message.content}`
@@ -238,6 +351,58 @@ export class OpenAiInterviewEngine implements InterviewEngine {
       throw apiError('E_UPSTREAM', 'OpenAI не вернул текст вопроса');
     }
     return { question };
+  }
+
+  async generateQuestionHints(
+    params: GenerateQuestionHintsParams
+  ): Promise<QuestionHintDetails> {
+    const raw = await this.requestJson({
+      instruction:
+        'Ты карьерный тренер JobAI. Сгенерируй подсказки к ТЕКУЩЕМУ вопросу интервью, чтобы кандидат понял, о чём говорить, но не получил нечестную шпаргалку. ' +
+        'Пиши по-русски, конкретно и кратко. Обязательно привязывайся к вопросу, роли, вакансии и резюме, если они есть. ' +
+        'Не выдумывай работодателей, годы опыта, метрики, проекты, технологии и факты, которых нет в контексте. Если конкретики нет — предложи кандидату подставить свой пример или свою метрику. ' +
+        'Верни строго JSON вида {"focus":"...","answerPlan":["..."],"keyDefinitions":["..."],"sampleAnswer":"..."}. ' +
+        'answerPlan: 3–5 коротких тезисов. keyDefinitions: 0–4 коротких определения терминов из вопроса. sampleAnswer: 2–4 предложения от первого лица.',
+      userText: [
+        sessionContextForConverse(params.session),
+        '',
+        `Текущий вопрос: ${params.turn.question}`,
+        '',
+        `История интервью:\n${formatTurns(params.turns)}`,
+      ].join('\n'),
+      maxOutputTokens: 760,
+      kind: 'question_hints',
+      context: usageContext(params.session),
+    });
+
+    return normalizeQuestionHintDetails(raw);
+  }
+
+  async generateSampleAnswerHint(
+    params: GenerateSampleAnswerHintParams
+  ): Promise<{ sampleAnswer: string }> {
+    const raw = await this.requestJson({
+      instruction:
+        'Ты карьерный тренер JobAI. Обнови только краткий пример ответа для последнего уточняющего вопроса интервьюера. ' +
+        'Основной плановый вопрос остаётся прежним, поэтому не меняй тему шире уточнения. ' +
+        'Пиши по-русски, 2–4 предложения от первого лица. Не выдумывай работодателей, годы опыта, метрики, проекты, технологии и факты, которых нет в контексте. ' +
+        'Если конкретики нет — формулируй пример так, чтобы кандидат мог подставить свой опыт. Верни строго JSON вида {"sampleAnswer":"..."}.',
+      userText: [
+        sessionContextForConverse(params.session),
+        '',
+        `Плановый вопрос turn: ${params.turn.question}`,
+        `Текущий уточняющий вопрос для примера ответа: ${params.targetQuestion}`,
+        '',
+        `Диалог по текущему turn:\n${formatDialogue(params.dialogue)}`,
+        '',
+        `История интервью:\n${formatTurns(params.turns)}`,
+      ].join('\n'),
+      maxOutputTokens: 360,
+      kind: 'question_sample_hint',
+      context: usageContext(params.session),
+    });
+
+    return normalizeSampleAnswerHint(raw);
   }
 
   async evaluateAnswer(params: EvaluateAnswerParams): Promise<{

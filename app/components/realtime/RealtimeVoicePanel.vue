@@ -1,8 +1,12 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { useRealtimeVoiceSession } from '@/app/composables/useRealtimeVoiceSession';
+import {
+  useRealtimeVoiceSession,
+  type RealtimeVoiceControl,
+} from '@/app/composables/useRealtimeVoiceSession';
 import { useRealtimeVoiceCallFeedback } from '@/app/composables/useRealtimeVoiceCallFeedback';
+import ButtonLoader from '@/app/components/design/ButtonLoader.vue';
 import type { RealtimeSessionLimits } from '@/shared/dto';
 
 const props = defineProps<{
@@ -10,6 +14,9 @@ const props = defineProps<{
   disabled?: boolean;
   realtimeLimits?: RealtimeSessionLimits;
   onEvent?: (event: unknown) => void;
+  // Отдаёт родителю управление realtime-сессией (отправка событий, отмена
+  // ответа) — для голосовой команды «следующий вопрос» и озвучки нового вопроса.
+  onControl?: (control: RealtimeVoiceControl | null) => void;
   voiceProfileKey?: string | null;
   // 'panel' — полная карточка; 'icon' — компактная иконка-кнопка для композера.
   variant?: 'panel' | 'icon';
@@ -19,6 +26,11 @@ const { t } = useI18n();
 const realtimeVoice = useRealtimeVoiceSession({
   sessionId: props.sessionId,
   onEvent: (event) => props.onEvent?.(event),
+});
+
+props.onControl?.({
+  sendEvent: realtimeVoice.sendEvent,
+  cancelActiveResponses: realtimeVoice.cancelActiveResponses,
 });
 
 // Звуковая обратная связь звонка: гудок при соединении, сигнал «можно
@@ -143,6 +155,7 @@ watch(
 
 onBeforeUnmount(() => {
   clearTimer();
+  props.onControl?.(null);
 });
 </script>
 
@@ -150,7 +163,7 @@ onBeforeUnmount(() => {
   <!-- Компактный вариант: одна иконка-кнопка с тултипом (для композера чата) -->
   <button
     v-if="variant === 'icon'"
-    class="rt-icon"
+    class="rt-icon button-loader-host"
     type="button"
     :class="{ 'rt-icon--active': realtimeVoice.isActive.value }"
     :disabled="disabled || realtimeVoice.isBusy.value"
@@ -161,19 +174,27 @@ onBeforeUnmount(() => {
     "
     @click="onToggle"
   >
-    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path
-        d="M4 10v4M8 7v10M12 4v16M16 7v10M20 10v4"
-        stroke="currentColor"
-        stroke-width="1.8"
-        stroke-linecap="round"
-      />
-    </svg>
+    <ButtonLoader v-if="realtimeVoice.isBusy.value" />
+    <span
+      class="button-loader-content"
+      :class="{
+        'button-loader-content--loading': realtimeVoice.isBusy.value,
+      }"
+    >
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path
+          d="M4 10v4M8 7v10M12 4v16M16 7v10M20 10v4"
+          stroke="currentColor"
+          stroke-width="1.8"
+          stroke-linecap="round"
+        />
+      </svg>
+    </span>
   </button>
 
-  <section v-else class="realtime-panel">
+  <section v-else class="realtime-panel glass-frame glass-frame--soft">
     <div class="copy">
-      <p class="eyebrow">{{ t('voice.realtime.eyebrow') }}</p>
+      <p class="panel-label">{{ t('voice.realtime.eyebrow') }}</p>
       <h3>{{ t('voice.realtime.title') }}</h3>
       <p>{{ t('voice.realtime.subtitle') }}</p>
     </div>
@@ -187,16 +208,24 @@ onBeforeUnmount(() => {
         {{ elapsedLabel }} / {{ remainingLabel }}
       </span>
       <button
-        class="voice-action"
+        class="voice-action button-loader-host"
         type="button"
         :disabled="disabled || realtimeVoice.isBusy.value"
         @click="onToggle"
       >
-        {{
-          realtimeVoice.isActive.value
-            ? t('voice.realtime.stop')
-            : t('voice.realtime.start')
-        }}
+        <ButtonLoader v-if="realtimeVoice.isBusy.value" />
+        <span
+          class="button-loader-content"
+          :class="{
+            'button-loader-content--loading': realtimeVoice.isBusy.value,
+          }"
+        >
+          {{
+            realtimeVoice.isActive.value
+              ? t('voice.realtime.stop')
+              : t('voice.realtime.start')
+          }}
+        </span>
       </button>
     </div>
 
@@ -217,10 +246,10 @@ onBeforeUnmount(() => {
   justify-content: center;
   width: 44px;
   height: 44px;
-  border: 1px solid var(--glass-border, var(--color-border));
+  border: 1px solid var(--glass-border);
   border-radius: 12px;
-  color: var(--text-secondary, var(--color-text));
-  background: var(--surface-soft, var(--color-surface));
+  color: var(--text-secondary);
+  background: var(--surface-soft);
   cursor: pointer;
   transition:
     transform 0.18s ease,
@@ -233,8 +262,8 @@ onBeforeUnmount(() => {
   height: 20px;
 }
 .rt-icon:hover {
-  border-color: var(--glass-border-strong, var(--color-border));
-  color: var(--text-primary, var(--color-text));
+  border-color: var(--glass-border-strong);
+  color: var(--text-primary);
 }
 .rt-icon:active {
   transform: translateY(1px);
@@ -245,15 +274,15 @@ onBeforeUnmount(() => {
 }
 /* Идёт разговор — акцентная подсветка + пульс. */
 .rt-icon--active {
-  border-color: color-mix(in srgb, var(--accent, var(--color-accent)) 55%, transparent);
-  color: var(--accent, var(--color-accent));
-  background: color-mix(in srgb, var(--accent, var(--color-accent)) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
   animation: rt-pulse 1.4s ease-in-out infinite;
 }
 @keyframes rt-pulse {
   0%,
   100% {
-    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent, var(--color-accent)) 32%, transparent);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 32%, transparent);
   }
   50% {
     box-shadow: 0 0 0 6px transparent;
@@ -265,9 +294,6 @@ onBeforeUnmount(() => {
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 18px;
   align-items: center;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
-  background: var(--color-surface);
   padding: 18px;
 }
 
@@ -277,25 +303,19 @@ onBeforeUnmount(() => {
   gap: 4px;
 }
 
-.eyebrow,
+.panel-label,
 .copy h3,
 .copy p {
   margin: 0;
 }
 
-.eyebrow {
-  color: var(--color-accent);
-  font-size: 12px;
-  font-weight: 800;
-  text-transform: uppercase;
-}
-
 .copy h3 {
+  color: var(--text-primary);
   font-size: 18px;
 }
 
 .copy p {
-  color: var(--color-muted);
+  color: var(--text-muted);
 }
 
 .controls {
@@ -308,7 +328,7 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  color: var(--color-muted);
+  color: var(--text-muted);
   font-size: 13px;
   font-weight: 800;
   white-space: nowrap;
@@ -322,11 +342,11 @@ onBeforeUnmount(() => {
 }
 
 .status--active {
-  color: var(--color-accent);
+  color: var(--accent-2);
 }
 
 .timer {
-  color: var(--color-muted);
+  color: var(--text-muted);
   font-family: var(--font-mono);
   font-size: 12px;
   font-weight: 900;
@@ -335,9 +355,10 @@ onBeforeUnmount(() => {
 
 .voice-action {
   border: 0;
-  border-radius: 10px;
-  color: white;
-  background: var(--color-text);
+  border-radius: var(--radius-control);
+  color: var(--button-text);
+  background: var(--button-bg);
+  box-shadow: var(--button-shadow);
   font: inherit;
   font-weight: 800;
   padding: 10px 14px;
@@ -352,7 +373,7 @@ onBeforeUnmount(() => {
 .voice-error {
   grid-column: 1 / -1;
   margin: 0;
-  color: var(--color-danger);
+  color: var(--danger);
   font-size: 14px;
   font-weight: 700;
 }
@@ -360,7 +381,7 @@ onBeforeUnmount(() => {
 .limit-message {
   grid-column: 1 / -1;
   margin: 0;
-  color: var(--color-muted);
+  color: var(--text-muted);
   font-size: 13px;
   font-weight: 700;
 }

@@ -109,7 +109,7 @@ function buildInstruction(): string {
     'Ты карьерный коуч и интервьюер. Разбери завершённое собеседование на русском языке.',
     'Оцени критерии от 0 до 100: structure, specificity, relevance, confidence, riskPhrases, brevity.',
     'riskPhrases — высокий балл означает, что риск-фраз мало.',
-    'Для каждого вопроса обязательно дай modelAnswer — развёрнутый ЭТАЛОННЫЙ ответ (как стоило бы ответить), 3–6 предложений, по структуре STAR, с конкретикой и цифрами, от первого лица.',
+    'Для каждого вопроса обязательно дай modelAnswer — сильный возможный вариант ответа, 3–6 предложений, по структуре STAR (ситуация, задача, действие, результат), с конкретикой и цифрами, от первого лица.',
     'Верни строго JSON без markdown.',
     'Формат: {"overallScore":82,"verdict":"...","summary":"...","criteria":{"structure":80,"specificity":70,"relevance":90,"confidence":78,"riskPhrases":84,"brevity":88},"recommendations":{"topFixes":["...","...","..."]},"questionAnalysis":[{"turnId":"...","question":"...","answer":"...","whatWorked":"...","whatWeak":"...","modelAnswer":"...","strongerAnswerStar":"...","nextPractice":"..."}]}',
   ].join('\n');

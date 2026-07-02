@@ -7,11 +7,11 @@ const THEME_KEY = 'jobai:theme';
 const FONT_KEY = 'jobai:font';
 
 const themeValues: JobaiTheme[] = ['dark', 'light'];
-const fontValues: JobaiFont[] = ['manrope', 'space', 'mono'];
+const fontValues: JobaiFont[] = ['mono', 'manrope', 'space'];
 
 export function useDesignPreferences() {
   const theme = useState<JobaiTheme>('jobai-theme', () => 'dark');
-  const font = useState<JobaiFont>('jobai-font', () => 'manrope');
+  const font = useState<JobaiFont>('jobai-font', () => 'mono');
 
   const themeOptions: Array<{ value: JobaiTheme; label: string }> = [
     { value: 'dark', label: 'Темная' },
@@ -19,9 +19,9 @@ export function useDesignPreferences() {
   ];
 
   const fontOptions: Array<{ value: JobaiFont; label: string; title: string }> = [
+    { value: 'mono', label: 'Mono', title: 'JetBrains Mono' },
     { value: 'manrope', label: 'Manrope', title: 'Современный UI' },
     { value: 'space', label: 'Grotesk', title: 'Акцентный гротеск' },
-    { value: 'mono', label: 'Mono', title: 'JetBrains Mono' },
   ];
 
   function isTheme(value: string | null): value is JobaiTheme {

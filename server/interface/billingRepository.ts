@@ -79,8 +79,14 @@ export interface BillingRepository {
   findPaymentOrderByProviderPaymentId(
     providerPaymentId: string
   ): Promise<PaymentOrderRecord | null>;
+  findLatestPaymentOrderByUserId(
+    userId: string
+  ): Promise<PaymentOrderRecord | null>;
   updatePaymentOrder(
     input: UpdatePaymentOrderInput
   ): Promise<PaymentOrderRecord | null>;
+  findSubscriptionByProviderPaymentId(
+    providerPaymentId: string
+  ): Promise<SubscriptionRecord | null>;
   grantSubscription(input: GrantSubscriptionInput): Promise<SubscriptionRecord>;
 }

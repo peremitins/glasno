@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, isNull } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray, isNull, or } from 'drizzle-orm';
 import type { UserRole } from '@/shared/dto';
 import { getDb, schema } from '@/server/infrastructure/db/client';
 import { apiError } from '@/server/utils/errors';
@@ -28,6 +28,7 @@ function mapUser(row: UserRow): AuthUserRecord {
     displayName: row.displayName,
     role: row.role as UserRole,
     emailVerifiedAt: row.emailVerifiedAt,
+    deletedAt: row.deletedAt,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -83,7 +84,7 @@ export class DrizzleAuthRepository implements AuthRepository {
     const [row] = await this.db
       .select()
       .from(schema.users)
-      .where(eq(schema.users.id, id))
+      .where(and(eq(schema.users.id, id), isNull(schema.users.deletedAt)))
       .limit(1);
     return row ? mapUser(row) : null;
   }
@@ -94,7 +95,12 @@ export class DrizzleAuthRepository implements AuthRepository {
     const [row] = await this.db
       .select()
       .from(schema.users)
-      .where(eq(schema.users.telegramId, telegramId))
+      .where(
+        and(
+          eq(schema.users.telegramId, telegramId),
+          isNull(schema.users.deletedAt)
+        )
+      )
       .limit(1);
     return row ? mapUser(row) : null;
   }
@@ -104,7 +110,7 @@ export class DrizzleAuthRepository implements AuthRepository {
     const [existing] = await this.db
       .select()
       .from(schema.users)
-      .where(eq(schema.users.email, email))
+      .where(and(eq(schema.users.email, email), isNull(schema.users.deletedAt)))
       .limit(1);
 
     if (existing) {
@@ -123,7 +129,7 @@ export class DrizzleAuthRepository implements AuthRepository {
       .insert(schema.users)
       .values({
         email,
-        displayName: email,
+        displayName: null,
         role: 'user',
         emailVerifiedAt: now,
         updatedAt: now,
@@ -148,7 +154,12 @@ export class DrizzleAuthRepository implements AuthRepository {
     const [existing] = await this.db
       .select()
       .from(schema.users)
-      .where(eq(schema.users.telegramId, input.telegramId))
+      .where(
+        and(
+          eq(schema.users.telegramId, input.telegramId),
+          isNull(schema.users.deletedAt)
+        )
+      )
       .limit(1);
 
     if (existing) {
@@ -175,6 +186,74 @@ export class DrizzleAuthRepository implements AuthRepository {
       })
       .returning();
     return mapUser(requireRow(created, 'user'));
+  }
+
+  async anonymizeUserAccount(userId: string, now: Date): Promise<boolean> {
+    const [updated] = await this.db.transaction(async (tx) => {
+      const ownedSessions = await tx
+        .select({ id: schema.interviewSessions.id })
+        .from(schema.interviewSessions)
+        .where(eq(schema.interviewSessions.userId, userId));
+      const sessionIds = ownedSessions.map((session) => session.id);
+
+      if (sessionIds.length > 0) {
+        await tx
+          .delete(schema.realtimeVoiceSessions)
+          .where(
+            or(
+              eq(schema.realtimeVoiceSessions.userId, userId),
+              inArray(schema.realtimeVoiceSessions.interviewSessionId, sessionIds)
+            )
+          );
+        await tx
+          .delete(schema.aiUsage)
+          .where(
+            or(
+              eq(schema.aiUsage.userId, userId),
+              inArray(schema.aiUsage.interviewSessionId, sessionIds)
+            )
+          );
+        await tx
+          .delete(schema.interviewReports)
+          .where(inArray(schema.interviewReports.sessionId, sessionIds));
+        await tx
+          .delete(schema.interviewTurns)
+          .where(inArray(schema.interviewTurns.sessionId, sessionIds));
+        await tx
+          .delete(schema.interviewSessions)
+          .where(inArray(schema.interviewSessions.id, sessionIds));
+      } else {
+        await tx
+          .delete(schema.realtimeVoiceSessions)
+          .where(eq(schema.realtimeVoiceSessions.userId, userId));
+        await tx.delete(schema.aiUsage).where(eq(schema.aiUsage.userId, userId));
+      }
+
+      await tx
+        .update(schema.paymentOrders)
+        .set({ metadata: null, updatedAt: now })
+        .where(eq(schema.paymentOrders.userId, userId));
+      await tx
+        .update(schema.authSessions)
+        .set({ revokedAt: now })
+        .where(eq(schema.authSessions.userId, userId));
+
+      return tx
+        .update(schema.users)
+        .set({
+          email: null,
+          telegramId: null,
+          telegramUsername: null,
+          displayName: null,
+          role: 'user',
+          deletedAt: now,
+          updatedAt: now,
+        })
+        .where(and(eq(schema.users.id, userId), isNull(schema.users.deletedAt)))
+        .returning({ id: schema.users.id });
+    });
+
+    return Boolean(updated);
   }
 
   async createEmailLoginCode(

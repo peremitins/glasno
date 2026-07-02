@@ -56,6 +56,10 @@ export const LogoutResponseDto = z.object({
   ok: z.literal(true),
 });
 
+export const DeleteAccountResponseDto = z.object({
+  ok: z.literal(true),
+});
+
 export type UserRole = z.infer<typeof UserRoleDto>;
 export type AuthUser = z.infer<typeof AuthUserDto>;
 export type AuthMeResponse = z.infer<typeof AuthMeResponseDto>;
@@ -72,3 +76,4 @@ export type AuthLoginResponse = z.infer<typeof AuthLoginResponseDto>;
 export type TelegramLoginRequest = z.infer<typeof TelegramLoginRequestDto>;
 export type MagicLoginConsumeQuery = z.infer<typeof MagicLoginConsumeQueryDto>;
 export type LogoutResponse = z.infer<typeof LogoutResponseDto>;
+export type DeleteAccountResponse = z.infer<typeof DeleteAccountResponseDto>;

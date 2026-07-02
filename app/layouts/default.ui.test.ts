@@ -1,0 +1,23 @@
+import { readFileSync } from 'node:fs';
+import { describe, expect, it } from 'vitest';
+
+const source = readFileSync('app/layouts/default.vue', 'utf8');
+
+describe('default layout sidebar', () => {
+  it('shows compact progress metrics instead of a hard-coded weekly count', () => {
+    expect(source).toContain('layout-dashboard-summary');
+    expect(source).toContain('sidebar-metrics');
+    expect(source).toContain('layout.progressCompletedShort');
+    expect(source).toContain('layout.progressAverageShort');
+    expect(source).not.toContain('<strong>7</strong>');
+    expect(source).not.toContain('layout.weekProgressHint');
+  });
+
+  it('keeps pricing visible and uses an anonymous profile icon in the header', () => {
+    expect(source).toContain("{ to: '/pricing', key: 'pricing'");
+    expect(source).toContain('PersonIcon');
+    expect(source).toContain('profile-pill');
+    expect(source).not.toContain('Анна');
+    expect(source).not.toContain('aria-hidden="true">A</span>');
+  });
+});

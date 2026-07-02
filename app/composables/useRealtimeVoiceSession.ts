@@ -4,12 +4,20 @@ import type {
   RealtimeSessionResponse,
 } from '@/shared/dto';
 import {
+  shouldUseRealtimeWebsocketTransport,
   startRealtimeVoiceClient,
   type RealtimeVoiceClient,
 } from '@/app/services/realtime/realtimeTransport';
 import { useMicPermissionGate } from './useMicPermissionGate';
 import { useAudioPermissionGate } from './useAudioPermissionGate';
 import { useRealtimeVoiceUiStore } from '@/app/stores/realtimeVoiceUi';
+
+// Управление активной realtime-сессией «снаружи» (со страницы интервью):
+// отправка клиентских событий OpenAI и мгновенная отмена ответа ассистента.
+export interface RealtimeVoiceControl {
+  sendEvent: (event: Record<string, unknown>) => void;
+  cancelActiveResponses: () => void;
+}
 
 export function useRealtimeVoiceSession(options: {
   sessionId: string;
@@ -57,6 +65,12 @@ export function useRealtimeVoiceSession(options: {
         },
         onActivity() {
           void registerRealtimeActivity();
+        },
+        onKeepAlive() {
+          // Держим серверную сессию живой, НО не трогаем таймер простоя:
+          // фоновый звук/озвучка ассистента не должны отменять автоотключение
+          // по тишине (30 сек без речи → сессия завершается, микрофон гаснет).
+          void sendServerActivityPing();
         },
         onPlaybackBlocked(error) {
           audioPermissionGate.handlePlaybackFailure(error);
@@ -203,11 +217,44 @@ export function useRealtimeVoiceSession(options: {
     client.value?.setMicrophoneEnabled(true);
   }
 
+  // Отправка произвольного клиентского события в realtime-сессию
+  // (conversation.item.create / response.create и т.п.). Без активного
+  // соединения — no-op.
+  function sendEvent(event: Record<string, unknown>) {
+    client.value?.sendEvent(event);
+  }
+
+  // Мгновенно обрывает текущий ответ ассистента: отменяет активные response
+  // (по известным id и «дефолтный» без id) и сбрасывает уже буферизованный
+  // голос. Нужно, когда пользователь дал команду «следующий вопрос», а модель
+  // успела начать говорить, — чтобы не было конфликта двух голосов.
+  function cancelActiveResponses() {
+    const activeClient = client.value;
+    if (!activeClient) return;
+
+    const events = buildRealtimeCancelEvents({
+      activeResponseIds: assistantMicrophoneMuteResponseIds,
+      websocketTransport: shouldUseRealtimeWebsocketTransport(),
+    });
+    for (const event of events) {
+      activeClient.sendEvent(event);
+    }
+    resetAssistantMicrophoneMute();
+  }
+
+  // Значимая разговорная активность: сбрасывает таймер простоя и пингует сервер.
   async function registerRealtimeActivity() {
     const session = realtimeSession.value;
     if (!session) return;
     scheduleIdleStop(session.idleTimeoutSeconds);
+    await sendServerActivityPing();
+  }
 
+  // Троттлинговый пинг серверной сессии (обновляет lastActivityAt), без сброса
+  // клиентского таймера простоя.
+  async function sendServerActivityPing() {
+    const session = realtimeSession.value;
+    if (!session) return;
     const now = Date.now();
     if (now - lastActivitySentAt < 5_000) return;
     lastActivitySentAt = now;
@@ -290,20 +337,16 @@ export function useRealtimeVoiceSession(options: {
     stopBeforePageLeave('page_leave');
   }
 
-  function handleVisibilityChange() {
-    if (document.visibilityState === 'hidden') {
-      stopBeforePageLeave('page_leave');
-    }
-  }
-
   onMounted(() => {
+    // Закрытие/перезагрузка вкладки должны завершить серверную сессию сразу.
+    // Потеря фокуса, сворачивание браузера и переход на другую вкладку
+    // остаются на idle-защите: через 30 секунд тишины stop('idle_timeout')
+    // закроет микрофон, а серверный расчёт ограничит открытую сессию.
     window.addEventListener('pagehide', handlePageHide);
-    document.addEventListener('visibilitychange', handleVisibilityChange);
   });
 
   onBeforeUnmount(() => {
     window.removeEventListener('pagehide', handlePageHide);
-    document.removeEventListener('visibilitychange', handleVisibilityChange);
     stopBeforePageLeave('page_leave');
   });
 
@@ -317,6 +360,8 @@ export function useRealtimeVoiceSession(options: {
     stop,
     restart,
     toggle,
+    sendEvent,
+    cancelActiveResponses,
   };
 }
 
@@ -336,6 +381,25 @@ function stringValue(value: unknown): string {
 
 function readResponseId(response: unknown): string {
   return stringValue((response as { id?: unknown } | undefined)?.id);
+}
+
+// Набор событий для мгновенной отмены речи ассистента. Отменяем известные
+// активные ответы по id, затем «дефолтный» (ответ мог стартовать до прихода
+// response.created), а для WebRTC дополнительно чистим буфер уже отправленного
+// в воспроизведение звука. Ошибки вида «нет активного ответа» безвредны.
+export function buildRealtimeCancelEvents(input: {
+  activeResponseIds: Iterable<string>;
+  websocketTransport: boolean;
+}): Array<Record<string, unknown>> {
+  const events: Array<Record<string, unknown>> = [];
+  for (const responseId of input.activeResponseIds) {
+    events.push({ type: 'response.cancel', response_id: responseId });
+  }
+  events.push({ type: 'response.cancel' });
+  if (!input.websocketTransport) {
+    events.push({ type: 'output_audio_buffer.clear' });
+  }
+  return events;
 }
 
 export function shouldPhysicallyMuteRealtimeMicrophone(

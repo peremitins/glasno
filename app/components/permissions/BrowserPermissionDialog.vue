@@ -30,7 +30,7 @@
       @click.self="close"
     >
       <section
-        class="permission-dialog"
+        class="permission-dialog glass-frame"
         role="dialog"
         aria-modal="true"
         aria-labelledby="permission-title"
@@ -77,18 +77,13 @@
     display: grid;
     place-items: center;
     padding: 18px;
-    background: rgba(6, 9, 18, 0.62);
+    background: color-mix(in srgb, var(--app-bg) 72%, transparent);
     backdrop-filter: blur(4px);
   }
 
   .permission-dialog {
     width: min(460px, 100%);
-    border: 1px solid rgba(155, 166, 206, 0.3);
-    border-radius: 18px;
-    background: #f8faff;
-    color: #242942;
-    box-shadow: 0 24px 80px rgba(20, 26, 48, 0.26),
-      inset 0 1px 0 rgba(255, 255, 255, 0.82);
+    color: var(--text-primary);
     padding: 20px;
   }
 
@@ -108,15 +103,17 @@
   }
 
   .permission-head p {
-    color: #747d96;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
     font-size: 12px;
     font-weight: 800;
-    letter-spacing: 0.04em;
+    letter-spacing: 0.12em;
     text-transform: uppercase;
   }
 
   .permission-head h2 {
     margin-top: 4px;
+    color: var(--text-primary);
     font-size: 21px;
     line-height: 1.2;
   }
@@ -126,10 +123,10 @@
     place-items: center;
     width: 34px;
     height: 34px;
-    border: 1px solid rgba(105, 116, 148, 0.22);
-    border-radius: 10px;
-    background: #fff;
-    color: #4d566e;
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-xs);
+    background: var(--surface-soft);
+    color: var(--text-secondary);
     cursor: pointer;
     font: inherit;
     font-size: 22px;
@@ -137,12 +134,12 @@
   }
 
   .permission-close:hover {
-    border-color: rgba(79, 88, 112, 0.28);
-    color: #252b3c;
+    border-color: var(--glass-border-strong);
+    color: var(--text-primary);
   }
 
   .permission-copy {
-    color: #4f5870;
+    color: var(--text-secondary);
     font-size: 14px;
     line-height: 1.45;
   }
@@ -160,10 +157,10 @@
     grid-template-columns: 28px minmax(0, 1fr);
     gap: 10px;
     align-items: start;
-    border: 1px solid rgba(116, 125, 150, 0.18);
-    border-radius: 12px;
-    background: #fff;
-    color: #333b52;
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-sm);
+    background: var(--surface-soft);
+    color: var(--text-secondary);
     font-size: 14px;
     line-height: 1.4;
     padding: 10px;
@@ -175,16 +172,17 @@
     width: 24px;
     height: 24px;
     border-radius: 999px;
-    background: rgba(101, 87, 255, 0.1);
-    color: #6557ff;
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    color: var(--accent-2);
+    font-family: var(--font-mono);
     font-size: 12px;
     font-weight: 900;
   }
 
   .permission-note {
     margin-top: 12px;
-    border-left: 3px solid rgba(101, 87, 255, 0.36);
-    color: #606980;
+    border-left: 3px solid color-mix(in srgb, var(--accent) 36%, transparent);
+    color: var(--text-muted);
     font-size: 13px;
     line-height: 1.45;
     padding-left: 10px;
@@ -199,9 +197,10 @@
   .permission-actions button {
     min-height: 40px;
     border: 0;
-    border-radius: 11px;
-    background: #6557ff;
-    color: #fff;
+    border-radius: var(--radius-control);
+    background: var(--button-bg);
+    color: var(--button-text);
+    box-shadow: var(--button-shadow);
     cursor: pointer;
     font: inherit;
     font-weight: 800;
@@ -209,6 +208,6 @@
   }
 
   .permission-actions button:hover {
-    background: #584beb;
+    background: var(--button-bg-hover);
   }
 </style>

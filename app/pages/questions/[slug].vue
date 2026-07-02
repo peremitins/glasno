@@ -1,55 +1,66 @@
 <script setup lang="ts">
-import { computed } from 'vue';
-import { useI18n } from 'vue-i18n';
-import type { QuestionBankItemResponse } from '@/shared/dto';
+  import { computed } from 'vue';
+  import { useI18n } from 'vue-i18n';
+  import GlassSkeletonStack from '@/app/components/design/GlassSkeletonStack.vue';
+  import type { QuestionBankItemResponse } from '@/shared/dto';
 
-const { t } = useI18n();
-const route = useRoute();
-const api = useAPI();
+  const { t } = useI18n();
+  const route = useRoute();
+  const api = useAPI();
 
-const slug = computed(() => String(route.params.slug || ''));
-const { data, pending } = await useAsyncData(
-  () => `question-${slug.value}`,
-  () => api<QuestionBankItemResponse>(`/api/question-bank/${slug.value}`)
-);
+  const slug = computed(() => String(route.params.slug || ''));
+  const { data, pending } = await useLazyAsyncData(
+    () => `question-${slug.value}`,
+    () => api<QuestionBankItemResponse>(`/api/question-bank/${slug.value}`)
+  );
 
-const trainLink = computed(() => ({
-  path: '/interview/new',
-  query: {
-    source: 'profession',
-    role: data.value?.item.role || data.value?.item.domainLabel || '',
-  },
-}));
+  const trainLink = computed(() => ({
+    path: '/interview/new',
+    query: {
+      source: 'profession',
+      role: data.value?.item.role || data.value?.item.domainLabel || '',
+    },
+  }));
 </script>
 
 <template>
-  <div class="page">
-    <NuxtLink to="/questions" class="back">{{ t('questions.back') }}</NuxtLink>
+  <div class="question-detail-page app-page">
+    <NuxtLink to="/questions" class="inline-back">{{
+      t('questions.back')
+    }}</NuxtLink>
 
-    <p v-if="pending" class="muted">{{ t('common.loading') }}</p>
+    <GlassSkeletonStack
+      v-if="pending"
+      class="question-detail-skeleton"
+      :heights="[156, 146, 146, 112]"
+    />
 
     <template v-else-if="data?.item">
-      <header class="header">
-        <p class="eyebrow">
-          {{ data.item.domainLabel }} · {{ t(`questions.types.${data.item.type}`) }}
+      <header class="app-page-header glass-frame glass-frame--soft">
+        <p class="page-kicker">
+          {{ data.item.domainLabel }} ·
+          {{ t(`questions.types.${data.item.type}`) }}
         </p>
-        <h1>{{ data.item.question }}</h1>
-        <NuxtLink class="primary" :to="trainLink">
+        <h1 class="page-title">{{ data.item.question }}</h1>
+        <NuxtLink
+          class="primary-action primary-action--compact"
+          :to="trainLink"
+        >
           {{ t('questions.train') }}
         </NuxtLink>
       </header>
 
-      <section class="panel">
+      <section class="panel glass-frame">
         <h2>{{ t('questions.strongAnswer') }}</h2>
         <p>{{ data.item.strongAnswer }}</p>
       </section>
 
-      <section class="panel">
+      <section class="panel glass-frame">
         <h2>{{ t('questions.commonMistakes') }}</h2>
         <p>{{ data.item.commonMistakes }}</p>
       </section>
 
-      <section v-if="data.related.length" class="panel">
+      <section v-if="data.related.length" class="panel glass-frame">
         <h2>{{ t('questions.related') }}</h2>
         <div class="related">
           <NuxtLink
@@ -66,96 +77,61 @@ const trainLink = computed(() => ({
 </template>
 
 <style scoped>
-.page {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.back {
-  color: var(--color-accent);
-  font-weight: 800;
-  text-decoration: none;
-}
-
-.header,
-.panel {
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  padding: 20px;
-}
-
-.header {
-  display: grid;
-  gap: 14px;
-}
-
-.eyebrow {
-  margin: 0;
-  color: var(--color-accent);
-  font-size: 13px;
-  font-weight: 900;
-  text-transform: uppercase;
-}
-
-h1,
-h2,
-p {
-  margin: 0;
-}
-
-h1 {
-  max-width: 900px;
-  font-size: clamp(30px, 4vw, 46px);
-  line-height: 1.08;
-}
-
-.panel {
-  display: grid;
-  gap: 10px;
-}
-
-.panel h2 {
-  font-size: 18px;
-}
-
-.panel p,
-.muted {
-  color: var(--color-muted);
-  line-height: 1.55;
-}
-
-.primary {
-  justify-self: start;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 44px;
-  border-radius: 8px;
-  background: var(--color-accent);
-  color: #fff;
-  padding: 0 16px;
-  text-decoration: none;
-  font-weight: 800;
-}
-
-.related {
-  display: grid;
-  gap: 8px;
-}
-
-.related a {
-  color: var(--color-text);
-  text-decoration: none;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  padding: 12px;
-}
-
-@media (max-width: 640px) {
-  .primary {
-    width: 100%;
+  .question-detail-page {
+    display: flex;
+    flex-direction: column;
+    gap: clamp(12px, 1.6vw, 16px);
   }
-}
+
+  h1,
+  h2,
+  p {
+    margin: 0;
+  }
+
+  .panel {
+    display: grid;
+    gap: 10px;
+    padding: clamp(18px, 2.2vw, 26px);
+  }
+
+  .panel h2 {
+    color: var(--text-primary);
+    font-size: 18px;
+  }
+
+  .panel p,
+  .muted {
+    color: var(--text-muted);
+    line-height: 1.55;
+  }
+
+  .related {
+    display: grid;
+    gap: 8px;
+  }
+
+  .related a {
+    color: var(--text-primary);
+    text-decoration: none;
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-md);
+    background: var(--surface-soft);
+    padding: 12px;
+    transition: transform var(--motion-normal) var(--ease-out),
+      background var(--motion-normal) var(--ease-out),
+      border-color var(--motion-normal) var(--ease-out);
+  }
+
+  .related a:hover {
+    transform: translateY(-2px);
+    border-color: var(--glass-border-strong);
+    background: var(--surface-raised);
+  }
+
+  @media (max-width: 640px) {
+    .primary-action {
+      width: 100%;
+    }
+  }
 </style>

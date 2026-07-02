@@ -79,6 +79,17 @@ function createInMemoryRepository() {
       turn.metadata = metadata;
       return turn;
     },
+    async deleteSession(id: string) {
+      const sessionIndex = sessions.findIndex((session) => session.id === id);
+      if (sessionIndex === -1) return false;
+      sessions.splice(sessionIndex, 1);
+      for (let index = turns.length - 1; index >= 0; index -= 1) {
+        if (turns[index].sessionId === id) {
+          turns.splice(index, 1);
+        }
+      }
+      return true;
+    },
   };
 }
 
@@ -91,6 +102,8 @@ describe('InterviewService', () => {
         .fn()
         .mockResolvedValue({ question: 'Расскажите о релевантном опыте.' }),
       evaluateAnswer: vi.fn(),
+      generateQuestionHints: vi.fn(),
+      generateSampleAnswerHint: vi.fn(),
       converse: vi.fn(),
       converseStream: vi.fn(),
     };
@@ -145,6 +158,8 @@ describe('InterviewService', () => {
       }),
       generateQuestion: vi.fn(),
       evaluateAnswer: vi.fn(),
+      generateQuestionHints: vi.fn(),
+      generateSampleAnswerHint: vi.fn(),
     };
 
     const service = new InterviewService({
@@ -198,6 +213,8 @@ describe('InterviewService', () => {
         .fn()
         .mockResolvedValue({ question: 'Как вы ищете новых клиентов?' }),
       evaluateAnswer: vi.fn(),
+      generateQuestionHints: vi.fn(),
+      generateSampleAnswerHint: vi.fn(),
     };
 
     const service = new InterviewService({
@@ -239,6 +256,59 @@ describe('InterviewService', () => {
     ]);
   });
 
+  it('deletes only an owned interview session', async () => {
+    const repository = createInMemoryRepository();
+    const engine = {
+      converse: vi.fn(),
+      converseStream: vi.fn(),
+      normalizeCustomQuestions: vi.fn(),
+      generateQuestion: vi
+        .fn()
+        .mockResolvedValue({ question: 'Как вы готовитесь к интервью?' }),
+      evaluateAnswer: vi.fn(),
+      generateQuestionHints: vi.fn(),
+      generateSampleAnswerHint: vi.fn(),
+    };
+    const service = new InterviewService({
+      repository,
+      engine,
+      hhClient: null,
+    });
+
+    const created = await service.createSession({
+      anonymousSessionId: 'anon_owner',
+      userId: 'user_owner',
+      input: {
+        source: { type: 'profession', role: 'Product Manager' },
+        level: 'middle',
+        sessionGoal: 'quick',
+        responseMode: 'text',
+        hintMode: 'off',
+        language: 'ru',
+        interviewerMode: 'neutral',
+        interviewerAvatarId: 'neutral-pro',
+      },
+    });
+
+    await expect(
+      service.deleteSession({
+        anonymousSessionId: 'anon_other',
+        userId: 'user_other',
+        sessionId: created.session.id,
+      })
+    ).rejects.toMatchObject({ data: { code: 'E_FORBIDDEN' } });
+
+    await expect(
+      service.deleteSession({
+        anonymousSessionId: 'anon_owner',
+        userId: 'user_owner',
+        sessionId: created.session.id,
+      })
+    ).resolves.toEqual({ ok: true });
+    expect(repository.sessions).toHaveLength(0);
+    expect(repository.turns).toHaveLength(0);
+  });
+
   it('streams interviewer reply deltas before returning the final interview state', async () => {
     const repository = createInMemoryRepository();
     async function* converseStream() {
@@ -254,6 +324,8 @@ describe('InterviewService', () => {
         .fn()
         .mockResolvedValue({ question: 'Как вы работаете с приоритетами?' }),
       evaluateAnswer: vi.fn(),
+      generateQuestionHints: vi.fn(),
+      generateSampleAnswerHint: vi.fn(),
     };
 
     const service = new InterviewService({
@@ -290,8 +362,12 @@ describe('InterviewService', () => {
 
     expect(chunks[0]).toEqual({ type: 'delta', text: 'Хорошо, ' });
     expect(chunks[1]).toEqual({ type: 'delta', text: 'продолжайте.' });
-    expect(chunks[2]).toMatchObject({ type: 'done' });
-    expect(chunks[2].state.currentTurn?.messages).toEqual([
+    const doneChunk = chunks[2];
+    expect(doneChunk).toMatchObject({ type: 'done' });
+    if (!doneChunk || doneChunk.type !== 'done') {
+      throw new Error('Expected final stream chunk with interview state');
+    }
+    expect(doneChunk.state.currentTurn?.messages).toEqual([
       expect.objectContaining({
         role: 'user',
         content: 'Я сначала оцениваю влияние и срочность.',
@@ -301,7 +377,7 @@ describe('InterviewService', () => {
         content: 'Хорошо, продолжайте.',
       }),
     ]);
-    expect(chunks[2].state.currentTurn?.suggestMoveOn).toBe(true);
+    expect(doneChunk.state.currentTurn?.suggestMoveOn).toBe(true);
   });
 
   it('asks one clarification after a shallow answer and then moves to the next main question', async () => {
@@ -318,6 +394,8 @@ describe('InterviewService', () => {
         needsClarification: true,
         question: 'Какой конкретный результат вы получили?',
       }),
+      generateQuestionHints: vi.fn(),
+      generateSampleAnswerHint: vi.fn(),
     };
 
     const service = new InterviewService({
@@ -373,5 +451,336 @@ describe('InterviewService', () => {
       question: 'Как вы работаете с конфликтами?',
     });
     expect(engine.evaluateAnswer).toHaveBeenCalledOnce();
+  });
+
+  it('generates detailed hints once and preserves existing turn metadata', async () => {
+    const repository = createInMemoryRepository();
+    const engine = {
+      normalizeCustomQuestions: vi.fn(),
+      converse: vi.fn(),
+      converseStream: vi.fn(),
+      generateQuestion: vi.fn().mockResolvedValue({
+        question:
+          'Как вы оцениваете влияние TypeScript на улучшение качества кода?',
+      }),
+      evaluateAnswer: vi.fn(),
+      generateQuestionHints: vi.fn().mockResolvedValue({
+        focus: 'Проверяет понимание практической пользы TypeScript.',
+        answerPlan: [
+          'Дать короткое определение TypeScript.',
+          'Связать типизацию с ранним обнаружением ошибок.',
+          'Показать пользу для рефакторинга и командной разработки.',
+        ],
+        keyDefinitions: [
+          'TypeScript — расширение JavaScript со статической типизацией.',
+        ],
+        sampleAnswer:
+          'Я бы сказал, что TypeScript помогает находить часть ошибок до запуска кода.',
+      }),
+      generateSampleAnswerHint: vi.fn(),
+    };
+
+    const service = new InterviewService({
+      repository,
+      engine,
+      hhClient: null,
+    });
+
+    const created = await service.createSession({
+      anonymousSessionId: 'anon_1',
+      input: {
+        source: { type: 'profession', role: 'Frontend-разработчик' },
+        level: 'middle',
+        sessionGoal: 'quick',
+        responseMode: 'text',
+        hintMode: 'off',
+        language: 'ru',
+        interviewerMode: 'neutral',
+        interviewerAvatarId: 'neutral-pro',
+      },
+    });
+    const turnId = created.currentTurn!.id;
+    const turn = repository.turns.find((item) => item.id === turnId);
+    turn.metadata = {
+      ...turn.metadata,
+      dialogue: [
+        {
+          role: 'user',
+          content: 'Я думаю про надёжность.',
+          at: '2026-06-28T10:02:00.000Z',
+        },
+      ],
+      suggestMoveOn: true,
+    };
+
+    const first = await service.generateTurnHints({
+      anonymousSessionId: 'anon_1',
+      sessionId: created.session.id,
+      input: { turnId },
+    });
+    const second = await service.generateTurnHints({
+      anonymousSessionId: 'anon_1',
+      sessionId: created.session.id,
+      input: { turnId },
+    });
+
+    expect(engine.generateQuestionHints).toHaveBeenCalledOnce();
+    expect(first.currentTurn?.hintPack?.detailed).toMatchObject({
+      focus: 'Проверяет понимание практической пользы TypeScript.',
+    });
+    expect(second.currentTurn?.hintPack?.detailed?.answerPlan).toHaveLength(3);
+    expect(second.currentTurn?.messages).toEqual([
+      expect.objectContaining({
+        role: 'user',
+        content: 'Я думаю про надёжность.',
+      }),
+    ]);
+    expect(second.currentTurn?.suggestMoveOn).toBe(true);
+  });
+
+  it('updates only the sample answer when interviewer asks a follow-up inside the same turn', async () => {
+    const repository = createInMemoryRepository();
+    const engine = {
+      normalizeCustomQuestions: vi.fn(),
+      converse: vi.fn(),
+      converseStream: vi.fn(),
+      generateQuestion: vi.fn().mockResolvedValue({
+        question:
+          'Как вы оцениваете влияние TypeScript на улучшение качества кода?',
+      }),
+      evaluateAnswer: vi.fn(),
+      generateQuestionHints: vi.fn(),
+      generateSampleAnswerHint: vi.fn().mockResolvedValue({
+        sampleAnswer:
+          'Я бы ответил, что скорость разработки сначала может немного снижаться из-за обучения, но затем растёт за счёт автодополнения, понятных контрактов и более безопасного рефакторинга.',
+      }),
+    };
+
+    const service = new InterviewService({
+      repository,
+      engine,
+      hhClient: null,
+    });
+
+    const created = await service.createSession({
+      anonymousSessionId: 'anon_1',
+      input: {
+        source: { type: 'profession', role: 'Frontend-разработчик' },
+        level: 'middle',
+        sessionGoal: 'quick',
+        responseMode: 'text',
+        hintMode: 'off',
+        language: 'ru',
+        interviewerMode: 'neutral',
+        interviewerAvatarId: 'neutral-pro',
+      },
+    });
+    const turnId = created.currentTurn!.id;
+    const turn = repository.turns.find((item) => item.id === turnId);
+    const originalQuestion = turn.question;
+    turn.metadata = {
+      ...turn.metadata,
+      hintPack: {
+        ...turn.metadata.hintPack,
+        detailed: {
+          focus: 'Проверяет понимание практической пользы TypeScript.',
+          answerPlan: [
+            'Объяснить статическую типизацию.',
+            'Связать типы с ранним поиском ошибок.',
+            'Показать влияние на поддержку проекта.',
+          ],
+          keyDefinitions: [
+            'TypeScript — расширение JavaScript со статической типизацией.',
+          ],
+          sampleAnswerQuestion: originalQuestion,
+          sampleAnswer:
+            'Я бы сказал, что TypeScript помогает находить часть ошибок до запуска кода.',
+        },
+      },
+      dialogue: [
+        {
+          role: 'user',
+          content: 'Он помогает находить ошибки раньше.',
+          at: '2026-06-28T10:02:00.000Z',
+        },
+        {
+          role: 'interviewer',
+          content:
+            'А как вы оцениваете влияние TypeScript на скорость разработки и обучение новых членов команды?',
+          at: '2026-06-28T10:03:00.000Z',
+        },
+      ],
+      suggestMoveOn: false,
+    };
+
+    const first = await service.generateTurnHints({
+      anonymousSessionId: 'anon_1',
+      sessionId: created.session.id,
+      input: { turnId },
+    });
+    const second = await service.generateTurnHints({
+      anonymousSessionId: 'anon_1',
+      sessionId: created.session.id,
+      input: { turnId },
+    });
+
+    expect(engine.generateQuestionHints).not.toHaveBeenCalled();
+    expect(engine.generateSampleAnswerHint).toHaveBeenCalledOnce();
+    expect(engine.generateSampleAnswerHint).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targetQuestion:
+          'А как вы оцениваете влияние TypeScript на скорость разработки и обучение новых членов команды?',
+      })
+    );
+    expect(first.currentTurn?.hintPack?.detailed).toMatchObject({
+      focus: 'Проверяет понимание практической пользы TypeScript.',
+      answerPlan: [
+        'Объяснить статическую типизацию.',
+        'Связать типы с ранним поиском ошибок.',
+        'Показать влияние на поддержку проекта.',
+      ],
+      sampleAnswerQuestion:
+        'А как вы оцениваете влияние TypeScript на скорость разработки и обучение новых членов команды?',
+      sampleAnswer:
+        'Я бы ответил, что скорость разработки сначала может немного снижаться из-за обучения, но затем растёт за счёт автодополнения, понятных контрактов и более безопасного рефакторинга.',
+    });
+    expect(second.currentTurn?.messages).toHaveLength(2);
+    expect(engine.generateSampleAnswerHint).toHaveBeenCalledOnce();
+  });
+
+  it('does not refresh the sample answer for a move-on prompt', async () => {
+    const repository = createInMemoryRepository();
+    const engine = {
+      normalizeCustomQuestions: vi.fn(),
+      converse: vi.fn(),
+      converseStream: vi.fn(),
+      generateQuestion: vi.fn().mockResolvedValue({
+        question: 'Расскажите про TypeScript.',
+      }),
+      evaluateAnswer: vi.fn(),
+      generateQuestionHints: vi.fn(),
+      generateSampleAnswerHint: vi.fn(),
+    };
+
+    const service = new InterviewService({
+      repository,
+      engine,
+      hhClient: null,
+    });
+
+    const created = await service.createSession({
+      anonymousSessionId: 'anon_1',
+      input: {
+        source: { type: 'profession', role: 'Frontend-разработчик' },
+        level: 'middle',
+        sessionGoal: 'quick',
+        responseMode: 'text',
+        hintMode: 'off',
+        language: 'ru',
+        interviewerMode: 'neutral',
+        interviewerAvatarId: 'neutral-pro',
+      },
+    });
+    const turnId = created.currentTurn!.id;
+    const turn = repository.turns.find((item) => item.id === turnId);
+    turn.metadata = {
+      ...turn.metadata,
+      hintPack: {
+        ...turn.metadata.hintPack,
+        detailed: {
+          focus: 'Проверяет понимание TypeScript.',
+          answerPlan: ['Определить TypeScript.', 'Назвать пользу типов.'],
+          keyDefinitions: [],
+          sampleAnswerQuestion: turn.question,
+          sampleAnswer: 'Я бы ответил про статическую типизацию.',
+        },
+      },
+      dialogue: [
+        {
+          role: 'interviewer',
+          content: 'Хорошо, здесь понятно. Готовы перейти к следующему вопросу?',
+          at: '2026-06-28T10:03:00.000Z',
+        },
+      ],
+      suggestMoveOn: true,
+    };
+
+    const state = await service.generateTurnHints({
+      anonymousSessionId: 'anon_1',
+      sessionId: created.session.id,
+      input: { turnId },
+    });
+
+    expect(engine.generateSampleAnswerHint).not.toHaveBeenCalled();
+    expect(state.currentTurn?.hintPack?.detailed?.sampleAnswer).toBe(
+      'Я бы ответил про статическую типизацию.'
+    );
+  });
+
+  it('builds base and detailed hints for clarification turns without a hint pack', async () => {
+    const repository = createInMemoryRepository();
+    const engine = {
+      normalizeCustomQuestions: vi.fn(),
+      converse: vi.fn(),
+      converseStream: vi.fn(),
+      generateQuestion: vi
+        .fn()
+        .mockResolvedValue({ question: 'Расскажите о проекте.' }),
+      evaluateAnswer: vi.fn(),
+      generateQuestionHints: vi.fn().mockResolvedValue({
+        focus: 'Проверяет, умеет ли кандидат уточнять результат.',
+        answerPlan: [
+          'Назвать исходную проблему.',
+          'Показать личное действие.',
+          'Закончить измеримым итогом.',
+        ],
+        keyDefinitions: ['Измеримый итог — число, срок, масштаб или вывод.'],
+        sampleAnswer:
+          'Я бы уточнил результат через конкретный эффект для команды.',
+      }),
+      generateSampleAnswerHint: vi.fn(),
+    };
+
+    const service = new InterviewService({
+      repository,
+      engine,
+      hhClient: null,
+    });
+
+    const created = await service.createSession({
+      anonymousSessionId: 'anon_1',
+      input: {
+        source: { type: 'profession', role: 'Project manager' },
+        level: 'middle',
+        sessionGoal: 'quick',
+        responseMode: 'text',
+        hintMode: 'off',
+        language: 'ru',
+        interviewerMode: 'neutral',
+        interviewerAvatarId: 'neutral-pro',
+      },
+    });
+    const clarification = await repository.createTurn({
+      sessionId: created.session.id,
+      index: 1,
+      kind: 'clarification',
+      question: 'Какой конкретный результат вы получили?',
+      followUpForTurnId: created.currentTurn!.id,
+      metadata: null,
+    });
+
+    const state = await service.generateTurnHints({
+      anonymousSessionId: 'anon_1',
+      sessionId: created.session.id,
+      input: { turnId: clarification.id },
+    });
+    const hintedClarification = state.turns.find(
+      (turn) => turn.id === clarification.id
+    );
+
+    expect(hintedClarification?.hintPack?.structure).toContain('результат');
+    expect(hintedClarification?.hintPack?.detailed?.sampleAnswer).toContain(
+      'конкретный эффект'
+    );
   });
 });

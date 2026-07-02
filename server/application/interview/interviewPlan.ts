@@ -1,5 +1,6 @@
 import type {
   CreateInterviewSessionRequest,
+  InterviewFocus,
   InterviewSessionGoal,
   InterviewerFaceId,
   InterviewHintMode,
@@ -25,6 +26,10 @@ export interface InterviewSessionMetadata {
   hintMode: InterviewHintMode;
   realtimeLimits: RealtimeSessionLimits;
   interviewerFaceId: InterviewerFaceId;
+  // Тип/фокус сессии (HR-скрининг, профессиональное, поведенческое,
+  // зарплатные переговоры). null — фокус не задан, движок выбирает вопросы
+  // без смещения в сторону конкретного формата.
+  focus: InterviewFocus | null;
   plan: InterviewPlan;
 }
 
@@ -139,6 +144,7 @@ export function buildInterviewPlanMetadata(params: {
     interviewerFaceId:
       params.input.interviewerFaceId ??
       defaultFaceForMode(params.input.interviewerMode ?? 'neutral'),
+    focus: params.input.focus ?? null,
     plan: {
       goal: sessionGoal,
       expectedDurationMinutes: config.expectedDurationMinutes,
@@ -195,6 +201,7 @@ export function parseInterviewSessionMetadata(
     interviewerFaceId: isInterviewerFaceId(raw.interviewerFaceId)
       ? raw.interviewerFaceId
       : defaultFaceForMode('neutral'),
+    focus: isInterviewFocus(raw.focus) ? raw.focus : null,
     plan,
   };
 }
@@ -348,4 +355,13 @@ function isQuestionSourceMode(value: unknown): value is InterviewQuestionSourceM
 
 function isHintMode(value: unknown): value is InterviewHintMode {
   return value === 'off' || value === 'on_request' || value === 'realtime';
+}
+
+function isInterviewFocus(value: unknown): value is InterviewFocus {
+  return (
+    value === 'hr_screening' ||
+    value === 'professional' ||
+    value === 'behavioral' ||
+    value === 'salary_negotiation'
+  );
 }

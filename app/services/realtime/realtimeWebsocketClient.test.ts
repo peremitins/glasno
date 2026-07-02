@@ -8,6 +8,7 @@ import {
   computeRealtimeFloat32Volume,
   extractRealtimeWebsocketAudioDelta,
   extractRealtimeWebsocketErrorMessage,
+  isBenignRealtimeErrorEvent,
   float32ToPcm16Bytes,
   pcm16BytesToFloat32,
   resampleFloat32Audio,
@@ -142,5 +143,24 @@ describe('realtimeWebsocketClient helpers', () => {
     ).toBe('Invalid subprotocol');
     expect(extractRealtimeWebsocketErrorMessage({ type: 'session.created' }))
       .toBe('');
+  });
+
+  it('treats response cancellation races as benign errors', () => {
+    expect(
+      isBenignRealtimeErrorEvent({
+        type: 'error',
+        error: {
+          code: 'response_cancel_not_active',
+          message: 'Cancellation failed: no active response found',
+        },
+      })
+    ).toBe(true);
+    expect(
+      isBenignRealtimeErrorEvent({
+        type: 'error',
+        error: { message: 'Invalid subprotocol' },
+      })
+    ).toBe(false);
+    expect(isBenignRealtimeErrorEvent({ type: 'session.created' })).toBe(false);
   });
 });

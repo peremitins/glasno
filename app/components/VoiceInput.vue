@@ -57,10 +57,10 @@ const canUseDictation = computed(() => !props.disabled);
   justify-content: center;
   width: 44px;
   height: 44px;
-  border: 1px solid var(--glass-border, var(--color-border));
+  border: 1px solid var(--glass-border);
   border-radius: 12px;
-  color: var(--text-secondary, var(--color-text));
-  background: var(--surface-soft, var(--color-surface));
+  color: var(--text-secondary);
+  background: var(--surface-soft);
   cursor: pointer;
   transition:
     transform 0.18s ease,
@@ -75,8 +75,8 @@ const canUseDictation = computed(() => !props.disabled);
 }
 
 .mic-button:hover {
-  border-color: var(--glass-border-strong, var(--color-border));
-  color: var(--text-primary, var(--color-text));
+  border-color: var(--glass-border-strong);
+  color: var(--text-primary);
 }
 
 .mic-button:active {
@@ -90,16 +90,16 @@ const canUseDictation = computed(() => !props.disabled);
 
 /* Активная запись — акцентная подсветка + пульс. */
 .mic-button--active {
-  border-color: color-mix(in srgb, var(--accent, var(--color-accent)) 55%, transparent);
-  color: var(--accent, var(--color-accent));
-  background: color-mix(in srgb, var(--accent, var(--color-accent)) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
   animation: mic-pulse 1.4s ease-in-out infinite;
 }
 
 @keyframes mic-pulse {
   0%,
   100% {
-    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent, var(--color-accent)) 32%, transparent);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 32%, transparent);
   }
   50% {
     box-shadow: 0 0 0 6px transparent;

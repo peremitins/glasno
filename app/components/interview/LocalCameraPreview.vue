@@ -107,8 +107,27 @@ onBeforeUnmount(stopCamera);
       aria-label="local camera"
     />
     <div v-if="!isActive" class="placeholder">
-      <span class="dot" aria-hidden="true"></span>
-      <span>{{ errorMessage || t('camera.idle') }}</span>
+      <span class="avatar" aria-hidden="true">
+        <svg viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="camAvatarBg" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#3a475f" />
+              <stop offset="1" stop-color="#232c3d" />
+            </linearGradient>
+            <linearGradient id="camAvatarFg" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="rgba(255,255,255,0.92)" />
+              <stop offset="1" stop-color="rgba(255,255,255,0.62)" />
+            </linearGradient>
+          </defs>
+          <circle cx="60" cy="60" r="60" fill="url(#camAvatarBg)" />
+          <circle cx="60" cy="46" r="20" fill="url(#camAvatarFg)" />
+          <path
+            d="M22 104c4-21 19-32 38-32s34 11 38 32a60 60 0 0 1-76 0Z"
+            fill="url(#camAvatarFg)"
+          />
+        </svg>
+      </span>
+      <span class="placeholder-text">{{ errorMessage || t('camera.idle') }}</span>
     </div>
   </div>
 </template>
@@ -118,7 +137,7 @@ onBeforeUnmount(stopCamera);
   position: absolute;
   inset: 0;
   overflow: hidden;
-  background: #0c1022;
+  background: var(--surface-solid);
 }
 
 .video,
@@ -143,20 +162,39 @@ onBeforeUnmount(stopCamera);
 .placeholder {
   display: grid;
   place-items: center;
-  gap: 10px;
+  gap: 14px;
   align-content: center;
   color: rgba(255, 255, 255, 0.7);
   font-size: 13px;
   text-align: center;
   padding: 14px;
+  background:
+    radial-gradient(120% 90% at 50% 12%, rgba(255, 255, 255, 0.06), transparent 60%),
+    linear-gradient(160deg, #202838, #161c28);
 }
 
-.dot {
-  width: 46px;
-  height: 46px;
+/* Аватар-заглушка вместо камеры: «фото пользователя» в виде силуэта. */
+.avatar {
+  display: grid;
+  place-items: center;
+  width: clamp(72px, 22%, 116px);
+  aspect-ratio: 1;
   border-radius: 50%;
-  background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0.04)),
-    #273142;
+  overflow: hidden;
+  background: linear-gradient(150deg, #3a475f, #232c3d);
+  box-shadow:
+    0 18px 44px rgba(0, 0, 0, 0.42),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+}
+
+.avatar svg {
+  width: 100%;
+  height: 100%;
+}
+
+.placeholder-text {
+  max-width: 220px;
+  color: rgba(255, 255, 255, 0.66);
+  font-weight: 600;
 }
 </style>

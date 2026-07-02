@@ -1,4 +1,15 @@
-import { and, count, eq, gt, gte, isNull, lte, or } from 'drizzle-orm';
+import {
+  and,
+  count,
+  desc,
+  eq,
+  gt,
+  gte,
+  inArray,
+  isNull,
+  lte,
+  or,
+} from 'drizzle-orm';
 import { getDb, schema } from '@/server/infrastructure/db/client';
 import { calculateRealtimeVoiceUsageSeconds } from '@/server/application/realtime/realtimeVoiceUsage';
 import { apiError } from '@/server/utils/errors';
@@ -187,6 +198,28 @@ export class DrizzleBillingRepository implements BillingRepository {
     return row ? mapPaymentOrder(row) : null;
   }
 
+  async findLatestPaymentOrderByUserId(
+    userId: string
+  ): Promise<PaymentOrderRecord | null> {
+    const [row] = await this.db
+      .select()
+      .from(schema.paymentOrders)
+      .where(
+        and(
+          eq(schema.paymentOrders.userId, userId),
+          eq(schema.paymentOrders.provider, 'yookassa'),
+          inArray(schema.paymentOrders.status, [
+            'pending',
+            'waiting_for_capture',
+            'succeeded',
+          ])
+        )
+      )
+      .orderBy(desc(schema.paymentOrders.createdAt))
+      .limit(1);
+    return row ? mapPaymentOrder(row) : null;
+  }
+
   async updatePaymentOrder(
     input: UpdatePaymentOrderInput
   ): Promise<PaymentOrderRecord | null> {
@@ -202,6 +235,22 @@ export class DrizzleBillingRepository implements BillingRepository {
       .where(eq(schema.paymentOrders.id, input.id))
       .returning();
     return row ? mapPaymentOrder(row) : null;
+  }
+
+  async findSubscriptionByProviderPaymentId(
+    providerPaymentId: string
+  ): Promise<SubscriptionRecord | null> {
+    const [row] = await this.db
+      .select()
+      .from(schema.userSubscriptions)
+      .where(
+        and(
+          eq(schema.userSubscriptions.provider, 'yookassa'),
+          eq(schema.userSubscriptions.providerPaymentId, providerPaymentId)
+        )
+      )
+      .limit(1);
+    return row ? mapSubscription(row) : null;
   }
 
   async grantSubscription(

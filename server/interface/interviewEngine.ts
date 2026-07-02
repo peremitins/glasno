@@ -2,6 +2,7 @@ import type {
   CreateInterviewSessionRequest,
   InterviewLevel,
   InterviewQuestionSourceMode,
+  QuestionHintDetails,
 } from '@/shared/dto';
 import type {
   InterviewSessionRecord,
@@ -42,11 +43,31 @@ export interface NormalizeCustomQuestionsParams {
   questionSourceMode?: InterviewQuestionSourceMode | null;
 }
 
+export interface GenerateQuestionHintsParams {
+  session: InterviewSessionRecord;
+  turn: InterviewTurnRecord;
+  turns: InterviewTurnRecord[];
+}
+
+export interface GenerateSampleAnswerHintParams {
+  session: InterviewSessionRecord;
+  turn: InterviewTurnRecord;
+  turns: InterviewTurnRecord[];
+  targetQuestion: string;
+  dialogue: Array<{ role: 'user' | 'interviewer'; content: string }>;
+}
+
 export interface InterviewEngine {
   normalizeCustomQuestions(
     params: NormalizeCustomQuestionsParams
   ): Promise<{ questions: string[] }>;
   generateQuestion(params: GenerateQuestionParams): Promise<{ question: string }>;
+  generateQuestionHints(
+    params: GenerateQuestionHintsParams
+  ): Promise<QuestionHintDetails>;
+  generateSampleAnswerHint(
+    params: GenerateSampleAnswerHintParams
+  ): Promise<{ sampleAnswer: string }>;
   evaluateAnswer(params: EvaluateAnswerParams): Promise<{
     needsClarification: boolean;
     question?: string;

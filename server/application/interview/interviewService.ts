@@ -2,6 +2,7 @@ import type {
   AppendInterviewTurnMessageRequest,
   AnswerInterviewTurnRequest,
   CreateInterviewSessionRequest,
+  GenerateInterviewHintsRequest,
   InterviewDialogueMessage,
   InterviewPlan,
   InterviewPlanItem,
@@ -9,6 +10,7 @@ import type {
   InterviewStateResponse,
   InterviewTurn,
   NextInterviewQuestionRequest,
+  QuestionHintDetails,
   QuestionHintPack,
   ReplyInterviewTurnRequest,
   UpdateInterviewerRequest,
@@ -167,6 +169,140 @@ export class InterviewService {
     return this.getStateForSession(
       params.anonymousSessionId,
       params.sessionId,
+      params.userId
+    );
+  }
+
+  async deleteSession(params: {
+    anonymousSessionId: string;
+    userId?: string | null;
+    sessionId: string;
+  }): Promise<{ ok: true }> {
+    const session = await this.requireOwnedSession(
+      params.anonymousSessionId,
+      params.sessionId,
+      params.userId
+    );
+    const deleted = await this.deps.repository.deleteSession(session.id);
+    if (!deleted) {
+      throw apiError('E_NOT_FOUND', 'Интервью не найдено');
+    }
+    return { ok: true };
+  }
+
+  async generateTurnHints(params: {
+    anonymousSessionId: string;
+    userId?: string | null;
+    sessionId: string;
+    input: GenerateInterviewHintsRequest;
+  }): Promise<InterviewStateResponse> {
+    const session = await this.requireOwnedSession(
+      params.anonymousSessionId,
+      params.sessionId,
+      params.userId
+    );
+    const turn = await this.deps.repository.findTurnById(
+      session.id,
+      params.input.turnId
+    );
+    if (!turn) {
+      throw apiError('E_NOT_FOUND', 'Вопрос не найден');
+    }
+
+    const normalizedMetadata = normalizeTurnMetadata(turn.metadata);
+    const baseMeta = toMetaRecord(turn.metadata);
+    const sampleAnswerQuestion = resolveSampleAnswerQuestion(
+      turn,
+      normalizedMetadata.dialogue
+    );
+
+    if (normalizedMetadata.hintPack?.detailed) {
+      const detailed = normalizedMetadata.hintPack.detailed;
+      const storedSampleQuestion =
+        detailed.sampleAnswerQuestion || turn.question.trim();
+      if (storedSampleQuestion === sampleAnswerQuestion) {
+        return this.getStateForSession(
+          params.anonymousSessionId,
+          session.id,
+          params.userId
+        );
+      }
+
+      const turns = await this.deps.repository.listTurns(session.id);
+      const sample = await this.deps.engine.generateSampleAnswerHint({
+        session,
+        turn,
+        turns,
+        targetQuestion: sampleAnswerQuestion,
+        dialogue: normalizedMetadata.dialogue.map((message) => ({
+          role: message.role,
+          content: message.content,
+        })),
+      });
+
+      await this.deps.repository.updateTurnMetadata(session.id, turn.id, {
+        ...baseMeta,
+        hintPack: {
+          ...normalizedMetadata.hintPack,
+          detailed: {
+            ...detailed,
+            sampleAnswerQuestion,
+            sampleAnswer: sample.sampleAnswer,
+          },
+        },
+      });
+
+      return this.getStateForSession(
+        params.anonymousSessionId,
+        session.id,
+        params.userId
+      );
+    }
+
+    const turns = await this.deps.repository.listTurns(session.id);
+    const hintPack =
+      normalizedMetadata.hintPack ??
+      buildHintPack({
+        question: turn.question,
+        role: session.role,
+        vacancyTitle: session.vacancyTitle,
+      });
+    const detailed = await this.deps.engine.generateQuestionHints({
+      session,
+      turn,
+      turns,
+    });
+    const nextDetailed: QuestionHintDetails = {
+      ...detailed,
+      sampleAnswerQuestion: turn.question.trim(),
+    };
+
+    if (sampleAnswerQuestion !== turn.question.trim()) {
+      const sample = await this.deps.engine.generateSampleAnswerHint({
+        session,
+        turn,
+        turns,
+        targetQuestion: sampleAnswerQuestion,
+        dialogue: normalizedMetadata.dialogue.map((message) => ({
+          role: message.role,
+          content: message.content,
+        })),
+      });
+      nextDetailed.sampleAnswerQuestion = sampleAnswerQuestion;
+      nextDetailed.sampleAnswer = sample.sampleAnswer;
+    }
+
+    await this.deps.repository.updateTurnMetadata(session.id, turn.id, {
+      ...baseMeta,
+      hintPack: {
+        ...hintPack,
+        detailed: nextDetailed,
+      },
+    });
+
+    return this.getStateForSession(
+      params.anonymousSessionId,
+      session.id,
       params.userId
     );
   }
@@ -528,6 +664,7 @@ export class InterviewService {
           level: session.level || 'middle',
           sessionGoal: metadata.sessionGoal,
           questionSourceMode: metadata.questionSourceMode,
+          focus: metadata.focus ?? undefined,
           responseMode: metadata.responseMode,
           hintMode: metadata.hintMode,
           language: session.language,
@@ -673,6 +810,7 @@ function toSessionDto(
     sessionGoal: metadata.sessionGoal,
     expectedDurationMinutes: metadata.expectedDurationMinutes,
     questionSourceMode: metadata.questionSourceMode,
+    focus: metadata.focus,
     responseMode: metadata.responseMode,
     hintMode: metadata.hintMode,
     realtimeLimits: metadata.realtimeLimits,
@@ -728,6 +866,47 @@ function parseDialogue(value: unknown): InterviewDialogueMessage[] {
     result.push({ role, content, at });
   }
   return result;
+}
+
+function resolveSampleAnswerQuestion(
+  turn: InterviewTurnRecord,
+  dialogue: InterviewDialogueMessage[]
+): string {
+  return latestInterviewerQuestionForHints(dialogue) ?? turn.question.trim();
+}
+
+function latestInterviewerQuestionForHints(
+  dialogue: InterviewDialogueMessage[]
+): string | null {
+  for (let index = dialogue.length - 1; index >= 0; index -= 1) {
+    const message = dialogue[index];
+    if (!message) continue;
+    if (message.role !== 'interviewer') continue;
+    const question = extractQuestionPrompt(message.content);
+    if (question && !isMoveOnPrompt(question)) return question;
+  }
+  return null;
+}
+
+function extractQuestionPrompt(content: string): string | null {
+  const normalized = content.replace(/\s+/g, ' ').trim();
+  const questionEnd = normalized.lastIndexOf('?');
+  if (questionEnd < 0) return null;
+
+  const prefix = normalized.slice(0, questionEnd);
+  const boundary = Math.max(
+    prefix.lastIndexOf('.'),
+    prefix.lastIndexOf('!'),
+    prefix.lastIndexOf('?')
+  );
+  const question = normalized.slice(boundary + 1, questionEnd + 1).trim();
+  return question || null;
+}
+
+function isMoveOnPrompt(question: string): boolean {
+  return /следующ[а-яё]*\s+вопрос|перей[а-яё]*\s+(?:к|ко)\s+следующ|дальше/iu.test(
+    question
+  );
 }
 
 function toPlanDto(

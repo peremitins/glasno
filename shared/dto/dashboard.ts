@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import {
+  InterviewFocusDto,
   InterviewLevelDto,
   InterviewerModeDto,
   InterviewSessionStatusDto,
@@ -36,7 +37,10 @@ export const DashboardQuickScenarioDto = z.object({
   title: z.string(),
   subtitle: z.string(),
   sourceType: z.enum(['profession', 'text', 'hh_url']),
-  role: z.string(),
+  // Тип сценария универсален для любой профессии — конкретную роль/вакансию
+  // пользователь указывает сам на экране создания интервью.
+  focus: InterviewFocusDto,
+  role: z.string().optional(),
   level: InterviewLevelDto,
   interviewerMode: InterviewerModeDto,
 });

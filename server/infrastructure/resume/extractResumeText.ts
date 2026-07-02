@@ -4,7 +4,7 @@ import {
 } from '@/server/infrastructure/files/extractInterviewFileText';
 
 const MAX_RESUME_BYTES = 6 * 1024 * 1024;
-const MAX_RESUME_CHARS = 30_000;
+const MAX_RESUME_CHARS = 15_000;
 
 export async function extractResumeText(
   params: Pick<

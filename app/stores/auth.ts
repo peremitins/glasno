@@ -4,6 +4,7 @@ import type {
   AuthLoginResponse,
   AuthMeResponse,
   AuthUser,
+  DeleteAccountResponse,
   EmailLoginStartResponse,
 } from '@/shared/dto';
 
@@ -100,6 +101,24 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
+  async function deleteAccount() {
+    isSubmitting.value = true;
+    errorMessage.value = '';
+    try {
+      const response = await useAPI()<DeleteAccountResponse>(
+        '/api/auth/account',
+        { method: 'DELETE' }
+      );
+      reset();
+      return response;
+    } catch (err) {
+      errorMessage.value = extractApiError(err);
+      throw err;
+    } finally {
+      isSubmitting.value = false;
+    }
+  }
+
   return {
     user,
     userId,
@@ -114,6 +133,7 @@ export const useAuthStore = defineStore('auth', () => {
     startEmailRegistration,
     verifyEmailLogin,
     logout,
+    deleteAccount,
   };
 });
 

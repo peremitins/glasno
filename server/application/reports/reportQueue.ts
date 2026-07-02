@@ -41,6 +41,16 @@ export async function enqueueOrRunReport(params: {
   const queueInstance = asyncQueueEnabled ? getQueue(params.redisUrl) : null;
 
   if (queueInstance) {
+    const report = await params.service.prepareQueuedReport({
+      anonymousSessionId: params.anonymousSessionId,
+      userId: params.userId,
+      sessionId: params.sessionId,
+    });
+
+    if (report.status === 'done' || report.status === 'processing') {
+      return report;
+    }
+
     await queueInstance.add(
       'generate',
       {
@@ -54,14 +64,10 @@ export async function enqueueOrRunReport(params: {
         removeOnFail: 100,
       }
     );
-    return params.service.getBySession({
-      anonymousSessionId: params.anonymousSessionId,
-      userId: params.userId,
-      sessionId: params.sessionId,
-    });
+    return report;
   }
 
-  return params.service.ensureReport({
+  return params.service.startReportGeneration({
     anonymousSessionId: params.anonymousSessionId,
     userId: params.userId,
     sessionId: params.sessionId,

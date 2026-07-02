@@ -1,4 +1,5 @@
 import type {
+  DeleteAccountResponse,
   AuthLoginResponse,
   AuthUser,
   EmailLoginStartResponse,
@@ -172,6 +173,17 @@ export class AuthService {
       }));
 
     return this.finishLogin(user, params.anonymousSessionId);
+  }
+
+  async deleteAccount(userId: string): Promise<DeleteAccountResponse> {
+    const deleted = await this.deps.repository.anonymizeUserAccount(
+      userId,
+      new Date()
+    );
+    if (!deleted) {
+      throw apiError('E_NOT_FOUND', 'Аккаунт не найден');
+    }
+    return { ok: true };
   }
 
   private async finishLogin(
