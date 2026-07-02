@@ -31,12 +31,24 @@
   } from '@radix-icons/vue';
   import InterviewerCard from '@/app/components/interview/InterviewerCard.vue';
   import LocalCameraPreview from '@/app/components/interview/LocalCameraPreview.vue';
+  import ReportGenerationPanel from '@/app/components/interview/ReportGenerationPanel.vue';
+  import TextWithInterviewTerms from '@/app/components/design/TextWithInterviewTerms.vue';
   import AudioPermissionDeniedDialog from '@/app/components/audio/AudioPermissionDeniedDialog.vue';
   import CameraPermissionDeniedDialog from '@/app/components/camera/CameraPermissionDeniedDialog.vue';
   import MicPermissionDeniedDialog from '@/app/components/mic/MicPermissionDeniedDialog.vue';
-  import { RealtimeInterviewChatAdapter } from '@/app/services/realtime/realtimeInterviewChatAdapter';
+  import GlassSkeletonStack from '@/app/components/design/GlassSkeletonStack.vue';
+  import ButtonLoader from '@/app/components/design/ButtonLoader.vue';
+  import {
+    RealtimeInterviewChatAdapter,
+    REALTIME_QUESTION_ANNOUNCEMENT_KIND,
+  } from '@/app/services/realtime/realtimeInterviewChatAdapter';
+  import type { RealtimeVoiceControl } from '@/app/composables/useRealtimeVoiceSession';
   import { INTERVIEW_STREAM_MODE } from '@/app/constants/interview';
   import { getInterviewerFacePhotoSrc } from '@/app/utils/interviewerAssets';
+  import {
+    isNextQuestionTransitionReply,
+    isNextQuestionVoiceCommand,
+  } from '@/app/utils/interviewVoiceCommand';
   import { useRealtimeVoiceUiStore } from '@/app/stores/realtimeVoiceUi';
   import { resolveTtsVoiceForFace } from '@/shared/interviewerVoice';
   import { useAudioPermissionGate } from '@/app/composables/useAudioPermissionGate';
@@ -64,12 +76,18 @@
   const errorMessage = ref('');
   const isSending = ref(false);
   const isGeneratingReport = ref(false);
+  const sessionAction = ref<'message' | 'next' | 'report' | null>(null);
   // Идёт ручная озвучка реплики/вопроса (по клику на иконку динамика).
   const isSpeakingQuestion = ref(false);
   // Какой пузырь чата сейчас озвучивается (для подсветки его иконки).
   const speakingMessageId = ref<string | null>(null);
   // Интервьюер говорит в realtime-режиме (WebRTC-аудио модели).
   const realtimeSpeaking = ref(false);
+  // Кандидат сейчас говорит (по VAD realtime-сессии) — для амбиентной
+  // подсветки нижней плитки «сейчас говорим мы».
+  const userSpeaking = ref(false);
+  // Первый вопрос уже озвучен после подключения (чтобы не дублировать).
+  const firstQuestionAnnounced = ref(false);
   // Единое состояние «интервьюер сейчас говорит» — драйвит анимацию аватара:
   // ручная озвучка вопроса/реплики либо realtime-голос. В текстовом режиме
   // ответы по умолчанию не озвучиваются — только по клику пользователя.
@@ -91,7 +109,17 @@
   );
   const runtimeMessages = ref<ConversationMessage[]>([]);
   const realtimeAdapter = ref<RealtimeInterviewChatAdapter | null>(null);
+  // Управление активной realtime-сессией (отмена ответа модели, отправка
+  // событий) — выдаётся панелью RealtimeVoicePanel через onControl.
+  const realtimeControl = ref<RealtimeVoiceControl | null>(null);
   let realtimePersistQueue: Promise<void> = Promise.resolve();
+  // Runtime-пузыри, уже поставленные в очередь на сохранение: защита от
+  // повторного персиста одной и той же реплики (дубли в истории диалога).
+  const queuedRealtimePersistMessageIds = new Set<string>();
+
+  function handleRealtimeControl(control: RealtimeVoiceControl | null) {
+    realtimeControl.value = control;
+  }
 
   const sessionId = computed(() => String(route.params.id || ''));
 
@@ -99,7 +127,7 @@
     data: state,
     pending,
     refresh,
-  } = await useAsyncData(
+  } = await useLazyAsyncData(
     () => `interview-${sessionId.value}`,
     () =>
       api<InterviewStateResponse>(`/api/interview/sessions/${sessionId.value}`)
@@ -108,8 +136,19 @@
   const interviewerTtsVoice = computed(() =>
     resolveTtsVoiceForFace(state.value?.session.interviewerFaceId)
   );
+  const sessionInitialPending = computed(() => pending.value && !state.value);
   const currentTurn = computed(() => state.value?.currentTurn ?? null);
   const isDone = computed(() => state.value?.session.status === 'done');
+  const isLastQuestion = computed(() => {
+    const session = state.value?.session;
+    if (!session || isDone.value) return false;
+    return session.currentQuestionIndex >= session.totalQuestions;
+  });
+  const nextActionLabel = computed(() =>
+    isLastQuestion.value
+      ? t('interview.session.finishInterview')
+      : t('interview.session.nextQuestion')
+  );
   const isTtsEnabled = computed(
     () => runtimeConfig.public.featureTtsEnabled === true
   );
@@ -126,6 +165,57 @@
   const currentHintPack = computed<QuestionHintPack | null>(() => {
     return currentTurn.value?.hintPack ?? null;
   });
+  const currentHintDetails = computed(
+    () => currentHintPack.value?.detailed ?? null
+  );
+  type CurrentInterviewTurn = NonNullable<
+    InterviewStateResponse['currentTurn']
+  >;
+
+  const currentHintsRequestKey = computed(() => {
+    const turn = currentTurn.value;
+    return turn ? hintRequestKeyForTurn(turn) : '';
+  });
+
+  function hintRequestKeyForTurn(turn: CurrentInterviewTurn) {
+    return `${turn.id}:${
+      latestInterviewerQuestionForHints(turn) || turn.question
+    }`;
+  }
+
+  function latestInterviewerQuestionForHints(
+    turn: CurrentInterviewTurn
+  ): string | null {
+    for (let index = turn.messages.length - 1; index >= 0; index -= 1) {
+      const message = turn.messages[index];
+      if (!message) continue;
+      if (message.role !== 'interviewer') continue;
+      const question = extractQuestionPromptForHints(message.content);
+      if (question && !isMoveOnQuestionForHints(question)) return question;
+    }
+    return null;
+  }
+
+  function extractQuestionPromptForHints(content: string): string | null {
+    const normalized = content.replace(/\s+/g, ' ').trim();
+    const questionEnd = normalized.lastIndexOf('?');
+    if (questionEnd < 0) return null;
+
+    const prefix = normalized.slice(0, questionEnd);
+    const boundary = Math.max(
+      prefix.lastIndexOf('.'),
+      prefix.lastIndexOf('!'),
+      prefix.lastIndexOf('?')
+    );
+    const question = normalized.slice(boundary + 1, questionEnd + 1).trim();
+    return question || null;
+  }
+
+  function isMoveOnQuestionForHints(question: string): boolean {
+    return /следующ[а-яё]*\s+вопрос|перей[а-яё]*\s+(?:к|ко)\s+следующ|дальше/iu.test(
+      question
+    );
+  }
 
   const planProgress = computed(() => {
     const items = state.value?.session.plan.items ?? [];
@@ -205,7 +295,17 @@
     (status) => {
       if (status !== 'connected') {
         realtimeSpeaking.value = false;
+        userSpeaking.value = false;
+        firstQuestionAnnounced.value = false;
+        return;
       }
+      // Соединение установлено: модель сама здоровается и озвучивает текущий
+      // вопрос — чтобы кандидат понял, что можно отвечать (без «немой» паузы).
+      if (firstQuestionAnnounced.value) return;
+      firstQuestionAnnounced.value = true;
+      void nextTick(() =>
+        announceCurrentQuestionViaRealtime({ firstQuestion: true })
+      );
     }
   );
 
@@ -251,17 +351,29 @@
           (item) => item.id !== messageId
         );
       },
-      onUserTranscriptCompleted(transcript) {
-        handleRealtimeTranscript(transcript);
+      onUserTranscriptCompleted(transcript, messageId) {
+        handleRealtimeTranscript(transcript, messageId);
       },
-      onAssistantTranscriptCompleted(transcript) {
-        queueRealtimeDialogueMessage('interviewer', transcript);
+      onAssistantTranscriptCompleted(transcript, messageId) {
+        handleRealtimeAssistantTranscript(transcript, messageId);
+      },
+      onUserTranscriptFailed() {
+        // Текст реплики распознать не удалось, но аудио уже в контексте
+        // модели — явно просим интервьюера ответить, чтобы диалог не замер
+        // (авто-ответ VAD выключен, см. realtimeConfig).
+        realtimeControl.value?.sendEvent({ type: 'response.create' });
       },
       onAssistantSpeechStarted() {
         realtimeSpeaking.value = true;
       },
       onAssistantSpeechEnded() {
         realtimeSpeaking.value = false;
+      },
+      onUserSpeechStarted() {
+        userSpeaking.value = true;
+      },
+      onUserSpeechEnded() {
+        userSpeaking.value = false;
       },
     });
     return realtimeAdapter.value;
@@ -272,22 +384,76 @@
     ensureRealtimeAdapter().handleServerEvent(event as { type?: string });
   }
 
-  function handleRealtimeTranscript(transcript: string) {
+  function handleRealtimeTranscript(transcript: string, messageId?: string) {
     const normalized = transcript.trim();
     if (!normalized) return;
     // В realtime реплики кандидата уже попадают в чат через адаптер.
     // В поле ответа ничего НЕ пишем. По голосовой команде — переходим дальше.
-    if (isNextQuestionCommand(normalized)) {
+    if (isNextQuestionVoiceCommand(normalized)) {
+      // Команда адресована приложению, а не интервьюеру. Авто-ответ VAD
+      // выключен, поэтому модель на команду голосом не реагирует вовсе;
+      // cancel — страховка, если она ещё договаривает прошлый ответ.
+      realtimeControl.value?.cancelActiveResponses();
       void goToNextQuestion();
       return;
     }
-    queueRealtimeDialogueMessage('user', normalized);
+    queueRealtimeDialogueMessage('user', normalized, messageId);
+    // Обычная реплика кандидата: явно запускаем ответ интервьюера — теперь
+    // это делаем мы (после анализа транскрипта), а не VAD автоматически.
+    realtimeControl.value?.sendEvent({ type: 'response.create' });
   }
 
-  function isNextQuestionCommand(value: string): boolean {
-    return /^(следующий вопрос|следующий|дальше|перейдём дальше|перейдем дальше|переходим дальше|давай дальше)[.!]?$/i.test(
-      value.trim()
-    );
+  function handleRealtimeAssistantTranscript(
+    transcript: string,
+    messageId: string
+  ) {
+    queueRealtimeDialogueMessage('interviewer', transcript, messageId);
+    if (isNextQuestionTransitionReply(transcript)) {
+      void goToNextQuestion();
+    }
+  }
+
+  // Озвучивает только что переключённый вопрос голосом интервьюера в ТОЙ ЖЕ
+  // realtime-сессии (без переподключения): добавляем модели контекст о смене
+  // вопроса и просим произнести его. В чат этот ответ не дублируется —
+  // вопрос уже показан отдельным пузырём.
+  function announceCurrentQuestionViaRealtime(
+    options: { firstQuestion?: boolean } = {}
+  ) {
+    const control = realtimeControl.value;
+    const question = currentTurn.value?.question?.trim();
+    if (!control || !voiceConnected.value || !question) return;
+
+    // На случай, если модель всё ещё договаривает что-то по старому вопросу.
+    control.cancelActiveResponses();
+
+    const contextText = options.firstQuestion
+      ? `Интервью началось. Текущий вопрос: «${question}». Обсуждай только его.`
+      : `Приложение переключило интервью на следующий вопрос. Текущий вопрос теперь: «${question}». ` +
+        'Обсуждай только его и не возвращайся к предыдущему вопросу.';
+
+    const instructions = options.firstQuestion
+      ? `Коротко поздоровайся с кандидатом одной фразой (например, «Здравствуйте, давайте начнём») и сразу задай первый вопрос интервью дословно: «${question}». ` +
+        'Ничего не добавляй после вопроса.'
+      : `Озвучь кандидату следующий вопрос интервью дословно: «${question}». ` +
+        'Перед вопросом допустима только короткая связка вроде «Хорошо, следующий вопрос». ' +
+        'Ничего не добавляй после вопроса.';
+
+    control.sendEvent({
+      type: 'conversation.item.create',
+      item: {
+        type: 'message',
+        role: 'system',
+        content: [{ type: 'input_text', text: contextText }],
+      },
+    });
+    control.sendEvent({
+      type: 'response.create',
+      response: {
+        metadata: { jobai_kind: REALTIME_QUESTION_ANNOUNCEMENT_KIND },
+        instructions,
+      },
+    });
   }
 
   const suggestMoveOn = computed(
@@ -296,14 +462,30 @@
 
   function queueRealtimeDialogueMessage(
     role: InterviewDialogueRole,
-    content: string
+    content: string,
+    runtimeMessageId?: string
   ) {
     const turn = currentTurn.value;
     const normalized = content.trim();
     if (!turn || !normalized) return;
 
+    // Одна реплика — один персист. Повторные события по тому же пузырю
+    // (ретрансляции транскрипта и т.п.) не должны дублировать сообщение
+    // в истории диалога.
+    if (runtimeMessageId) {
+      if (queuedRealtimePersistMessageIds.has(runtimeMessageId)) return;
+      queuedRealtimePersistMessageIds.add(runtimeMessageId);
+    }
+
     realtimePersistQueue = realtimePersistQueue
-      .then(() => persistRealtimeDialogueMessage(turn.id, role, normalized))
+      .then(() =>
+        persistRealtimeDialogueMessage(
+          turn.id,
+          role,
+          normalized,
+          runtimeMessageId
+        )
+      )
       .catch((err) => {
         errorMessage.value = extractApiError(err);
       });
@@ -312,15 +494,23 @@
   async function persistRealtimeDialogueMessage(
     turnId: string,
     role: InterviewDialogueRole,
-    content: string
+    content: string,
+    runtimeMessageId?: string
   ) {
-    await api<InterviewStateResponse>(
+    state.value = await api<InterviewStateResponse>(
       `/api/interview/sessions/${sessionId.value}/dialogue`,
       {
         method: 'POST',
         body: { turnId, role, content },
       }
     );
+    // Реплика теперь отрисовывается из состояния интервью (turn.messages) —
+    // снимаем её оптимистичный runtime-пузырь, иначе в чате будет дубль.
+    if (runtimeMessageId) {
+      runtimeMessages.value = runtimeMessages.value.filter(
+        (message) => message.id !== runtimeMessageId
+      );
+    }
   }
 
   async function flushRealtimePersistence() {
@@ -379,6 +569,7 @@
     }
 
     isSending.value = true;
+    sessionAction.value = 'message';
     errorMessage.value = '';
     // Очищаем поле сразу при отправке — реплика тут же уходит в чат
     // (оптимистичный пузырь), а текстере освобождается под следующий ответ.
@@ -401,7 +592,14 @@
       if (!answer.value.trim()) answer.value = message;
     } finally {
       isSending.value = false;
+      sessionAction.value = null;
     }
+  }
+
+  function handleComposerKeydown(event: KeyboardEvent) {
+    if (event.shiftKey || event.isComposing) return;
+    event.preventDefault();
+    void sendMessage();
   }
 
   // Стрим ответа интервьюера по SSE. Дельты раскрываются через короткую очередь:
@@ -607,9 +805,15 @@
   // Явный переход к следующему вопросу (кнопка / голосовая команда / согласие).
   async function goToNextQuestion() {
     const turn = currentTurn.value;
-    if (!turn || isSending.value) return;
+    if (!turn || isSending.value || isGeneratingReport.value) return;
+
+    if (isLastQuestion.value) {
+      await finishInterviewFromCurrentQuestion(turn);
+      return;
+    }
 
     isSending.value = true;
+    sessionAction.value = 'next';
     errorMessage.value = '';
     stopSpeech();
     try {
@@ -623,11 +827,43 @@
       );
       answer.value = '';
       runtimeMessages.value = [];
-      realtimeAdapter.value = null;
+      // В голосовом режиме новый вопрос сразу озвучивается в текущем
+      // realtime-соединении — без переподключения и без действий пользователя.
+      announceCurrentQuestionViaRealtime();
     } catch (err) {
       errorMessage.value = extractApiError(err);
     } finally {
       isSending.value = false;
+      sessionAction.value = null;
+    }
+  }
+
+  async function finishInterviewFromCurrentQuestion(
+    turn: CurrentInterviewTurn
+  ) {
+    if (isSending.value || isGeneratingReport.value) return;
+
+    isSending.value = true;
+    sessionAction.value = 'next';
+    errorMessage.value = '';
+    stopSpeech();
+    try {
+      await flushRealtimePersistence();
+      state.value = await api<InterviewStateResponse>(
+        `/api/interview/sessions/${sessionId.value}/next`,
+        {
+          method: 'POST',
+          body: { turnId: turn.id },
+        }
+      );
+      answer.value = '';
+      runtimeMessages.value = [];
+      await generateReport({ skipFlush: true });
+    } catch (err) {
+      errorMessage.value = extractApiError(err);
+    } finally {
+      isSending.value = false;
+      sessionAction.value = null;
     }
   }
 
@@ -650,13 +886,20 @@
     }
   }
 
-  async function generateReport() {
+  async function generateReport(options: { skipFlush?: boolean } = {}) {
     if (!state.value?.session.id || isGeneratingReport.value) return;
 
+    const ownsReportButtonState =
+      !options.skipFlush && sessionAction.value !== 'next';
+    if (ownsReportButtonState) {
+      sessionAction.value = 'report';
+    }
     isGeneratingReport.value = true;
     errorMessage.value = '';
     try {
-      await flushRealtimePersistence();
+      if (!options.skipFlush) {
+        await flushRealtimePersistence();
+      }
       const response = await api<InterviewReportResponse>(
         `/api/interview/sessions/${state.value.session.id}/report`,
         { method: 'POST' }
@@ -668,13 +911,29 @@
       errorMessage.value = extractApiError(err);
     } finally {
       isGeneratingReport.value = false;
+      if (ownsReportButtonState) {
+        sessionAction.value = null;
+      }
     }
   }
+
+  const reportGenerationAutoStarted = ref(false);
+
+  function startReportGenerationOnce() {
+    if (!isDone.value || reportGenerationAutoStarted.value) return;
+    reportGenerationAutoStarted.value = true;
+    void generateReport();
+  }
+
+  watch(isDone, (done) => {
+    if (done) startReportGenerationOnce();
+  });
 
   // --- Выбор интервьюера (внешность + тон) прямо в кабинете ---
   // Лицо кодирует пол и тон; выбор меняет и фото, и манеру ИИ на лету.
   const interviewerPickerOpen = ref(false);
   const isChangingInterviewer = ref(false);
+  const changingInterviewerFaceId = ref<InterviewerFaceId | null>(null);
   const failedThumbs = ref<Set<string>>(new Set());
 
   watch(interviewerPickerOpen, (open) => {
@@ -715,6 +974,7 @@
       return;
     }
     isChangingInterviewer.value = true;
+    changingInterviewerFaceId.value = faceId;
     errorMessage.value = '';
     stopSpeech();
     try {
@@ -727,6 +987,7 @@
       errorMessage.value = extractApiError(err);
     } finally {
       isChangingInterviewer.value = false;
+      changingInterviewerFaceId.value = null;
     }
   }
 
@@ -736,6 +997,15 @@
   const cameraLive = ref(false);
   const chatOpen = ref(true); // боковой чат
   const hintsOpen = ref(false); // боковые подсказки
+  const hintsLoading = ref(false);
+  const hintsError = ref('');
+  const loadedHintRequestKeys = ref<Set<string>>(new Set());
+  const hintsInitialLoading = computed(
+    () => hintsLoading.value && !currentHintDetails.value
+  );
+  const hintsSampleRefreshing = computed(
+    () => hintsLoading.value && Boolean(currentHintDetails.value)
+  );
 
   function toggleFullscreen() {
     isFullscreen.value = !isFullscreen.value;
@@ -763,7 +1033,67 @@
 
   function toggleHints() {
     hintsOpen.value = !hintsOpen.value;
+    if (hintsOpen.value) {
+      void generateHintsForCurrentTurn();
+    }
   }
+
+  async function generateHintsForCurrentTurn(force = false) {
+    const turn = currentTurn.value;
+    if (!turn || hintsLoading.value) return;
+    const requestKey = currentHintsRequestKey.value;
+    const latestInterviewerQuestion = latestInterviewerQuestionForHints(turn);
+    const sampleAnswerQuestion = latestInterviewerQuestion || turn.question;
+    if (
+      turn.hintPack?.detailed &&
+      (!latestInterviewerQuestion ||
+        turn.hintPack.detailed.sampleAnswerQuestion === sampleAnswerQuestion)
+    ) {
+      loadedHintRequestKeys.value = new Set(loadedHintRequestKeys.value).add(
+        requestKey
+      );
+      hintsError.value = '';
+      return;
+    }
+    if (!force && loadedHintRequestKeys.value.has(requestKey)) return;
+
+    hintsLoading.value = true;
+    hintsError.value = '';
+    try {
+      state.value = await api<InterviewStateResponse>(
+        `/api/interview/sessions/${sessionId.value}/hints`,
+        {
+          method: 'POST',
+          body: { turnId: turn.id },
+        }
+      );
+      loadedHintRequestKeys.value = new Set(loadedHintRequestKeys.value).add(
+        requestKey
+      );
+    } catch (err) {
+      hintsError.value = extractApiError(err);
+    } finally {
+      hintsLoading.value = false;
+    }
+  }
+
+  function retryHints() {
+    const turn = currentTurn.value;
+    if (!turn) return;
+    const next = new Set(loadedHintRequestKeys.value);
+    next.delete(currentHintsRequestKey.value);
+    loadedHintRequestKeys.value = next;
+    void generateHintsForCurrentTurn(true);
+  }
+
+  watch(
+    () => currentHintsRequestKey.value,
+    () => {
+      if (hintsOpen.value) {
+        void generateHintsForCurrentTurn();
+      }
+    }
+  );
 
   // «Завершить интервью» — формируем отчёт и уходим на разбор.
   function endInterview() {
@@ -778,6 +1108,7 @@
 
   onMounted(() => {
     window.addEventListener('keydown', onKeydown);
+    startReportGenerationOnce();
     // При входе сразу показываем последние сообщения.
     void nextTick(() => scrollChatToBottom('auto'));
   });
@@ -788,53 +1119,31 @@
 </script>
 
 <template>
-  <div class="page">
-    <header class="header">
-      <NuxtLink to="/interview/new" class="back">{{
-        t('interview.session.back')
-      }}</NuxtLink>
-      <div>
-        <p class="eyebrow">{{ progressText }}</p>
-        <h1>
-          {{
-            state?.session.vacancyTitle ||
-            state?.session.role ||
-            t('interview.session.title')
-          }}
-        </h1>
-        <p>
-          {{ state?.session.companyName || t('interview.session.subtitle') }}
-        </p>
-      </div>
+  <div class="interview-session-page app-page">
+    <header class="session-compact-header glass-frame glass-frame--soft">
+      <p class="session-compact-meta">{{ progressText }}</p>
+      <h1 class="session-compact-title">
+        {{
+          state?.session.vacancyTitle ||
+          state?.session.role ||
+          t('interview.session.title')
+        }}
+      </h1>
     </header>
 
-    <section v-if="pending" class="panel">
-      <p>{{ t('interview.session.loading') }}</p>
-    </section>
+    <GlassSkeletonStack
+      v-if="sessionInitialPending"
+      class="session-skeleton"
+      :heights="[420, 180, 140]"
+    />
 
     <template v-else-if="state">
-      <section v-if="isDone" class="panel done">
-        <h2>{{ t('interview.session.done.title') }}</h2>
-        <p>{{ t('interview.session.done.subtitle') }}</p>
-        <p v-if="errorMessage" class="error">{{ errorMessage }}</p>
-        <div class="done-actions">
-          <button
-            class="primary"
-            type="button"
-            :disabled="isGeneratingReport"
-            @click="generateReport"
-          >
-            {{
-              isGeneratingReport
-                ? t('interview.session.done.generatingReport')
-                : t('interview.session.done.generateReport')
-            }}
-          </button>
-          <NuxtLink class="primary-link secondary-link" to="/history">
-            {{ t('interview.session.done.history') }}
-          </NuxtLink>
-        </div>
-      </section>
+      <ReportGenerationPanel
+        v-if="isDone"
+        :error-message="errorMessage"
+        :retry-loading="sessionAction === 'report'"
+        @retry="generateReport"
+      />
 
       <section
         v-else-if="currentTurn"
@@ -848,7 +1157,10 @@
         <div class="call-stage">
           <div class="videos">
             <!-- Интервьюер сверху -->
-            <div class="vtile vtile--peer">
+            <div
+              class="vtile vtile--peer"
+              :class="{ 'vtile--speaking': isInterviewerSpeaking }"
+            >
               <InterviewerCard
                 :avatar-id="state.session.interviewerAvatarId"
                 :mode="state.session.interviewerMode"
@@ -864,34 +1176,35 @@
               >
                 <GearIcon aria-hidden="true" />
               </button>
-              <div
-                v-if="voiceConnecting || voiceConnected"
-                class="voice-live"
-                :class="{
-                  'voice-live--connecting': voiceConnecting,
-                  'voice-live--ready': voiceConnected,
-                }"
-                role="status"
-                aria-live="polite"
-              >
-                <span class="voice-live-dot" aria-hidden="true"></span>
-                <span>
-                  {{
-                    voiceConnected
-                      ? t('voice.realtime.readyToSpeak')
-                      : t('voice.realtime.status.connecting')
-                  }}
-                </span>
-              </div>
             </div>
             <!-- Кандидат снизу -->
-            <div class="vtile vtile--self">
+            <div
+              class="vtile vtile--self"
+              :class="{ 'vtile--user-speaking': userSpeaking }"
+            >
               <LocalCameraPreview
                 :active="cameraEnabled"
                 @active-change="handleCameraActiveChange"
                 @start-failed="handleCameraStartFailed"
               />
               <span class="vtile-name">{{ t('interview.session.you') }}</span>
+              <!-- «Можно говорить» — у того, кто проходит собеседование.
+                   Показываем, когда голосовое соединение установлено; при речи
+                   меняем текст на «Говорит» (плюс амбиентная подсветка рамки). -->
+              <span
+                v-if="voiceConnected"
+                class="vtile-voice-tag"
+                :class="{ 'vtile-voice-tag--speaking': userSpeaking }"
+                role="status"
+                aria-live="polite"
+              >
+                <span class="vtile-voice-dot" aria-hidden="true"></span>
+                {{
+                  userSpeaking
+                    ? t('interview.session.stage.speaking')
+                    : t('voice.realtime.readyToSpeak')
+                }}
+              </span>
             </div>
           </div>
 
@@ -904,7 +1217,7 @@
                   : t('interview.session.question')
               }}
             </span>
-            <p>{{ currentTurn.question }}</p>
+            <p><TextWithInterviewTerms :text="currentTurn.question" /></p>
             <button
               v-if="isTtsEnabled"
               class="listen-mini"
@@ -981,16 +1294,24 @@
             </button>
 
             <button
-              class="dock-btn dock-btn--end"
+              class="dock-btn dock-btn--end button-loader-host"
               type="button"
               :disabled="isGeneratingReport"
               v-tooltip="t('interview.session.controls.end')"
               @click="endInterview"
             >
-              <ExitIcon aria-hidden="true" />
-              <span class="dock-label">{{
-                t('interview.session.controls.endShort')
-              }}</span>
+              <ButtonLoader v-if="sessionAction === 'report'" />
+              <span
+                class="button-loader-content dock-btn__content"
+                :class="{
+                  'button-loader-content--loading': sessionAction === 'report',
+                }"
+              >
+                <ExitIcon aria-hidden="true" />
+                <span class="dock-label">{{
+                  t('interview.session.controls.endShort')
+                }}</span>
+              </span>
             </button>
           </div>
         </div>
@@ -998,8 +1319,28 @@
         <!-- Боковые панели: чат и подсказки (скрываемые, независимые) -->
         <div v-if="chatOpen || hintsOpen" class="call-side">
           <aside v-if="chatOpen" class="side-panel glass-frame">
-            <header class="side-head">
+            <header class="side-head side-head--chat">
               <h3>{{ t('interview.session.tabs.chat') }}</h3>
+              <!-- Компактный индикатор соединения — по центру шапки чата,
+                   помещается даже на 320px. «Можно говорить» живёт на плитке
+                   кандидата, здесь только статус связи. -->
+              <span
+                v-if="voiceConnecting || voiceConnected"
+                class="chat-conn"
+                :class="{
+                  'chat-conn--connecting': voiceConnecting,
+                  'chat-conn--ready': voiceConnected,
+                }"
+                role="status"
+                aria-live="polite"
+              >
+                <span class="chat-conn-dot" aria-hidden="true"></span>
+                <span class="chat-conn-text">{{
+                  voiceConnected
+                    ? t('voice.realtime.connectedBadge')
+                    : t('voice.realtime.status.connecting')
+                }}</span>
+              </span>
               <button
                 class="side-close"
                 type="button"
@@ -1023,7 +1364,7 @@
                 :class="`chat-message--${message.role}`"
               >
                 <small v-if="message.meta">{{ message.meta }}</small>
-                <p>{{ message.content }}</p>
+                <p><TextWithInterviewTerms :text="message.content" /></p>
                 <button
                   v-if="isTtsEnabled && message.role === 'assistant'"
                   class="bubble-listen"
@@ -1058,13 +1399,22 @@
                 {{ t('interview.session.moveOnHint') }}
               </span>
               <button
-                class="next-btn"
+                class="next-btn button-loader-host"
                 type="button"
-                :disabled="isSending"
+                :disabled="isSending || isGeneratingReport"
                 @click="goToNextQuestion"
               >
-                {{ t('interview.session.nextQuestion') }}
-                <ArrowRightIcon aria-hidden="true" />
+                <ButtonLoader v-if="sessionAction === 'next'" />
+                <span
+                  class="button-loader-content"
+                  :class="{
+                    'button-loader-content--loading': sessionAction === 'next',
+                  }"
+                >
+                  {{ nextActionLabel }}
+                  <ExitIcon v-if="isLastQuestion" aria-hidden="true" />
+                  <ArrowRightIcon v-else aria-hidden="true" />
+                </span>
               </button>
             </div>
 
@@ -1075,6 +1425,7 @@
                 rows="3"
                 :disabled="isSending || realtimeVoiceLocked"
                 :placeholder="t('interview.session.replyPlaceholder')"
+                @keydown.enter="handleComposerKeydown"
               />
               <p v-if="errorMessage" class="error">{{ errorMessage }}</p>
               <div class="composer-actions">
@@ -1090,10 +1441,11 @@
                     :realtime-limits="state.session.realtimeLimits"
                     :voice-profile-key="state.session.interviewerFaceId"
                     :on-event="handleRealtimeEvent"
+                    :on-control="handleRealtimeControl"
                   />
                 </div>
                 <button
-                  class="send-btn"
+                  class="send-btn button-loader-host"
                   type="submit"
                   :disabled="
                     answer.trim().length < 1 || isSending || realtimeVoiceLocked
@@ -1101,7 +1453,16 @@
                   v-tooltip="t('interview.session.send')"
                   :aria-label="t('interview.session.send')"
                 >
-                  <PaperPlaneIcon aria-hidden="true" />
+                  <ButtonLoader v-if="sessionAction === 'message'" />
+                  <span
+                    class="button-loader-content"
+                    :class="{
+                      'button-loader-content--loading':
+                        sessionAction === 'message',
+                    }"
+                  >
+                    <PaperPlaneIcon aria-hidden="true" />
+                  </span>
                 </button>
               </div>
             </form>
@@ -1121,19 +1482,142 @@
             </header>
 
             <div class="hints-pane">
-              <section class="hint-focus">
-                <p class="coach-label">{{ t('interview.session.hints') }}</p>
-                <h3>
-                  {{
-                    currentHintPack?.structure || t('interview.session.noHints')
-                  }}
-                </h3>
-                <ul v-if="currentHintPack" class="hint-list">
-                  <li v-for="item in currentHintPack.bullets" :key="item">
-                    {{ item }}
-                  </li>
-                </ul>
-              </section>
+              <template v-if="hintsInitialLoading">
+                <p class="sr-only">
+                  {{ t('interview.session.hintsPanel.loading') }}
+                </p>
+                <GlassSkeletonStack :heights="[42, 118, 196, 132]" />
+              </template>
+
+              <template v-else>
+                <div v-if="hintsError" class="hint-error">
+                  <p>{{ hintsError }}</p>
+                  <button type="button" class="hint-retry" @click="retryHints">
+                    {{ t('interview.session.hintsPanel.retry') }}
+                  </button>
+                </div>
+
+                <details
+                  v-if="currentHintPack || currentHintDetails"
+                  class="hint-disclosure hint-disclosure--primary"
+                  open
+                >
+                  <summary>
+                    <span>
+                      <em class="coach-label">{{
+                        t('interview.session.hints')
+                      }}</em>
+                      <strong>{{
+                        t('interview.session.hintsPanel.answerPlan')
+                      }}</strong>
+                    </span>
+                  </summary>
+
+                  <div class="hint-body">
+                    <h3 v-if="currentHintDetails?.focus">
+                      <TextWithInterviewTerms
+                        :text="currentHintDetails.focus"
+                      />
+                    </h3>
+                    <p v-else class="hint-structure">
+                      <TextWithInterviewTerms
+                        :text="
+                          currentHintPack?.strongDirection ||
+                          t('interview.session.noHints')
+                        "
+                      />
+                    </p>
+
+                    <ul
+                      v-if="currentHintDetails?.answerPlan.length"
+                      class="hint-list"
+                    >
+                      <li
+                        v-for="item in currentHintDetails.answerPlan"
+                        :key="item"
+                      >
+                        <TextWithInterviewTerms :text="item" />
+                      </li>
+                    </ul>
+
+                    <template v-if="currentHintDetails?.keyDefinitions.length">
+                      <p class="hint-subtitle">
+                        {{ t('interview.session.hintsPanel.keyDefinitions') }}
+                      </p>
+                      <ul class="hint-list">
+                        <li
+                          v-for="item in currentHintDetails.keyDefinitions"
+                          :key="item"
+                        >
+                          <TextWithInterviewTerms :text="item" />
+                        </li>
+                      </ul>
+                    </template>
+
+                    <template v-if="currentHintPack">
+                      <p class="hint-subtitle">
+                        {{ t('interview.session.hintsPanel.answerStructure') }}
+                      </p>
+                      <p class="hint-structure">
+                        <TextWithInterviewTerms
+                          :text="currentHintPack.structure"
+                        />
+                      </p>
+                      <ul class="hint-list">
+                        <li v-for="item in currentHintPack.bullets" :key="item">
+                          <TextWithInterviewTerms :text="item" />
+                        </li>
+                      </ul>
+                    </template>
+
+                    <template v-if="currentHintPack?.avoid.length">
+                      <p class="hint-subtitle">
+                        {{ t('interview.session.hintsPanel.avoid') }}
+                      </p>
+                      <ul class="hint-list hint-list--avoid">
+                        <li v-for="item in currentHintPack.avoid" :key="item">
+                          <TextWithInterviewTerms :text="item" />
+                        </li>
+                      </ul>
+                    </template>
+                  </div>
+                </details>
+
+                <p v-else class="hint-status">
+                  <TextWithInterviewTerms
+                    :text="t('interview.session.noHints')"
+                  />
+                </p>
+
+                <details
+                  v-if="currentHintDetails?.sampleAnswer"
+                  class="hint-disclosure"
+                  open
+                >
+                  <summary>
+                    <span>
+                      <em class="coach-label">
+                        {{
+                          t('interview.session.hintsPanel.sampleAnswerLabel')
+                        }}
+                      </em>
+                      <strong>{{
+                        t('interview.session.hintsPanel.sampleAnswer')
+                      }}</strong>
+                    </span>
+                  </summary>
+                  <p
+                    class="hint-sample"
+                    :class="{
+                      'hint-sample--refreshing': hintsSampleRefreshing,
+                    }"
+                  >
+                    <TextWithInterviewTerms
+                      :text="currentHintDetails.sampleAnswer"
+                    />
+                  </p>
+                </details>
+              </template>
 
               <details class="plan-disclosure">
                 <summary>
@@ -1201,7 +1685,7 @@
               v-for="opt in group.options"
               :key="opt.id"
               type="button"
-              class="picker-card"
+              class="picker-card button-loader-host"
               :class="{
                 'picker-card--active':
                   state.session.interviewerFaceId === opt.id,
@@ -1209,18 +1693,27 @@
               :disabled="isChangingInterviewer"
               @click="changeInterviewer(opt.id)"
             >
-              <span class="picker-thumb">
-                <img
-                  v-if="!failedThumbs.has(opt.id)"
-                  :src="getInterviewerFacePhotoSrc(opt.id)"
-                  :alt="t(opt.modeLabel)"
-                  @error="onThumbError(opt.id)"
-                />
-                <em v-else class="picker-initials">{{
-                  group.key === 'male' ? 'М' : 'Ж'
-                }}</em>
+              <ButtonLoader v-if="changingInterviewerFaceId === opt.id" />
+              <span
+                class="button-loader-content picker-card__content"
+                :class="{
+                  'button-loader-content--loading':
+                    changingInterviewerFaceId === opt.id,
+                }"
+              >
+                <span class="picker-thumb">
+                  <img
+                    v-if="!failedThumbs.has(opt.id)"
+                    :src="getInterviewerFacePhotoSrc(opt.id)"
+                    :alt="t(opt.modeLabel)"
+                    @error="onThumbError(opt.id)"
+                  />
+                  <em v-else class="picker-initials">{{
+                    group.key === 'male' ? 'М' : 'Ж'
+                  }}</em>
+                </span>
+                <span class="picker-mode">{{ t(opt.modeLabel) }}</span>
               </span>
-              <span class="picker-mode">{{ t(opt.modeLabel) }}</span>
             </button>
           </div>
         </div>
@@ -1245,40 +1738,46 @@
 </template>
 
 <style scoped>
-  .page {
+  .interview-session-page {
     display: flex;
     flex-direction: column;
-    gap: 18px;
+    gap: clamp(12px, 1.6vw, 16px);
     min-width: 0;
   }
-  .header {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
+
+  .session-compact-header {
+    display: grid;
+    gap: 6px;
+    min-width: 0;
+    padding: clamp(12px, 1.4vw, 16px) clamp(16px, 2vw, 22px);
   }
-  .header h1,
-  .header p {
+
+  .session-compact-meta,
+  .session-compact-title {
     margin: 0;
+    min-width: 0;
+    overflow-wrap: anywhere;
   }
-  .header p {
-    color: var(--color-muted);
-  }
-  .back {
-    color: var(--color-accent);
-    font-weight: 700;
-    text-decoration: none;
-  }
-  .eyebrow {
-    color: var(--color-accent) !important;
-    font-size: 13px;
-    font-weight: 700;
+
+  .session-compact-meta {
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: clamp(11px, 1vw, 13px);
+    font-weight: 900;
+    letter-spacing: 0;
+    line-height: 1.35;
     text-transform: uppercase;
   }
+
+  .session-compact-title {
+    color: var(--text-primary);
+    font-size: clamp(24px, 2.6vw, 34px);
+    font-weight: 900;
+    line-height: 1.08;
+  }
+
   .panel {
-    background: var(--color-surface);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius);
-    padding: 20px;
+    padding: clamp(18px, 2.2vw, 26px);
   }
 
   .stage-shell {
@@ -1295,7 +1794,7 @@
   .stage-grid {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(260px, 0.38fr);
-    gap: 12px;
+    gap: clamp(12px, 1.6vw, 16px);
   }
 
   .side-stage {
@@ -1354,6 +1853,7 @@
     font-size: 13px;
     font-weight: 800;
     padding: 6px 10px;
+    width: fit-content;
   }
   .listen-button {
     border: 1px solid var(--glass-border);
@@ -1560,134 +2060,14 @@
     padding: 12px;
     resize: vertical;
   }
-  .primary,
-  .ghost,
-  .primary-link {
-    border-radius: 10px;
-    font: inherit;
-    font-weight: 700;
-  }
-  .primary {
-    align-self: flex-end;
-    border: 0;
-    background: var(--color-accent);
-    color: #fff;
-    cursor: pointer;
-    padding: 12px 18px;
-  }
-  .primary:disabled {
-    cursor: not-allowed;
-    opacity: 0.55;
-  }
-  .ghost {
-    border: 1px solid var(--color-border);
-    background: var(--color-surface);
-    color: var(--color-text);
-    cursor: pointer;
-    padding: 8px 12px;
-  }
-  .primary-link {
-    display: inline-flex;
-    align-self: flex-start;
-    background: var(--color-accent);
-    color: #fff;
-    padding: 11px 14px;
-    text-decoration: none;
-  }
-  .secondary-link {
-    background: var(--color-bg);
-    color: var(--color-text);
-  }
   .error {
     margin: 0;
-    color: var(--color-danger);
+    color: var(--danger);
     font-weight: 700;
   }
-  .done {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-  .done h2,
-  .done p {
-    margin: 0;
-  }
-  .done-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px;
-  }
-  .history-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    margin-bottom: 14px;
-  }
-  .history-head h2 {
-    margin: 0;
-    font-size: 18px;
-  }
-  .turns {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    margin: 0;
-    padding: 0;
-    list-style: none;
-  }
-  .turn {
-    border-top: 1px solid var(--color-border);
-    padding-top: 12px;
-  }
-  .turn-question {
-    display: flex;
-    gap: 10px;
-  }
-  .turn-body {
-    display: grid;
-    gap: 4px;
-    min-width: 0;
-  }
-  .turn-num {
-    display: grid;
-    place-items: center;
-    flex: 0 0 28px;
-    width: 28px;
-    height: 28px;
-    border-radius: 999px;
-    background: var(--color-bg);
-    color: var(--color-muted);
-    font-size: 13px;
-    font-weight: 800;
-  }
-  .turn-num--sub {
-    background: transparent;
-    color: var(--color-accent);
-  }
-  .turn-tag {
-    color: var(--color-accent);
-    font-size: 12px;
-    font-weight: 800;
-    text-transform: uppercase;
-    letter-spacing: 0.02em;
-  }
-  .turn--clarify .turn-question strong {
-    color: var(--color-text);
-    font-weight: 600;
-  }
-  .turn-answer {
-    margin: 8px 0 0 38px;
-    color: var(--color-muted);
-    white-space: pre-wrap;
-  }
-
   @media (max-width: 640px) {
     .panel {
       padding: 15px;
-    }
-    .primary {
-      align-self: stretch;
     }
     .question-head {
       grid-template-columns: 1fr;
@@ -1718,7 +2098,7 @@
   /* ===================== Режим видеозвонка (Телемост) ===================== */
   .call {
     display: flex;
-    gap: 16px;
+    gap: clamp(12px, 1.6vw, 16px);
     align-items: stretch;
     min-width: 0;
     min-height: 74vh;
@@ -1730,7 +2110,7 @@
     z-index: 200;
     min-height: 0;
     padding: 16px;
-    background: var(--surface-0, #0b0e1a);
+    background: var(--app-bg);
   }
 
   /* Сцена с видео */
@@ -1738,14 +2118,14 @@
     display: flex;
     flex-direction: column;
     flex: 1 1 auto;
-    gap: 14px;
+    gap: clamp(12px, 1.6vw, 16px);
     min-width: min(100%, 220px);
   }
 
   .videos {
     display: grid;
     grid-template-rows: 1.35fr 1fr;
-    gap: 12px;
+    gap: clamp(12px, 1.6vw, 16px);
     flex: 1;
     min-height: 360px;
   }
@@ -1755,7 +2135,7 @@
     overflow: hidden;
     border: 1px solid var(--glass-border);
     border-radius: var(--radius-lg, 18px);
-    background: #0c1022;
+    background: var(--surface-solid);
     min-height: 0;
   }
 
@@ -1774,62 +2154,176 @@
     z-index: 2;
     padding: 5px 12px;
     border-radius: 999px;
-    background: rgba(0, 0, 0, 0.5);
-    color: #fff;
+    background: color-mix(in srgb, var(--app-bg) 72%, transparent);
+    color: var(--text-primary);
     font-size: 12px;
     font-weight: 700;
     letter-spacing: 0.01em;
   }
 
-  .voice-live {
+  /* Компактный индикатор соединения — по центру шапки чата (влезает на 320px). */
+  .chat-conn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    justify-self: center;
+    min-width: 0;
+    max-width: 100%;
+    padding: 4px 10px;
+    border: 1px solid var(--glass-border-strong);
+    border-radius: 999px;
+    background: var(--surface-soft);
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 800;
+    line-height: 1.1;
+    white-space: nowrap;
+  }
+  .chat-conn-dot {
+    flex: 0 0 auto;
+    width: 7px;
+    height: 7px;
+    border-radius: 999px;
+    background: currentColor;
+  }
+  .chat-conn-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .chat-conn--connecting {
+    color: color-mix(in srgb, var(--accent-2) 62%, #d9a83f);
+    border-color: color-mix(in srgb, #f0c15a 45%, transparent);
+  }
+  .chat-conn--connecting .chat-conn-dot {
+    animation: conn-pulse 1s ease-in-out infinite;
+  }
+  .chat-conn--ready {
+    color: #2fb572;
+    border-color: color-mix(in srgb, #45d483 50%, transparent);
+    background: color-mix(in srgb, #45d483 12%, var(--surface-soft));
+  }
+  .chat-conn--ready .chat-conn-dot {
+    box-shadow: 0 0 0 0 color-mix(in srgb, #45d483 70%, transparent);
+    animation: conn-ready-dot 1.8s ease-in-out infinite;
+  }
+
+  @keyframes conn-pulse {
+    0%,
+    100% {
+      opacity: 0.4;
+      transform: scale(0.82);
+    }
+    50% {
+      opacity: 1;
+      transform: scale(1.15);
+    }
+  }
+  @keyframes conn-ready-dot {
+    0% {
+      box-shadow: 0 0 0 0 color-mix(in srgb, #45d483 70%, transparent);
+    }
+    70% {
+      box-shadow: 0 0 0 7px transparent;
+    }
+    100% {
+      box-shadow: 0 0 0 0 transparent;
+    }
+  }
+
+  /* ===== Амбиентная подсветка «кто сейчас говорит» ===== */
+  /* Плитка мягко светится по всей рамке того, чья очередь звучать. */
+  .vtile {
+    transition: box-shadow 0.35s var(--ease-out),
+      border-color 0.35s var(--ease-out);
+  }
+
+  /* Говорит интервьюер — голубое амбиентное свечение вокруг верхней плитки. */
+  .vtile--speaking {
+    border-color: color-mix(in srgb, #7ab4ff 70%, transparent);
+    box-shadow: 0 0 0 1px color-mix(in srgb, #7ab4ff 55%, transparent),
+      0 0 34px 4px rgba(120, 180, 255, 0.34),
+      0 0 70px 12px rgba(120, 180, 255, 0.22);
+    animation: vtile-ambient-peer 2.6s ease-in-out infinite;
+  }
+
+  /* Говорит кандидат — тёплое амбиентное свечение вокруг нижней плитки. */
+  .vtile--user-speaking {
+    border-color: color-mix(in srgb, #45d483 68%, transparent);
+    box-shadow: 0 0 0 1px color-mix(in srgb, #45d483 52%, transparent),
+      0 0 34px 4px rgba(45, 212, 131, 0.32),
+      0 0 70px 12px rgba(45, 212, 131, 0.2);
+    animation: vtile-ambient-self 2.4s ease-in-out infinite;
+  }
+
+  @keyframes vtile-ambient-peer {
+    0%,
+    100% {
+      box-shadow: 0 0 0 1px color-mix(in srgb, #7ab4ff 45%, transparent),
+        0 0 28px 3px rgba(120, 180, 255, 0.26),
+        0 0 60px 10px rgba(120, 180, 255, 0.16);
+    }
+    50% {
+      box-shadow: 0 0 0 1px color-mix(in srgb, #7ab4ff 70%, transparent),
+        0 0 40px 6px rgba(120, 180, 255, 0.42),
+        0 0 84px 16px rgba(120, 180, 255, 0.26);
+    }
+  }
+  @keyframes vtile-ambient-self {
+    0%,
+    100% {
+      box-shadow: 0 0 0 1px color-mix(in srgb, #45d483 42%, transparent),
+        0 0 28px 3px rgba(45, 212, 131, 0.24),
+        0 0 60px 10px rgba(45, 212, 131, 0.14);
+    }
+    50% {
+      box-shadow: 0 0 0 1px color-mix(in srgb, #45d483 68%, transparent),
+        0 0 40px 6px rgba(45, 212, 131, 0.4),
+        0 0 84px 16px rgba(45, 212, 131, 0.24);
+    }
+  }
+
+  /* Шильдик «Можно говорить»/«Говорит» на плитке кандидата (нижняя плитка). */
+  .vtile-voice-tag {
     position: absolute;
     left: 12px;
     top: 12px;
     z-index: 3;
     display: inline-flex;
     align-items: center;
-    max-width: calc(100% - 72px);
-    gap: 8px;
-    padding: 7px 11px;
-    border: 1px solid rgba(255, 255, 255, 0.32);
+    gap: 7px;
+    max-width: calc(100% - 24px);
+    padding: 6px 11px;
     border-radius: 999px;
-    background: rgba(8, 12, 24, 0.62);
-    color: #fff;
-    backdrop-filter: blur(6px);
+    border: 1px solid color-mix(in srgb, #45d483 55%, transparent);
+    background: color-mix(in srgb, #103021 74%, transparent);
+    color: #bff6d5;
     font-size: 12px;
     font-weight: 800;
-    line-height: 1.2;
+    letter-spacing: 0.01em;
+    backdrop-filter: blur(5px);
+    white-space: nowrap;
   }
-
-  .voice-live-dot {
+  .vtile-voice-dot {
     flex: 0 0 auto;
     width: 8px;
     height: 8px;
     border-radius: 999px;
-    background: currentColor;
+    background: #45d483;
+    box-shadow: 0 0 0 0 color-mix(in srgb, #45d483 70%, transparent);
+    animation: conn-ready-dot 1.8s ease-in-out infinite;
+  }
+  .vtile-voice-tag--speaking {
+    border-color: color-mix(in srgb, #45d483 80%, transparent);
+    box-shadow: 0 6px 22px rgba(45, 212, 131, 0.32);
   }
 
-  .voice-live--connecting {
-    color: #f8d479;
-  }
-
-  .voice-live--connecting .voice-live-dot {
-    animation: voice-live-pulse 1s ease-in-out infinite;
-  }
-
-  .voice-live--ready {
-    color: #8ff0b0;
-  }
-
-  @keyframes voice-live-pulse {
-    0%,
-    100% {
-      opacity: 0.45;
-      transform: scale(0.86);
-    }
-    50% {
-      opacity: 1;
-      transform: scale(1.18);
+  @media (prefers-reduced-motion: reduce) {
+    .vtile--speaking,
+    .vtile--user-speaking,
+    .chat-conn--connecting .chat-conn-dot,
+    .chat-conn--ready .chat-conn-dot,
+    .vtile-voice-dot {
+      animation: none;
     }
   }
 
@@ -1839,7 +2333,7 @@
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     grid-template-areas:
-      'badge listen'
+      'badge .'
       'question listen';
     align-items: center;
     column-gap: 14px;
@@ -1914,7 +2408,7 @@
     background: rgba(248, 250, 255, 0.96);
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9),
       0 10px 34px rgba(23, 31, 56, 0.08); */
-    color: #242942;
+    color: var(--text-primary);
   }
 
   .dock-btn {
@@ -1929,7 +2423,7 @@
     border: 1px solid transparent;
     border-radius: 14px;
     background: transparent;
-    color: #68708a;
+    color: var(--text-muted);
     cursor: pointer;
     outline: none;
     font: inherit;
@@ -1945,6 +2439,11 @@
     height: 22px;
   }
 
+  .dock-btn__content {
+    flex-direction: column;
+    gap: 4px;
+  }
+
   .dock-label {
     font-size: 11px;
     font-weight: 700;
@@ -1955,8 +2454,8 @@
   .dock-btn:focus-visible:not(:disabled):not(.dock-btn--active):not(
       .dock-btn--end
     ) {
-    background: rgba(232, 237, 250, 0.82);
-    color: #23283c;
+    background: var(--surface-raised);
+    color: var(--text-primary);
   }
 
   .dock-btn:focus-visible {
@@ -1981,7 +2480,7 @@
 
   /* Камера выключена — приглушаем */
   .dock-btn--off:not(.dock-btn--active) {
-    color: #8a92a8;
+    color: var(--text-muted);
   }
 
   /* Завершить — акцент-красный */
@@ -2035,6 +2534,15 @@
     margin: 0;
     font-size: 15px;
     font-weight: 800;
+  }
+
+  /* Шапка чата: заголовок слева, индикатор соединения по центру, крестик
+     справа. Grid держит индикатор ровно посередине и не даёт ему распирать
+     шапку — влезает даже на 320px. */
+  .side-head--chat {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 8px;
   }
 
   .side-close {
@@ -2207,43 +2715,175 @@
     overflow-y: auto;
   }
 
-  .hint-focus,
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .hint-disclosure,
   .plan-disclosure {
     border: 1px solid var(--glass-border);
     border-radius: var(--radius-sm);
     background: var(--surface-soft);
+    max-height: 300px;
+    overflow: auto;
     padding: 12px;
   }
 
-  .hint-focus {
-    display: grid;
-    gap: 10px;
+  .hint-disclosure {
+    color: var(--text-secondary);
   }
 
-  .hint-focus h3 {
+  .hint-disclosure--primary {
+    background: color-mix(in srgb, var(--surface-soft) 88%, transparent);
+  }
+
+  .hint-body {
+    display: grid;
+    gap: 10px;
+    margin-top: 12px;
+  }
+
+  .hint-body h3 {
     margin: 0;
     color: var(--text-primary);
     font-size: 17px;
     line-height: 1.35;
   }
 
+  .hint-status,
+  .hint-structure,
+  .hint-sample,
+  .hint-error p {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 13px;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+  }
+
+  .hint-error {
+    display: grid;
+    gap: 8px;
+    padding: 10px;
+    border: 1px solid color-mix(in srgb, var(--danger) 34%, transparent);
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--danger) 10%, transparent);
+  }
+
+  .hint-retry {
+    justify-self: start;
+    min-height: 32px;
+    border: 1px solid var(--glass-border);
+    border-radius: 10px;
+    background: var(--surface-raised);
+    color: var(--text-primary);
+    cursor: pointer;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 800;
+    padding: 0 10px;
+  }
+
+  .hint-subtitle {
+    margin: 2px 0 0;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 800;
+  }
+
+  .hint-disclosure .hint-list,
+  .hint-disclosure .hint-structure,
+  .hint-disclosure .hint-sample {
+    /* margin-top: 12px; */
+  }
+
+  .hint-sample--refreshing {
+    color: transparent;
+    background-image: linear-gradient(
+      115deg,
+      var(--text-muted) 0%,
+      var(--text-secondary) 38%,
+      var(--text-primary) 50%,
+      var(--text-secondary) 62%,
+      var(--text-muted) 100%
+    );
+    background-size: 260% 100%;
+    background-position: 140% 0;
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    animation: hint-text-shimmer 2.45s linear infinite;
+  }
+
+  .hint-sample--refreshing :deep(.term-tooltip) {
+    color: transparent;
+    background-image: inherit;
+    background-size: inherit;
+    background-position: 140% 0;
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    animation: hint-text-shimmer 2.45s linear infinite;
+  }
+
+  @keyframes hint-text-shimmer {
+    from {
+      background-position: 140% 0;
+    }
+    to {
+      background-position: -140% 0;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .hint-sample--refreshing,
+    .hint-sample--refreshing :deep(.term-tooltip) {
+      animation: none;
+      background-image: none;
+      -webkit-text-fill-color: currentColor;
+    }
+
+    .hint-sample--refreshing {
+      color: var(--text-secondary);
+    }
+
+    .hint-sample--refreshing :deep(.term-tooltip) {
+      color: var(--accent-2);
+    }
+  }
+
+  .hint-list--avoid li {
+    color: var(--text-muted);
+  }
+
   .plan-disclosure {
     color: var(--text-secondary);
   }
 
+  .hint-disclosure summary,
   .plan-disclosure summary {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 12px;
+    gap: clamp(12px, 1.6vw, 16px);
     cursor: pointer;
     list-style: none;
   }
 
+  .hint-disclosure summary::-webkit-details-marker,
   .plan-disclosure summary::-webkit-details-marker {
     display: none;
   }
 
+  .hint-disclosure summary::after,
   .plan-disclosure summary::after {
     content: '+';
     display: grid;
@@ -2258,16 +2898,19 @@
     font-weight: 900;
   }
 
+  .hint-disclosure[open] summary::after,
   .plan-disclosure[open] summary::after {
     content: '-';
   }
 
+  .hint-disclosure summary span,
   .plan-disclosure summary span {
     display: grid;
     gap: 4px;
     min-width: 0;
   }
 
+  .hint-disclosure summary strong,
   .plan-disclosure summary strong {
     color: var(--text-primary);
     font-size: 14px;
@@ -2355,10 +2998,10 @@
     justify-content: center;
     width: 38px;
     height: 38px;
-    border: 1px solid rgba(255, 255, 255, 0.28);
+    border: 1px solid var(--glass-border-strong);
     border-radius: 12px;
-    background: rgba(0, 0, 0, 0.42);
-    color: #fff;
+    background: color-mix(in srgb, var(--app-bg) 64%, transparent);
+    color: var(--text-primary);
     cursor: pointer;
     backdrop-filter: blur(4px);
     transition: background var(--motion-fast) var(--ease-out);
@@ -2369,7 +3012,7 @@
     transition: transform var(--motion-fast) var(--ease-out);
   }
   .interviewer-settings:hover {
-    background: rgba(0, 0, 0, 0.62);
+    background: color-mix(in srgb, var(--app-bg) 78%, transparent);
   }
   .interviewer-settings:hover svg {
     transform: rotate(30deg);
@@ -2383,7 +3026,7 @@
     display: grid;
     place-items: center;
     padding: 18px;
-    background: rgba(6, 9, 18, 0.62);
+    background: color-mix(in srgb, var(--app-bg) 72%, transparent);
     backdrop-filter: blur(3px);
   }
 
@@ -2396,14 +3039,14 @@
     gap: 16px;
     padding: 18px;
     border-radius: var(--radius-md, 16px);
-    background: var(--surface, #11151f);
+    background: var(--surface);
   }
 
   .picker-head {
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
-    gap: 12px;
+    gap: clamp(12px, 1.6vw, 16px);
   }
   .picker-head h3 {
     margin: 0 0 4px;
@@ -2450,6 +3093,13 @@
     transition: border-color var(--motion-fast) var(--ease-out),
       transform var(--motion-fast) var(--ease-out);
   }
+
+  .picker-card__content {
+    display: grid;
+    gap: 8px;
+    justify-items: center;
+    width: 100%;
+  }
   .picker-card:hover:not(:disabled) {
     border-color: var(--glass-border-strong);
     transform: translateY(-1px);
@@ -2471,7 +3121,7 @@
     aspect-ratio: 16 / 9;
     overflow: hidden;
     border-radius: 12px;
-    background: linear-gradient(135deg, #1c2738, #2c3a4f);
+    background: var(--surface-raised);
   }
   .picker-thumb img {
     width: 100%;
@@ -2482,7 +3132,7 @@
     font-size: 26px;
     font-weight: 900;
     font-style: normal;
-    color: rgba(255, 255, 255, 0.85);
+    color: var(--text-primary);
   }
 
   .picker-mode {

@@ -9,11 +9,13 @@
   import { computed } from 'vue';
   import { useI18n } from 'vue-i18n';
   import type { DashboardSummaryResponse } from '@/shared/dto';
+  import GlassSkeletonStack from '@/app/components/design/GlassSkeletonStack.vue';
+  import TextWithInterviewTerms from '@/app/components/design/TextWithInterviewTerms.vue';
 
   const { t } = useI18n();
   const api = useAPI();
 
-  const { data: summary, pending } = await useAsyncData(
+  const { data: summary, pending } = await useLazyAsyncData(
     'dashboard-summary',
     () => api<DashboardSummaryResponse>('/api/dashboard/summary')
   );
@@ -77,14 +79,26 @@
       : '/interview/new'
   );
 
-  function scenarioLink(role: string, level: string, mode: string) {
+  const activeSessionProgress = computed(() => {
+    const activeSession = summary.value?.activeSession;
+    if (!activeSession) return '';
+    return t('history.progress', {
+      answered: activeSession.answeredQuestions,
+      total: activeSession.totalQuestions,
+    });
+  });
+
+  function scenarioLink(
+    scenario: DashboardSummaryResponse['quickScenarios'][number]
+  ) {
     return {
       path: '/interview/new',
       query: {
         source: 'profession',
-        role,
-        level,
-        mode,
+        ...(scenario.role ? { role: scenario.role } : {}),
+        level: scenario.level,
+        mode: scenario.interviewerMode,
+        focus: scenario.focus,
       },
     };
   }
@@ -94,9 +108,17 @@
   <div class="dashboard-page app-page">
     <section class="hero-grid">
       <article class="hero-copy glass-frame">
-        <p class="page-kicker">{{ t('dashboard.eyebrow') }}</p>
-        <h1 class="page-title">{{ t('dashboard.title') }}</h1>
-        <p class="page-subtitle">{{ t('dashboard.subtitle') }}</p>
+        <div class="hero-copy__main">
+          <p class="page-kicker">{{ t('dashboard.eyebrow') }}</p>
+          <h1 class="page-title">{{ t('dashboard.title') }}</h1>
+          <p class="page-subtitle">{{ t('dashboard.subtitle') }}</p>
+
+          <div v-if="summary?.activeSession" class="active-inline">
+            <span>{{ t('dashboard.active') }}</span>
+            <strong>{{ summary.activeSession.title }}</strong>
+            <small>{{ activeSessionProgress }}</small>
+          </div>
+        </div>
 
         <div class="hero-actions">
           <NuxtLink :to="activeLink" class="primary-action">
@@ -114,179 +136,179 @@
           </NuxtLink>
         </div>
       </article>
-
-      <article class="active-card glass-frame glass-frame--interactive">
-        <div>
-          <p class="panel-label">{{ t('dashboard.active') }}</p>
-          <h2>
-            {{ summary?.activeSession?.title || t('dashboard.noActive') }}
-          </h2>
-          <p>
-            {{
-              summary?.activeSession
-                ? t('history.progress', {
-                    answered: summary.activeSession.answeredQuestions,
-                    total: summary.activeSession.totalQuestions,
-                  })
-                : t('dashboard.startHint')
-            }}
-          </p>
-        </div>
-
-        <div class="signal" aria-hidden="true">
-          <span />
-          <span />
-          <span />
-        </div>
-      </article>
     </section>
 
-    <section class="stats-grid" :aria-label="t('dashboard.statsLabel')">
-      <article
-        v-for="item in stats"
-        :key="item.key"
-        class="stat glass-frame glass-frame--soft"
-      >
-        <span class="stat-icon" aria-hidden="true">
-          <component :is="item.icon" />
-        </span>
-        <span>{{ item.label }}</span>
-        <strong>{{ item.value }}</strong>
-      </article>
-    </section>
+    <GlassSkeletonStack
+      v-if="pending"
+      class="dashboard-skeleton"
+      :heights="[112, 228, 180]"
+    />
 
-    <section class="workbench-grid">
-      <article class="panel panel--wide glass-frame">
+    <template v-else>
+      <section class="stats-grid" :aria-label="t('dashboard.statsLabel')">
+        <article
+          v-for="item in stats"
+          :key="item.key"
+          class="stat glass-frame glass-frame--soft"
+        >
+          <span class="stat-icon" aria-hidden="true">
+            <component :is="item.icon" />
+          </span>
+          <span>{{ item.label }}</span>
+          <strong>{{ item.value }}</strong>
+        </article>
+      </section>
+
+      <section class="workbench-grid">
+        <article class="panel panel--wide glass-frame">
+          <div class="panel-head">
+            <div>
+              <p class="panel-label">
+                {{ t('dashboard.quickScenariosLabel') }}
+              </p>
+              <h2>{{ t('dashboard.quickScenarios') }}</h2>
+            </div>
+            <NuxtLink to="/interview/new">{{
+              t('dashboard.customScenario')
+            }}</NuxtLink>
+          </div>
+
+          <div class="scenarios">
+            <NuxtLink
+              v-for="scenario in summary?.quickScenarios || []"
+              :key="scenario.id"
+              class="scenario"
+              :to="scenarioLink(scenario)"
+            >
+              <span>
+                <strong>{{ scenario.title }}</strong>
+                <small>
+                  <TextWithInterviewTerms :text="scenario.subtitle" />
+                </small>
+              </span>
+              <ArrowRightIcon aria-hidden="true" />
+            </NuxtLink>
+          </div>
+        </article>
+
+        <article class="panel glass-frame">
+          <div class="panel-head">
+            <div>
+              <p class="panel-label">{{ t('dashboard.focusLabel') }}</p>
+              <h2>{{ t('dashboard.fixBeforeInterview') }}</h2>
+            </div>
+          </div>
+
+          <ol v-if="summary?.topFixes.length" class="fixes">
+            <li v-for="fix in summary.topFixes" :key="fix">
+              <TextWithInterviewTerms :text="fix" />
+            </li>
+          </ol>
+          <div v-else class="tips">
+            <article v-for="tip in tips" :key="tip.key" class="tip">
+              <strong>{{ tip.title }}</strong>
+              <span>
+                <TextWithInterviewTerms :text="tip.text" />
+              </span>
+            </article>
+          </div>
+        </article>
+      </section>
+
+      <section class="panel glass-frame">
         <div class="panel-head">
           <div>
-            <p class="panel-label">{{ t('dashboard.quickScenariosLabel') }}</p>
-            <h2>{{ t('dashboard.quickScenarios') }}</h2>
+            <p class="panel-label">{{ t('dashboard.timelineLabel') }}</p>
+            <h2>{{ t('dashboard.recent') }}</h2>
           </div>
-          <NuxtLink to="/interview/new">{{
-            t('dashboard.customScenario')
-          }}</NuxtLink>
+          <NuxtLink to="/history">{{ t('nav.history') }}</NuxtLink>
         </div>
 
-        <div class="scenarios">
+        <div v-if="summary?.recentSessions.length" class="recent">
           <NuxtLink
-            v-for="scenario in summary?.quickScenarios || []"
-            :key="scenario.id"
-            class="scenario"
-            :to="
-              scenarioLink(
-                scenario.role,
-                scenario.level,
-                scenario.interviewerMode
-              )
-            "
+            v-for="item in summary.recentSessions"
+            :key="item.id"
+            class="session-row"
+            :to="`/interview/${item.id}`"
           >
             <span>
-              <strong>{{ scenario.title }}</strong>
-              <small>{{ scenario.subtitle }}</small>
+              <strong>{{ item.title }}</strong>
+              <small>{{
+                t('history.progress', {
+                  answered: item.answeredQuestions,
+                  total: item.totalQuestions,
+                })
+              }}</small>
             </span>
-            <ArrowRightIcon aria-hidden="true" />
+            <b>
+              {{
+                item.report?.overallScore
+                  ? t('common.score', { score: item.report.overallScore })
+                  : t(`common.status.${item.status}`)
+              }}
+            </b>
           </NuxtLink>
-          <p v-if="pending" class="muted">{{ t('common.loading') }}</p>
         </div>
-      </article>
-
-      <article class="panel glass-frame">
-        <div class="panel-head">
-          <div>
-            <p class="panel-label">{{ t('dashboard.focusLabel') }}</p>
-            <h2>{{ t('dashboard.fixBeforeInterview') }}</h2>
-          </div>
-        </div>
-
-        <ol v-if="summary?.topFixes.length" class="fixes">
-          <li v-for="fix in summary.topFixes" :key="fix">{{ fix }}</li>
-        </ol>
-        <div v-else class="tips">
-          <article v-for="tip in tips" :key="tip.key" class="tip">
-            <strong>{{ tip.title }}</strong>
-            <span>{{ tip.text }}</span>
-          </article>
-        </div>
-      </article>
-    </section>
-
-    <section class="panel glass-frame">
-      <div class="panel-head">
-        <div>
-          <p class="panel-label">{{ t('dashboard.timelineLabel') }}</p>
-          <h2>{{ t('dashboard.recent') }}</h2>
-        </div>
-        <NuxtLink to="/history">{{ t('nav.history') }}</NuxtLink>
-      </div>
-
-      <div v-if="summary?.recentSessions.length" class="recent">
-        <NuxtLink
-          v-for="item in summary.recentSessions"
-          :key="item.id"
-          class="session-row"
-          :to="`/interview/${item.id}`"
-        >
-          <span>
-            <strong>{{ item.title }}</strong>
-            <small>{{
-              t('history.progress', {
-                answered: item.answeredQuestions,
-                total: item.totalQuestions,
-              })
-            }}</small>
-          </span>
-          <b>
-            {{
-              item.report?.overallScore
-                ? t('common.score', { score: item.report.overallScore })
-                : t(`common.status.${item.status}`)
-            }}
-          </b>
-        </NuxtLink>
-      </div>
-      <p v-else class="muted">
-        {{ pending ? t('common.loading') : t('history.empty') }}
-      </p>
-    </section>
+        <p v-else class="muted">{{ t('history.empty') }}</p>
+      </section>
+    </template>
   </div>
 </template>
 
 <style scoped>
+  .dashboard-page {
+    gap: clamp(12px, 1.6vw, 16px);
+  }
+
   .hero-grid {
     display: grid;
-    grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.65fr);
-    gap: 18px;
+    grid-template-columns: 1fr;
+    gap: clamp(14px, 1.6vw, 18px);
   }
 
   .hero-copy,
-  .active-card,
   .panel,
   .stat {
-    padding: clamp(20px, 3vw, 34px);
+    padding: clamp(18px, 2.2vw, 28px);
   }
 
   .hero-copy {
-    min-height: 330px;
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
     justify-content: space-between;
-    gap: 28px;
+    gap: 18px;
+    align-items: center;
+    padding: clamp(16px, 1.8vw, 22px);
+  }
+
+  .hero-copy__main {
+    display: grid;
+    gap: 9px;
+    min-width: 0;
+  }
+
+  .hero-copy .page-title {
+    max-width: 720px;
+    font-size: clamp(34px, 4vw, 56px);
+    line-height: 0.96;
   }
 
   .hero-copy .page-subtitle {
-    margin-top: 18px;
+    max-width: 48ch;
+    font-size: 15px;
   }
 
   .hero-actions {
     display: flex;
     flex-wrap: wrap;
-    gap: 12px;
+    gap: clamp(12px, 1.6vw, 16px);
     align-items: center;
   }
 
   .secondary-link {
     display: inline-flex;
     align-items: center;
+    justify-content: center;
     min-height: 52px;
     padding: 0 18px;
     border: 1px solid var(--glass-border);
@@ -306,12 +328,43 @@
     color: var(--text-primary);
   }
 
-  .active-card {
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between;
-    min-height: 330px;
-    gap: 28px;
+  .active-inline {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 10px;
+    align-items: center;
+    width: fit-content;
+    max-width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-control);
+    background: var(--surface-soft);
+  }
+
+  .active-inline span {
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 900;
+    letter-spacing: 0;
+    text-transform: uppercase;
+  }
+
+  .active-inline strong {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 900;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .active-inline small {
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 800;
+    white-space: nowrap;
   }
 
   .panel-label {
@@ -329,7 +382,6 @@
     margin: 0;
   }
 
-  .active-card h2,
   .panel h2 {
     color: var(--text-primary);
     font-size: clamp(22px, 2.2vw, 30px);
@@ -337,7 +389,6 @@
     text-wrap: balance;
   }
 
-  .active-card p:last-child,
   .muted,
   .scenario small,
   .session-row small,
@@ -345,44 +396,15 @@
     color: var(--text-muted);
   }
 
-  .signal {
-    display: flex;
-    align-items: end;
-    gap: 8px;
-    height: 86px;
-  }
-
-  .signal span {
-    width: 18px;
-    border-radius: 999px;
-    background: var(--button-bg);
-    box-shadow: var(--button-shadow);
-    animation: signal-pulse 2.8s var(--ease-spring) infinite;
-  }
-
-  .signal span:nth-child(1) {
-    height: 42px;
-  }
-
-  .signal span:nth-child(2) {
-    height: 72px;
-    animation-delay: 180ms;
-  }
-
-  .signal span:nth-child(3) {
-    height: 54px;
-    animation-delay: 360ms;
-  }
-
   .stats-grid {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 14px;
+    gap: clamp(12px, 1.6vw, 16px);
   }
 
   .stat {
     display: grid;
-    gap: 12px;
+    gap: clamp(12px, 1.6vw, 16px);
   }
 
   .stat-icon {
@@ -416,7 +438,7 @@
   .workbench-grid {
     display: grid;
     grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
-    gap: 18px;
+    gap: clamp(12px, 1.6vw, 16px);
   }
 
   .panel {
@@ -500,7 +522,7 @@
 
   .fixes {
     display: grid;
-    gap: 12px;
+    gap: 10px;
     margin: 0;
     padding: 0;
     list-style: none;
@@ -527,21 +549,7 @@
     color: var(--text-primary);
   }
 
-  @keyframes signal-pulse {
-    0%,
-    100% {
-      transform: scaleY(0.72);
-      opacity: 0.68;
-    }
-
-    48% {
-      transform: scaleY(1);
-      opacity: 1;
-    }
-  }
-
   @media (max-width: 1365px) {
-    .hero-grid,
     .workbench-grid {
       grid-template-columns: 1fr;
     }
@@ -552,15 +560,33 @@
   }
 
   @media (max-width: 620px) {
+    .dashboard-page {
+      gap: 14px;
+    }
+
+    .hero-copy {
+      grid-template-columns: 1fr;
+      align-items: stretch;
+    }
+
     .hero-copy,
-    .active-card,
     .panel,
     .stat {
-      padding: 18px;
+      padding: 16px;
     }
 
     .stats-grid {
       grid-template-columns: 1fr;
+    }
+
+    .active-inline {
+      grid-template-columns: 1fr;
+      width: 100%;
+    }
+
+    .active-inline small,
+    .active-inline strong {
+      white-space: normal;
     }
 
     .hero-actions,

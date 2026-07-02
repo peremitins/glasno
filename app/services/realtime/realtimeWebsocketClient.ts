@@ -1,6 +1,7 @@
 import type { RealtimeSessionResponse } from '@/shared/dto';
 import {
   buildRealtimeAudioConstraints,
+  isRealtimeActivityEvent,
   shouldNotifyRealtimeInputActivity,
   type RealtimeVoiceClientOptions,
   type RealtimeWebrtcClient,
@@ -60,6 +61,13 @@ export async function startRealtimeWebsocketClient(
   let playbackQueue = Promise.resolve();
   let proxyConnected = false;
   let rejectProxyConnection: (error: Error) => void = () => {};
+  // WebSocket-транспорт (Firefox) не получает от OpenAI событий
+  // output_audio_buffer.*, поэтому синтезируем их сами по реальному
+  // воспроизведению голоса — чтобы анимация «интервьюер говорит» гасла ровно
+  // тогда, когда звук действительно закончился, а не когда пришёл текст.
+  let activeAudioResponseId: string | null = null;
+  let pendingPlaybackChunks = 0;
+  let playbackStopTimer: ReturnType<typeof setTimeout> | null = null;
 
   const source = inputContext.createMediaStreamSource(mediaStream);
   const processor = inputContext.createScriptProcessor(
@@ -91,7 +99,9 @@ export async function startRealtimeWebsocketClient(
       })
     ) {
       lastInputActivityAtMs = now;
-      options.onActivity?.();
+      // Амбиентный уровень микрофона — keep-alive, не сброс idle-таймера
+      // (тишину определяем по VAD-событиям речи, а не по любому звуку).
+      options.onKeepAlive?.();
     }
 
     const resampled = resampleFloat32Audio(
@@ -113,11 +123,23 @@ export async function startRealtimeWebsocketClient(
       if (isRealtimeProxyConnectedEvent(payload)) return;
       const errorMessage = extractRealtimeWebsocketErrorMessage(payload);
       if (errorMessage) {
-        handleRealtimeWebsocketError(new Error(errorMessage));
+        // Безвредные ошибки (например, response.cancel без активного ответа)
+        // не считаем фатальными — сессию не рвём.
+        if (!isBenignRealtimeErrorEvent(payload)) {
+          handleRealtimeWebsocketError(new Error(errorMessage));
+          return;
+        }
+        options.onEvent?.(payload);
         return;
       }
+      // Значимые разговорные события (речь пользователя по VAD, транскрипты,
+      // события ответа) сбрасывают таймер простоя.
+      if (isRealtimeActivityEvent(payload)) options.onActivity?.();
       const audioDelta = extractRealtimeWebsocketAudioDelta(payload);
-      if (audioDelta) enqueueAudioPlayback(audioDelta);
+      if (audioDelta) {
+        markAssistantAudioResponse(extractRealtimeWebsocketResponseId(payload));
+        enqueueAudioPlayback(audioDelta);
+      }
       options.onEvent?.(payload);
     } catch {
       options.onActivity?.();
@@ -153,6 +175,10 @@ export async function startRealtimeWebsocketClient(
 
   function stop() {
     stopped = true;
+    if (playbackStopTimer) {
+      clearTimeout(playbackStopTimer);
+      playbackStopTimer = null;
+    }
     processor.onaudioprocess = null;
     try {
       source.disconnect();
@@ -183,6 +209,44 @@ export async function startRealtimeWebsocketClient(
     ws.send(JSON.stringify(event));
   }
 
+  // Начало воспроизведения голоса ассистента для нового ответа: синтезируем
+  // событие output_audio_buffer.started, чтобы адаптер зажёг анимацию речи.
+  function markAssistantAudioResponse(responseId: string) {
+    if (playbackStopTimer) {
+      clearTimeout(playbackStopTimer);
+      playbackStopTimer = null;
+    }
+    if (activeAudioResponseId === responseId) return;
+    if (activeAudioResponseId) emitSyntheticAudioBufferStopped(activeAudioResponseId);
+    activeAudioResponseId = responseId;
+    options.onEvent?.({
+      type: 'output_audio_buffer.started',
+      response_id: responseId,
+    });
+  }
+
+  function emitSyntheticAudioBufferStopped(responseId: string) {
+    if (!responseId) return;
+    options.onEvent?.({
+      type: 'output_audio_buffer.stopped',
+      response_id: responseId,
+    });
+    if (activeAudioResponseId === responseId) activeAudioResponseId = null;
+  }
+
+  // Очередь воспроизведения опустела — значит звук ответа действительно
+  // доиграл. Небольшой дебаунс защищает от гонки с догоняющими чанками.
+  function scheduleAssistantAudioStopped() {
+    if (playbackStopTimer) clearTimeout(playbackStopTimer);
+    const responseId = activeAudioResponseId;
+    if (!responseId) return;
+    playbackStopTimer = setTimeout(() => {
+      playbackStopTimer = null;
+      if (stopped || pendingPlaybackChunks > 0) return;
+      emitSyntheticAudioBufferStopped(responseId);
+    }, 180);
+  }
+
   function enqueueAudioPlayback(audioBase64: string) {
     playbackQueue = playbackQueue
       .then(() => playRealtimeAudioDelta(audioBase64))
@@ -208,14 +272,19 @@ export async function startRealtimeWebsocketClient(
     const bufferSource = outputContext.createBufferSource();
     bufferSource.buffer = audioBuffer;
     bufferSource.connect(outputContext.destination);
+    pendingPlaybackChunks += 1;
     bufferSource.onended = () => {
-      if (!stopped) options.onActivity?.();
+      pendingPlaybackChunks = Math.max(0, pendingPlaybackChunks - 1);
+      // Голос ассистента звучит — это keep-alive, не сброс idle-таймера.
+      if (!stopped) options.onKeepAlive?.();
+      // Очередь опустела — звук ответа действительно доиграл: гасим анимацию.
+      if (pendingPlaybackChunks === 0) scheduleAssistantAudioStopped();
     };
 
     const startAt = Math.max(outputContext.currentTime + 0.02, nextPlaybackAt);
     nextPlaybackAt = startAt + audioBuffer.duration;
     bufferSource.start(startAt);
-    options.onActivity?.();
+    options.onKeepAlive?.();
   }
 
   return { stop, setMicrophoneEnabled, sendEvent };
@@ -255,6 +324,12 @@ export function shouldSendRealtimeWebsocketAudio(input: {
   return input.microphoneEnabled && input.readyState === WebSocket.OPEN;
 }
 
+export function extractRealtimeWebsocketResponseId(event: unknown): string {
+  if (!event || typeof event !== 'object') return '';
+  const responseId = (event as { response_id?: unknown }).response_id;
+  return typeof responseId === 'string' ? responseId : '';
+}
+
 export function extractRealtimeWebsocketAudioDelta(event: unknown): string {
   if (!event || typeof event !== 'object') return '';
   const type = (event as { type?: unknown }).type;
@@ -266,6 +341,26 @@ export function extractRealtimeWebsocketAudioDelta(event: unknown): string {
   }
   const delta = (event as { delta?: unknown }).delta;
   return typeof delta === 'string' ? delta : '';
+}
+
+// Ошибки, которые не должны обрывать realtime-сессию: отмена ответа, когда
+// активного ответа уже нет (гонка команды «следующий вопрос» и окончания речи).
+export function isBenignRealtimeErrorEvent(event: unknown): boolean {
+  if (!event || typeof event !== 'object') return false;
+  if ((event as { type?: unknown }).type !== 'error') return false;
+
+  const error = (event as { error?: unknown }).error;
+  if (!error || typeof error !== 'object') return false;
+  const code = (error as { code?: unknown }).code;
+  const message = (error as { message?: unknown }).message;
+  const normalizedCode = typeof code === 'string' ? code : '';
+  const normalizedMessage = typeof message === 'string' ? message : '';
+
+  return (
+    normalizedCode === 'response_cancel_not_active' ||
+    /cancell?ation failed/i.test(normalizedMessage) ||
+    /no active response/i.test(normalizedMessage)
+  );
 }
 
 export function extractRealtimeWebsocketErrorMessage(event: unknown): string {

@@ -8,6 +8,7 @@ export interface AuthUserRecord {
   displayName: string | null;
   role: UserRole;
   emailVerifiedAt: Date | null;
+  deletedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -73,6 +74,7 @@ export interface AuthRepository {
   upsertEmailUser(email: string): Promise<AuthUserRecord>;
   upsertTelegramUser(input: UpsertTelegramUserInput): Promise<AuthUserRecord>;
   setUserRole(userId: string, role: UserRole): Promise<AuthUserRecord>;
+  anonymizeUserAccount(userId: string, now: Date): Promise<boolean>;
 
   createEmailLoginCode(
     input: CreateEmailLoginCodeInput

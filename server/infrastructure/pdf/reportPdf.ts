@@ -2,6 +2,12 @@ import { existsSync } from 'node:fs';
 import PDFDocument from 'pdfkit';
 import type { InterviewReport } from '@/shared/dto';
 
+export const REPORT_PDF_MODEL_ANSWER_LABEL = 'Вариант сильного ответа';
+export const REPORT_PDF_STAR_LABEL =
+  'Как усилить ответ (STAR: ситуация, задача, действие, результат)';
+const REPORT_PDF_STAR_EXPLANATION =
+  'STAR (ситуация, задача, действие, результат)';
+
 const FONT_CANDIDATES = [
   '/System/Library/Fonts/Supplemental/Arial Unicode.ttf',
   '/System/Library/Fonts/Supplemental/Arial.ttf',
@@ -39,9 +45,11 @@ export async function renderReportPdf(report: InterviewReport): Promise<Buffer> 
 
     doc.fontSize(18).text(`Итоговый балл: ${report.overallScore ?? '—'} / 100`);
     doc.moveDown(0.5);
-    doc.fontSize(14).text(report.verdict || 'Вердикт не сформирован');
+    doc
+      .fontSize(14)
+      .text(formatReportPdfText(report.verdict || 'Вердикт не сформирован'));
     doc.moveDown();
-    doc.fontSize(12).text(report.summary || '');
+    doc.fontSize(12).text(formatReportPdfText(report.summary || ''));
     doc.moveDown();
 
     if (report.criteria) {
@@ -58,7 +66,7 @@ export async function renderReportPdf(report: InterviewReport): Promise<Buffer> 
       doc.fontSize(15).text('3 главные правки');
       doc.moveDown(0.4);
       fixes.forEach((fix, index) => {
-        doc.fontSize(11).text(`${index + 1}. ${fix}`);
+        doc.fontSize(11).text(`${index + 1}. ${formatReportPdfText(fix)}`);
       });
       doc.moveDown();
     }
@@ -67,15 +75,27 @@ export async function renderReportPdf(report: InterviewReport): Promise<Buffer> 
       doc.fontSize(15).text('Разбор по вопросам');
       doc.moveDown(0.4);
       for (const item of report.questionAnalysis) {
-        doc.fontSize(12).text(item.question, { underline: true });
-        doc.fontSize(10).text(`Ответ: ${item.answer}`);
-        doc.text(`Что хорошо: ${item.whatWorked}`);
-        doc.text(`Что слабо: ${item.whatWeak}`);
+        doc.fontSize(12).text(formatReportPdfText(item.question), {
+          underline: true,
+        });
+        doc.fontSize(10).text(`Ответ: ${formatReportPdfText(item.answer)}`);
+        doc.text(`Что хорошо: ${formatReportPdfText(item.whatWorked)}`);
+        doc.text(`Что слабо: ${formatReportPdfText(item.whatWeak)}`);
         if (item.modelAnswer) {
-          doc.text(`Эталонный ответ: ${item.modelAnswer}`);
+          doc.text(
+            `${REPORT_PDF_MODEL_ANSWER_LABEL}: ${formatReportPdfText(
+              item.modelAnswer
+            )}`
+          );
         }
-        doc.text(`Сильнее по STAR: ${item.strongerAnswerStar}`);
-        doc.text(`Мини-тренировка: ${item.nextPractice}`);
+        doc.text(
+          `${REPORT_PDF_STAR_LABEL}: ${formatReportPdfText(
+            item.strongerAnswerStar
+          )}`
+        );
+        doc.text(
+          `Мини-тренировка: ${formatReportPdfText(item.nextPractice)}`
+        );
         doc.moveDown();
       }
     }
@@ -84,14 +104,25 @@ export async function renderReportPdf(report: InterviewReport): Promise<Buffer> 
   });
 }
 
-function criteriaLabel(key: string): string {
+export function formatReportPdfText(value: string): string {
+  return value.replace(
+    /\bSTAR\b(?!\s*\(ситуация, задача, действие, результат\))/gi,
+    REPORT_PDF_STAR_EXPLANATION
+  );
+}
+
+export function reportPdfCriteriaLabel(key: string): string {
   const labels: Record<string, string> = {
     structure: 'Структура',
     specificity: 'Конкретика',
     relevance: 'Релевантность',
     confidence: 'Уверенность',
     riskPhrases: 'Риск-фразы',
-    brevity: 'Без воды',
+    brevity: 'Краткость и ясность',
   };
   return labels[key] || key;
+}
+
+function criteriaLabel(key: string): string {
+  return reportPdfCriteriaLabel(key);
 }

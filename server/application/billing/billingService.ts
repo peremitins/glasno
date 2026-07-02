@@ -1,5 +1,6 @@
 import type {
   BillingCheckoutResponse,
+  BillingPaymentStatusResponse,
   BillingPlansResponse,
   BillingStatusResponse,
 } from '@/shared/dto';
@@ -7,6 +8,7 @@ import { apiError } from '@/server/utils/errors';
 import type {
   BillingOwner,
   BillingRepository,
+  PaymentOrderRecord,
 } from '@/server/interface/billingRepository';
 import { BillingAccessService } from './accessService';
 import {
@@ -74,7 +76,7 @@ export class BillingService {
         ...this.deps.config.yookassa,
         idempotenceKey: order.id,
         amountRub: plan.priceRub,
-        returnUrl: `${this.deps.config.appUrl.replace(/\/$/, '')}/pricing?payment=return`,
+        returnUrl: buildYooKassaReturnUrl(this.deps.config.appUrl, order.id),
         description: `JobAI ${plan.name}`,
         metadata: {
           orderId: order.id,
@@ -125,8 +127,78 @@ export class BillingService {
       this.deps.config.yookassa,
       event.providerPaymentId
     );
+    await this.applyVerifiedYooKassaPayment(order, verified, event.event);
+  }
+
+  async reconcileYooKassaCheckout(params: {
+    userId: string | null | undefined;
+    orderId?: string | null;
+  }): Promise<BillingPaymentStatusResponse> {
+    if (!params.userId) {
+      throw apiError('E_AUTH', 'Для проверки оплаты войдите в профиль');
+    }
+
+    const order = params.orderId
+      ? await this.deps.repository.findPaymentOrderById(params.orderId)
+      : await this.deps.repository.findLatestPaymentOrderByUserId(
+          params.userId
+        );
+
+    if (!order) {
+      return await this.buildCheckoutStatus({
+        order: null,
+        providerStatus: null,
+        paid: false,
+        providerVerified: false,
+        shouldContinuePolling: false,
+        userId: params.userId,
+      });
+    }
+
+    if (order.userId !== params.userId) {
+      throw apiError('E_NOT_FOUND', 'Платёжный заказ не найден');
+    }
+
+    if (!order.providerPaymentId) {
+      return await this.buildCheckoutStatus({
+        order,
+        providerStatus: null,
+        paid: false,
+        providerVerified: false,
+        shouldContinuePolling: isPendingPaymentStatus(order.status),
+        userId: params.userId,
+      });
+    }
+
+    this.requireYooKassaConfig();
+    const verified = await getYooKassaPayment(
+      this.deps.config.yookassa,
+      order.providerPaymentId
+    );
+
+    return await this.applyVerifiedYooKassaPayment(
+      order,
+      verified,
+      'checkout-status'
+    );
+  }
+
+  private requireYooKassaConfig() {
+    if (
+      !this.deps.config.yookassa.shopId ||
+      !this.deps.config.yookassa.secretKey
+    ) {
+      throw apiError('E_UPSTREAM', 'NUXT_YOOKASSA_* не заданы');
+    }
+  }
+
+  private async applyVerifiedYooKassaPayment(
+    order: PaymentOrderRecord,
+    verified: Awaited<ReturnType<typeof getYooKassaPayment>>,
+    source: string
+  ): Promise<BillingPaymentStatusResponse> {
     const plan = getPaidBillingPlan(order.planId);
-    const expectedAmount = plan.priceRub.toFixed(2);
+    const expectedAmount = order.amountRub.toFixed(2);
     const amountOk =
       verified.amountValue === expectedAmount &&
       (verified.currency === 'RUB' || verified.currency === null);
@@ -139,31 +211,69 @@ export class BillingService {
       status: verified.status,
       metadata: {
         ...(order.metadata || {}),
-        webhookEvent: event.event,
+        paymentStatusSource: source,
         verifiedStatus: verified.status,
         verifiedAmount: verified.amountValue,
+        verifiedCurrency: verified.currency,
+        amountMatched: amountOk,
       },
     });
 
-    // Грант только если YooKassa реально подтвердила оплату нужной суммы.
-    if (!paymentOk) return;
+    if (paymentOk) {
+      const existingSubscription =
+        await this.deps.repository.findSubscriptionByProviderPaymentId(
+          verified.id
+        );
 
-    await this.deps.repository.grantSubscription({
+      if (!existingSubscription) {
+        await this.deps.repository.grantSubscription({
+          userId: order.userId,
+          planId: plan.id,
+          provider: 'yookassa',
+          providerPaymentId: verified.id,
+          currentPeriodEnd: addDays(new Date(), plan.periodDays),
+        });
+      }
+    }
+
+    return await this.buildCheckoutStatus({
+      order: {
+        ...order,
+        providerPaymentId: verified.id,
+        status: verified.status,
+      },
+      providerStatus: verified.status,
+      paid: verified.paid,
+      providerVerified: true,
+      shouldContinuePolling: isPendingPaymentStatus(verified.status),
       userId: order.userId,
-      planId: plan.id,
-      provider: 'yookassa',
-      providerPaymentId: verified.id,
-      currentPeriodEnd: addDays(new Date(), plan.periodDays),
     });
   }
 
-  private requireYooKassaConfig() {
-    if (
-      !this.deps.config.yookassa.shopId ||
-      !this.deps.config.yookassa.secretKey
-    ) {
-      throw apiError('E_UPSTREAM', 'NUXT_YOOKASSA_* не заданы');
-    }
+  private async buildCheckoutStatus(params: {
+    order: PaymentOrderRecord | null;
+    providerStatus: string | null;
+    paid: boolean;
+    providerVerified: boolean;
+    shouldContinuePolling: boolean;
+    userId: string;
+  }): Promise<BillingPaymentStatusResponse> {
+    const activeSubscription =
+      await this.deps.repository.findActiveSubscriptionByUserId(params.userId);
+
+    return {
+      provider: 'yookassa',
+      orderId: params.order?.id ?? null,
+      localStatus: params.order?.status ?? 'none',
+      providerPaymentId: params.order?.providerPaymentId ?? null,
+      providerStatus: params.providerStatus,
+      paid: params.paid,
+      providerVerified: params.providerVerified,
+      hasActiveSubscription: Boolean(activeSubscription),
+      subscriptionExpiresAt:
+        activeSubscription?.currentPeriodEnd.toISOString() ?? null,
+      shouldContinuePolling: params.shouldContinuePolling,
+    };
   }
 }
 
@@ -173,3 +283,13 @@ function addDays(date: Date, days: number): Date {
   return next;
 }
 
+function isPendingPaymentStatus(status: string | null | undefined): boolean {
+  return status === 'pending' || status === 'waiting_for_capture';
+}
+
+function buildYooKassaReturnUrl(appUrl: string, orderId: string): string {
+  const url = new URL('/pricing', `${appUrl.replace(/\/$/, '')}/`);
+  url.searchParams.set('payment', 'return');
+  url.searchParams.set('orderId', orderId);
+  return url.toString();
+}

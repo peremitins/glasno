@@ -21,7 +21,7 @@ export const ReportQuestionAnalysisDto = z.object({
   answer: z.string(),
   whatWorked: z.string(),
   whatWeak: z.string(),
-  // Эталонный ответ: как стоило бы ответить на этот вопрос (по STAR, с конкретикой).
+  // Возможный сильный ответ на этот вопрос (по STAR, с конкретикой).
   // optional+default — для обратной совместимости со старыми отчётами без поля.
   modelAnswer: z.string().optional().default(''),
   strongerAnswerStar: z.string(),

@@ -3,7 +3,7 @@ import { ReportService } from './reportService';
 
 function createInterviewRepository(
   sessionOverrides: Record<string, unknown>,
-  turnOverrides: Record<string, unknown> = {}
+  turnOverrides: Record<string, unknown> | Array<Record<string, unknown>> = {}
 ) {
   const session = {
     id: 'session_1',
@@ -25,21 +25,27 @@ function createInterviewRepository(
     createdAt: new Date('2026-06-28T10:00:00.000Z'),
     ...sessionOverrides,
   };
-  const turns = [
-    {
-      id: 'turn_1',
-      sessionId: 'session_1',
-      index: 1,
-      kind: 'main',
-      question: 'Как вы ищете новых B2B-клиентов?',
-      answerTranscript: 'Через холодные письма и партнёрские рекомендации.',
-      followUpForTurnId: null,
-      metadata: null,
-      answeredAt: new Date('2026-06-28T10:05:00.000Z'),
-      createdAt: new Date('2026-06-28T10:01:00.000Z'),
-      ...turnOverrides,
-    },
-  ];
+  const baseTurn = {
+    id: 'turn_1',
+    sessionId: 'session_1',
+    index: 1,
+    kind: 'main',
+    question: 'Как вы ищете новых B2B-клиентов?',
+    answerTranscript: 'Через холодные письма и партнёрские рекомендации.',
+    followUpForTurnId: null,
+    metadata: null,
+    answeredAt: new Date('2026-06-28T10:05:00.000Z'),
+    createdAt: new Date('2026-06-28T10:01:00.000Z'),
+  };
+  const turns = (
+    Array.isArray(turnOverrides) ? turnOverrides : [turnOverrides]
+  ).map((overrides, index) => ({
+    ...baseTurn,
+    id: `turn_${index + 1}`,
+    index: index + 1,
+    question: `Вопрос ${index + 1}?`,
+    ...overrides,
+  }));
 
   return {
     async findSessionById(id: string) {
@@ -155,7 +161,7 @@ describe('ReportService', () => {
       }),
     };
     const service = new ReportService({
-      interviewRepository: createInterviewRepository({}) as any,
+      interviewRepository: createInterviewRepository({ questionCount: 1 }) as any,
       reportRepository: reportRepository as any,
       engine,
     });
@@ -173,6 +179,138 @@ describe('ReportService', () => {
     });
     expect(engine.analyze).toHaveBeenCalledOnce();
     expect(reportRepository.reports).toHaveLength(1);
+  });
+
+  it('returns a zero-score completed report when every main question was skipped', async () => {
+    const reportRepository = createReportRepository();
+    const engine = {
+      analyze: vi.fn().mockResolvedValue({
+        overallScore: 65,
+        verdict: 'LLM не должен оценивать пустое интервью.',
+        summary: 'Пустые ответы нельзя считать реальными.',
+        criteria: {
+          structure: 70,
+          specificity: 70,
+          relevance: 70,
+          confidence: 70,
+          riskPhrases: 100,
+          brevity: 70,
+        },
+        recommendations: { topFixes: ['Не используется'] },
+        questionAnalysis: [],
+        model: 'gpt-4o-mini',
+      }),
+    };
+    const service = new ReportService({
+      interviewRepository: createInterviewRepository(
+        { questionCount: 3 },
+        [
+          { answerTranscript: '—', question: 'Расскажите о себе?' },
+          { answerTranscript: '—', question: 'Почему вам интересна роль?' },
+          { answerTranscript: '—', question: 'Какой у вас релевантный опыт?' },
+        ]
+      ) as any,
+      reportRepository: reportRepository as any,
+      engine,
+    });
+
+    const report = await service.ensureReport({
+      anonymousSessionId: 'anon_1',
+      sessionId: 'session_1',
+    });
+
+    expect(report).toMatchObject({
+      status: 'done',
+      overallScore: 0,
+      criteria: {
+        structure: 0,
+        specificity: 0,
+        relevance: 0,
+        confidence: 0,
+        riskPhrases: 0,
+        brevity: 0,
+      },
+    });
+    expect(report.verdict).toContain('не состоялось');
+    expect(report.questionAnalysis).toHaveLength(3);
+    expect(engine.analyze).not.toHaveBeenCalled();
+  });
+
+  it('scales the final score and criteria by the share of answered main questions', async () => {
+    const reportRepository = createReportRepository();
+    const engine = {
+      analyze: vi.fn().mockResolvedValue({
+        overallScore: 90,
+        verdict: 'Один сильный ответ.',
+        summary: 'Ответ хороший, но интервью почти не пройдено.',
+        criteria: {
+          structure: 80,
+          specificity: 70,
+          relevance: 100,
+          confidence: 90,
+          riskPhrases: 100,
+          brevity: 80,
+        },
+        recommendations: { topFixes: ['Добавить ответы на остальные вопросы'] },
+        questionAnalysis: [
+          {
+            turnId: 'turn_1',
+            question: 'Вопрос 1?',
+            answer:
+              'Я выстроил воронку B2B-продаж, сократил цикл сделки на 20% и поднял конверсию демо в оплату.',
+            whatWorked: 'Есть результат.',
+            whatWeak: 'Можно больше контекста.',
+            strongerAnswerStar: 'S/T/A/R: ...',
+            nextPractice: 'Добавить детали.',
+          },
+        ],
+        model: 'gpt-4o-mini',
+      }),
+    };
+    const service = new ReportService({
+      interviewRepository: createInterviewRepository(
+        { questionCount: 10 },
+        Array.from({ length: 10 }, (_, index) => ({
+          answerTranscript:
+            index === 0
+              ? 'Я выстроил воронку B2B-продаж, сократил цикл сделки на 20% и поднял конверсию демо в оплату.'
+              : '—',
+        }))
+      ) as any,
+      reportRepository: reportRepository as any,
+      engine,
+    });
+
+    const report = await service.ensureReport({
+      anonymousSessionId: 'anon_1',
+      sessionId: 'session_1',
+    });
+
+    expect(report.overallScore).toBe(9);
+    expect(report.criteria).toMatchObject({
+      structure: 8,
+      specificity: 7,
+      relevance: 10,
+      confidence: 9,
+      riskPhrases: 10,
+      brevity: 8,
+    });
+    expect(report.verdict).toContain('1 из 10');
+    expect(engine.analyze).toHaveBeenCalledWith(
+      expect.objectContaining({
+        turns: expect.arrayContaining([
+          expect.objectContaining({
+            id: 'turn_1',
+            answerTranscript:
+              'Я выстроил воронку B2B-продаж, сократил цикл сделки на 20% и поднял конверсию демо в оплату.',
+          }),
+        ]),
+      })
+    );
+    const analyzedTurns = engine.analyze.mock.calls[0][0].turns;
+    expect(
+      analyzedTurns.filter((turn: any) => turn.answerTranscript)
+    ).toHaveLength(1);
   });
 
   it('uses realtime dialogue messages as report answers when answer transcript is not finalized', async () => {
@@ -197,7 +335,7 @@ describe('ReportService', () => {
     };
     const service = new ReportService({
       interviewRepository: createInterviewRepository(
-        {},
+        { questionCount: 1 },
         {
           answerTranscript: null,
           metadata: {

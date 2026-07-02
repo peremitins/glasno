@@ -24,6 +24,98 @@ describe('interview source preparation', () => {
     );
   });
 
+  it('loads and normalizes a vacancy from a generic public page', async () => {
+    const source = await prepareInterviewSource(
+      {
+        type: 'hh_url',
+        url: 'https://jobs.example.com/product-manager',
+      },
+      {
+        hhClient: null,
+        fetchHtml: async (url: URL) => {
+          expect(url.href).toBe('https://jobs.example.com/product-manager');
+          return `
+            <html>
+              <head>
+                <title>Product Manager в FinTech</title>
+              </head>
+              <body>
+                <nav>Главное меню</nav>
+                <main>
+                  <h1>Product Manager</h1>
+                  <p>Задачи: discovery, roadmap, запуск B2B-продуктов.</p>
+                  <p>Требования: метрики, интервью с клиентами, финансы.</p>
+                </main>
+                <script>window.__data = "ignore me"</script>
+              </body>
+            </html>
+          `;
+        },
+      }
+    );
+
+    expect(source).toMatchObject({
+      source: 'hh_url',
+      vacancyTitle: 'Product Manager',
+      vacancyUrl: 'https://jobs.example.com/product-manager',
+      role: 'Product Manager',
+      companyName: null,
+    });
+    expect(source.vacancyRaw).toContain('discovery, roadmap');
+    expect(source.vacancyRaw).not.toContain('Главное меню');
+    expect(source.vacancyRaw).not.toContain('ignore me');
+  });
+
+  it('truncates extracted vacancy text before it becomes interview context', async () => {
+    const source = await prepareInterviewSource(
+      {
+        type: 'hh_url',
+        url: 'https://jobs.example.com/huge-vacancy',
+      },
+      {
+        hhClient: null,
+        fetchHtml: async () =>
+          `<main><h1>Большая вакансия</h1><p>${'очень подробное описание '.repeat(
+            900
+          )}</p></main>`,
+      }
+    );
+
+    expect(source.vacancyRaw?.length).toBeLessThanOrEqual(12_000);
+  });
+
+  it('rejects local URLs before fetching generic vacancy pages', async () => {
+    await expect(
+      prepareInterviewSource(
+        {
+          type: 'hh_url',
+          url: 'http://localhost:3000/vacancy',
+        },
+        {
+          hhClient: null,
+          fetchHtml: async () => {
+            throw new Error('should not fetch local URLs');
+          },
+        }
+      )
+    ).rejects.toThrow('публичную ссылку');
+
+    await expect(
+      prepareInterviewSource(
+        {
+          type: 'hh_url',
+          url: 'http://[::1]/vacancy',
+        },
+        {
+          hhClient: null,
+          fetchHtml: async () => {
+            throw new Error('should not fetch local URLs');
+          },
+        }
+      )
+    ).rejects.toThrow('публичную ссылку');
+  });
+
   it('converts vacancy html into readable plain text', () => {
     expect(
       stripHtmlToText(

@@ -113,6 +113,30 @@ export class DrizzleInterviewRepository implements InterviewRepository {
     return row ? mapSession(row) : null;
   }
 
+  async deleteSession(id: string): Promise<boolean> {
+    const [deleted] = await this.db.transaction(async (tx) => {
+      await tx
+        .delete(schema.realtimeVoiceSessions)
+        .where(eq(schema.realtimeVoiceSessions.interviewSessionId, id));
+      await tx
+        .delete(schema.aiUsage)
+        .where(eq(schema.aiUsage.interviewSessionId, id));
+      await tx
+        .delete(schema.interviewReports)
+        .where(eq(schema.interviewReports.sessionId, id));
+      await tx
+        .delete(schema.interviewTurns)
+        .where(eq(schema.interviewTurns.sessionId, id));
+
+      return tx
+        .delete(schema.interviewSessions)
+        .where(eq(schema.interviewSessions.id, id))
+        .returning({ id: schema.interviewSessions.id });
+    });
+
+    return Boolean(deleted);
+  }
+
   async updateSessionStatus(
     id: string,
     status: InterviewSessionStatus

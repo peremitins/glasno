@@ -81,6 +81,7 @@ export interface InterviewRepository {
     input: CreateInterviewSessionRecordInput
   ): Promise<InterviewSessionRecord>;
   findSessionById(id: string): Promise<InterviewSessionRecord | null>;
+  deleteSession(id: string): Promise<boolean>;
   updateSessionStatus(
     id: string,
     status: InterviewSessionStatus

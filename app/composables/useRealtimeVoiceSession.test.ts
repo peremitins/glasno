@@ -1,8 +1,12 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
+  buildRealtimeCancelEvents,
   shouldDeferRealtimeIdleStop,
   shouldPhysicallyMuteRealtimeMicrophone,
 } from './useRealtimeVoiceSession';
+
+const source = readFileSync('app/composables/useRealtimeVoiceSession.ts', 'utf8');
 
 describe('useRealtimeVoiceSession helpers', () => {
   it('mutes outgoing microphone chunks during assistant output in Firefox', () => {
@@ -32,5 +36,34 @@ describe('useRealtimeVoiceSession helpers', () => {
   it('defers idle stop while assistant output is still active', () => {
     expect(shouldDeferRealtimeIdleStop(1)).toBe(true);
     expect(shouldDeferRealtimeIdleStop(0)).toBe(false);
+  });
+
+  it('builds cancel events for active responses with WebRTC audio flush', () => {
+    expect(
+      buildRealtimeCancelEvents({
+        activeResponseIds: ['response_1', 'response_2'],
+        websocketTransport: false,
+      })
+    ).toEqual([
+      { type: 'response.cancel', response_id: 'response_1' },
+      { type: 'response.cancel', response_id: 'response_2' },
+      { type: 'response.cancel' },
+      { type: 'output_audio_buffer.clear' },
+    ]);
+  });
+
+  it('skips WebRTC audio flush for the websocket transport', () => {
+    expect(
+      buildRealtimeCancelEvents({
+        activeResponseIds: [],
+        websocketTransport: true,
+      })
+    ).toEqual([{ type: 'response.cancel' }]);
+  });
+
+  it('does not stop realtime voice merely because the tab becomes hidden', () => {
+    expect(source).toContain("window.addEventListener('pagehide'");
+    expect(source).not.toContain('visibilitychange');
+    expect(source).not.toContain('visibilityState');
   });
 });

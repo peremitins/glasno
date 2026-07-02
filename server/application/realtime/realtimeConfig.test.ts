@@ -22,6 +22,9 @@ describe('realtimeConfig', () => {
     expect(instructions).toContain('Senior Product Manager');
     expect(instructions).toContain('Расскажите о запуске сложного продукта.');
     expect(instructions).toContain('переход выполняет приложение');
+    // Команда «следующий вопрос» — для приложения: модель не должна отвечать.
+    expect(instructions).toContain('НЕ отвечай на неё');
+    expect(instructions).toContain('другой вопрос');
     expect(instructions).not.toContain('не сохраняешь ответ');
   });
 
@@ -53,6 +56,10 @@ describe('realtimeConfig', () => {
             },
             turn_detection: {
               type: 'semantic_vad',
+              // Ответ ассистента создаёт клиент явно после транскрипта —
+              // иначе модель успевает заговорить на команду «следующий вопрос».
+              create_response: false,
+              interrupt_response: false,
             },
           },
           output: {

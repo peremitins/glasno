@@ -86,9 +86,11 @@
       <i aria-hidden="true"></i>
     </div>
 
-    <!-- Аудио-полоски: мягкий индикатор «интервьюер говорит». -->
+    <!-- Аудио-полоски: живой индикатор «интервьюер говорит» под аватаром.
+         Держится ровно до конца реальной озвучки (см. isSpeaking). -->
     <div v-if="isSpeaking" class="audio-bars" aria-hidden="true">
-      <span></span><span></span><span></span><span></span>
+      <span></span><span></span><span></span><span></span><span></span>
+      <span></span><span></span>
     </div>
     <div class="meta">
       <p>{{ t('interview.session.stage.interviewer') }}</p>
@@ -119,7 +121,7 @@
         transparent 28%
       ),
       linear-gradient(135deg, #182033, #2f3b4f);
-    color: #fff;
+    color: var(--text-primary);
   }
 
   .interviewer-photo,
@@ -151,8 +153,33 @@
   }
 
   .interviewer--speaking {
-    box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.2),
-      inset 0 0 42px rgba(120, 180, 255, 0.28);
+    box-shadow: inset 0 0 0 2px rgba(140, 190, 255, 0.5),
+      inset 0 0 70px rgba(120, 180, 255, 0.4);
+  }
+
+  /* Мягкое амбиентное свечение изнутри плитки, пока интервьюер говорит. */
+  .interviewer--speaking::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 1;
+    background: radial-gradient(
+      120% 80% at 50% 108%,
+      rgba(120, 180, 255, 0.34),
+      transparent 62%
+    );
+    animation: interviewer-ambient 2.4s ease-in-out infinite;
+  }
+
+  @keyframes interviewer-ambient {
+    0%,
+    100% {
+      opacity: 0.55;
+    }
+    50% {
+      opacity: 1;
+    }
   }
 
   .interviewer[data-avatar='strict-lead'] {
@@ -215,38 +242,58 @@
     animation: pulse 1.15s ease-out infinite;
   }
 
-  /* Маленькие вертикальные аудио-полоски снизу портрета. */
+  /* Вертикальный эквалайзер снизу портрета — «живой» график речи. */
   .audio-bars {
     position: absolute;
-    bottom: 18px;
+    bottom: 16px;
     left: 50%;
     transform: translateX(-50%);
     display: flex;
-    align-items: flex-end;
+    align-items: center;
     gap: 3px;
-    height: 18px;
-    padding: 3px 7px;
+    height: 26px;
+    padding: 4px 10px;
     border-radius: 999px;
-    background: rgba(0, 0, 0, 0.32);
-    z-index: 2;
+    background: rgba(6, 12, 24, 0.42);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3),
+      inset 0 0 0 1px rgba(140, 190, 255, 0.28);
+    backdrop-filter: blur(3px);
+    z-index: 3;
   }
 
   .audio-bars span {
     width: 3px;
-    height: 40%;
+    height: 45%;
     border-radius: 2px;
-    background: rgba(255, 255, 255, 0.9);
+    background: linear-gradient(
+      180deg,
+      rgba(180, 214, 255, 0.98),
+      rgba(120, 170, 255, 0.9)
+    );
+    box-shadow: 0 0 8px rgba(130, 180, 255, 0.6);
     animation: bars 0.9s ease-in-out infinite;
   }
 
+  .audio-bars span:nth-child(1) {
+    animation-delay: 0s;
+  }
   .audio-bars span:nth-child(2) {
-    animation-delay: 0.15s;
+    animation-delay: 0.12s;
   }
   .audio-bars span:nth-child(3) {
-    animation-delay: 0.3s;
+    animation-delay: 0.24s;
   }
   .audio-bars span:nth-child(4) {
-    animation-delay: 0.45s;
+    animation-delay: 0.36s;
+  }
+  .audio-bars span:nth-child(5) {
+    animation-delay: 0.24s;
+  }
+  .audio-bars span:nth-child(6) {
+    animation-delay: 0.12s;
+  }
+  .audio-bars span:nth-child(7) {
+    animation-delay: 0s;
   }
 
   .meta {

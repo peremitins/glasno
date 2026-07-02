@@ -1,98 +1,199 @@
 <script setup lang="ts">
-import { FontFamilyIcon } from '@radix-icons/vue';
-import { computed, onMounted, reactive, ref } from 'vue';
-import { useI18n } from 'vue-i18n';
-import { useAuthStore } from '@/app/stores/auth';
-import type { BillingStatusResponse } from '@/shared/dto';
+  import {
+    ExitIcon,
+    FileTextIcon,
+    FontFamilyIcon,
+    PersonIcon,
+    TrashIcon,
+  } from '@radix-icons/vue';
+  import { computed, onMounted, reactive, ref } from 'vue';
+  import { useI18n } from 'vue-i18n';
+  import GlassSkeletonStack from '@/app/components/design/GlassSkeletonStack.vue';
+  import ButtonLoader from '@/app/components/design/ButtonLoader.vue';
+  import { useAuthStore } from '@/app/stores/auth';
+  import type { BillingStatusResponse } from '@/shared/dto';
 
-const { t } = useI18n();
-const auth = useAuthStore();
-const api = useAPI();
-const { font, fontOptions, setFont } = useDesignPreferences();
+  const { t } = useI18n();
+  const auth = useAuthStore();
+  const api = useAPI();
+  const { font, fontOptions, setFont } = useDesignPreferences();
 
-const step = ref<'email' | 'code'>('email');
-const devCode = ref('');
-const form = reactive({
-  email: '',
-  code: '',
-});
+  const step = ref<'email' | 'code'>('email');
+  const devCode = ref('');
+  const deleteDialogOpen = ref(false);
+  const deleteError = ref('');
+  const isDeletingAccount = ref(false);
+  const profileAuthAction = ref<'send-code' | 'verify-code' | 'logout' | null>(
+    null
+  );
+  const form = reactive({
+    email: '',
+    code: '',
+  });
 
-const title = computed(() =>
-  auth.isAuthenticated ? t('profile.account.title') : t('profile.login.title')
-);
-const identity = computed(() => {
-  const user = auth.user;
-  return user?.displayName || user?.email || user?.telegramUsername || user?.id || '';
-});
-const { data: billingStatus, refresh: refreshBilling } = await useAsyncData(
-  'profile-billing-status',
-  () => api<BillingStatusResponse>('/api/billing/status')
-);
+  const {
+    data: billingStatus,
+    pending: billingPending,
+    refresh: refreshBilling,
+  } = await useLazyAsyncData('profile-billing-status', () =>
+    api<BillingStatusResponse>('/api/billing/status')
+  );
 
-onMounted(() => {
-  auth.fetchMe().catch(() => {});
-});
+  const accountEmail = computed(() => auth.user?.email || '—');
+  const telegramIdentity = computed(
+    () => auth.user?.telegramUsername || auth.user?.telegramId || '—'
+  );
+  const profileSubmitLoading = computed(
+    () =>
+      profileAuthAction.value === 'send-code' ||
+      profileAuthAction.value === 'verify-code'
+  );
+  const profileBillingInitialPending = computed(
+    () => billingPending.value && !billingStatus.value
+  );
+  const subscriptionDescription = computed(() => {
+    if (billingStatus.value?.hasActiveSubscription) {
+      return t('pricing.activeUntil', {
+        date: formatDate(billingStatus.value.subscriptionExpiresAt),
+      });
+    }
 
-async function requestCode() {
-  const result = await auth.startEmailLogin(form.email);
-  devCode.value = result.devCode || '';
-  if (result.devCode) {
-    form.code = result.devCode;
+    return t('pricing.freeUsed', {
+      used: billingStatus.value?.freeSessionsUsed ?? 0,
+      limit: billingStatus.value?.freeSessionsLimit ?? 1,
+    });
+  });
+
+  onMounted(() => {
+    auth.fetchMe().catch(() => {});
+  });
+
+  function formatDate(value: string | null | undefined) {
+    if (!value) return '';
+    return new Intl.DateTimeFormat('ru-RU', {
+      day: '2-digit',
+      month: 'long',
+      year: 'numeric',
+    }).format(new Date(value));
   }
-  step.value = 'code';
-}
 
-async function verifyCode() {
-  await auth.verifyEmailLogin(form.email, form.code);
-  await refreshBilling();
-  devCode.value = '';
-}
+  async function requestCode() {
+    if (profileAuthAction.value) return;
+    profileAuthAction.value = 'send-code';
+    try {
+      const result = await auth.startEmailLogin(form.email);
+      devCode.value = result.devCode || '';
+      if (result.devCode) {
+        form.code = result.devCode;
+      }
+      step.value = 'code';
+    } catch {
+      // Текст ошибки хранит auth-store и уже выводит форма.
+    } finally {
+      profileAuthAction.value = null;
+    }
+  }
 
-async function logout() {
-  await auth.logout();
-  form.code = '';
-  step.value = 'email';
-  // После выхода уводим на экран авторизации.
-  await navigateTo('/auth');
-}
+  async function verifyCode() {
+    if (profileAuthAction.value) return;
+    profileAuthAction.value = 'verify-code';
+    try {
+      await auth.verifyEmailLogin(form.email, form.code);
+      await refreshBilling();
+      devCode.value = '';
+    } catch {
+      // Текст ошибки хранит auth-store и уже выводит форма.
+    } finally {
+      profileAuthAction.value = null;
+    }
+  }
+
+  async function logout() {
+    if (profileAuthAction.value) return;
+    profileAuthAction.value = 'logout';
+    try {
+      await auth.logout();
+      form.code = '';
+      step.value = 'email';
+      await navigateTo('/auth');
+    } catch {
+      // auth-store сбрасывает isSubmitting и сохраняет сообщение об ошибке.
+    } finally {
+      profileAuthAction.value = null;
+    }
+  }
+
+  function confirmDeleteAccount() {
+    deleteError.value = '';
+    deleteDialogOpen.value = true;
+  }
+
+  function cancelDeleteAccount() {
+    if (isDeletingAccount.value) return;
+    deleteDialogOpen.value = false;
+    deleteError.value = '';
+  }
+
+  async function deleteAccount() {
+    if (isDeletingAccount.value) return;
+    isDeletingAccount.value = true;
+    deleteError.value = '';
+
+    try {
+      await auth.deleteAccount();
+      deleteDialogOpen.value = false;
+      form.email = '';
+      form.code = '';
+      step.value = 'email';
+      await navigateTo('/auth');
+    } catch {
+      deleteError.value = auth.errorMessage || t('profile.delete.error');
+    } finally {
+      isDeletingAccount.value = false;
+    }
+  }
 </script>
 
 <template>
-  <div class="page">
-    <header class="header">
-      <p class="eyebrow">{{ t('profile.eyebrow') }}</p>
-      <h1>{{ title }}</h1>
-      <p>{{ t('profile.subtitle') }}</p>
-    </header>
+  <div class="profile-page app-page">
+    <GlassSkeletonStack
+      v-if="auth.isAuthenticated && profileBillingInitialPending"
+      class="profile-skeleton"
+      :heights="[172, 128, 146, 128, 116]"
+    />
 
-    <section v-if="auth.isAuthenticated" class="panel">
-      <div class="account">
-        <div>
-          <p class="label">{{ t('profile.account.signedInAs') }}</p>
-          <h2>{{ identity }}</h2>
-          <p class="muted">{{ auth.user?.email || auth.user?.telegramUsername }}</p>
+    <div v-else-if="auth.isAuthenticated" class="profile-shell">
+      <section class="profile-card account-card glass-frame glass-frame--soft">
+        <div class="profile-card__head">
+          <span class="profile-card__icon" aria-hidden="true">
+            <PersonIcon />
+          </span>
+          <span v-if="auth.user?.role === 'admin'" class="role">
+            {{ t('profile.account.adminRole') }}
+          </span>
         </div>
-        <span class="role">{{ auth.user?.role }}</span>
-      </div>
 
-      <dl class="details">
-        <div>
-          <dt>{{ t('profile.account.userId') }}</dt>
-          <dd>{{ auth.user?.id }}</dd>
-        </div>
-        <div>
-          <dt>{{ t('profile.account.email') }}</dt>
-          <dd>{{ auth.user?.email || '—' }}</dd>
-        </div>
-        <div>
-          <dt>{{ t('profile.account.telegram') }}</dt>
-          <dd>{{ auth.user?.telegramUsername || auth.user?.telegramId || '—' }}</dd>
-        </div>
-      </dl>
+        <dl class="details">
+          <div>
+            <dt>{{ t('profile.account.email') }}</dt>
+            <dd>{{ accountEmail }}</dd>
+          </div>
+          <div>
+            <dt>{{ t('profile.account.userId') }}</dt>
+            <dd>{{ auth.user?.id }}</dd>
+          </div>
+          <div>
+            <dt>{{ t('profile.account.telegram') }}</dt>
+            <dd>{{ telegramIdentity }}</dd>
+          </div>
+        </dl>
+      </section>
 
-      <div class="billing">
-        <div>
-          <p class="label">{{ t('profile.account.billing') }}</p>
+      <section
+        class="profile-card subscription-card glass-frame glass-frame--soft"
+      >
+        <div class="profile-card__title">
+          <p class="panel-label">{{ t('profile.sections.subscription') }}</p>
           <h3>
             {{
               billingStatus?.hasActiveSubscription
@@ -100,31 +201,35 @@ async function logout() {
                 : t('billing.inactive')
             }}
           </h3>
-          <p class="muted">
-            {{
-              t('pricing.freeUsed', {
-                used: billingStatus?.freeSessionsUsed ?? 0,
-                limit: billingStatus?.freeSessionsLimit ?? 1,
-              })
-            }}
-          </p>
+          <p class="muted">{{ subscriptionDescription }}</p>
         </div>
-        <NuxtLink to="/pricing" class="upgrade">{{ t('billing.upgrade') }}</NuxtLink>
-      </div>
+        <NuxtLink
+          to="/pricing"
+          class="primary-action primary-action--compact subscription-action"
+        >
+          {{ t('billing.upgrade') }}
+        </NuxtLink>
+      </section>
 
-      <div class="preferences">
-        <div class="preferences-head">
-          <span class="preferences-icon" aria-hidden="true">
+      <section
+        class="profile-card profile-card--wide glass-frame glass-frame--soft"
+      >
+        <div class="profile-card__head">
+          <span class="profile-card__icon" aria-hidden="true">
             <FontFamilyIcon />
           </span>
-          <div>
-            <p class="label">{{ t('profile.preferences.kicker') }}</p>
+          <div class="profile-card__title">
+            <p class="panel-label">{{ t('profile.preferences.kicker') }}</p>
             <h3>{{ t('profile.preferences.fontTitle') }}</h3>
             <p class="muted">{{ t('profile.preferences.fontHint') }}</p>
           </div>
         </div>
 
-        <div class="font-options" role="group" :aria-label="t('layout.fontPicker')">
+        <div
+          class="font-options"
+          role="group"
+          :aria-label="t('layout.fontPicker')"
+        >
           <button
             v-for="option in fontOptions"
             :key="option.value"
@@ -137,19 +242,86 @@ async function logout() {
             {{ option.label }}
           </button>
         </div>
-      </div>
+      </section>
 
-      <button class="secondary" type="button" :disabled="auth.isSubmitting" @click="logout">
-        {{ t('profile.actions.logout') }}
-      </button>
-    </section>
+      <section class="profile-card glass-frame glass-frame--soft">
+        <div class="profile-card__title">
+          <p class="panel-label">{{ t('profile.sections.documents') }}</p>
+          <h3>{{ t('profile.documents.title') }}</h3>
+        </div>
 
-    <form v-else class="panel" @submit.prevent="step === 'email' ? requestCode() : verifyCode()">
+        <div class="settings-list">
+          <button class="settings-row" type="button" disabled>
+            <span class="settings-row__icon" aria-hidden="true">
+              <FileTextIcon />
+            </span>
+            <span class="settings-row__content">
+              <span>{{ t('profile.documents.terms') }}</span>
+              <small>{{ t('common.soon') }}</small>
+            </span>
+          </button>
+          <button class="settings-row" type="button" disabled>
+            <span class="settings-row__icon" aria-hidden="true">
+              <FileTextIcon />
+            </span>
+            <span class="settings-row__content">
+              <span>{{ t('profile.documents.privacy') }}</span>
+              <small>{{ t('common.soon') }}</small>
+            </span>
+          </button>
+        </div>
+      </section>
+
+      <section class="profile-card danger-panel glass-frame glass-frame--soft">
+        <div class="profile-card__title">
+          <p class="panel-label">{{ t('profile.sections.danger') }}</p>
+          <h3>{{ t('profile.danger.title') }}</h3>
+          <p class="muted">{{ t('profile.danger.hint') }}</p>
+        </div>
+
+        <div class="danger-actions">
+          <button
+            class="secondary-action secondary-action--compact button-loader-host"
+            type="button"
+            :disabled="auth.isSubmitting"
+            @click="logout"
+          >
+            <ButtonLoader v-if="profileAuthAction === 'logout'" />
+            <span
+              class="button-loader-content"
+              :class="{
+                'button-loader-content--loading':
+                  profileAuthAction === 'logout',
+              }"
+            >
+              <ExitIcon aria-hidden="true" />
+              {{ t('profile.actions.logout') }}
+            </span>
+          </button>
+          <button
+            class="delete-action"
+            type="button"
+            :disabled="auth.isSubmitting"
+            @click="confirmDeleteAccount"
+          >
+            <TrashIcon aria-hidden="true" />
+            {{ t('profile.actions.deleteAccount') }}
+          </button>
+        </div>
+      </section>
+    </div>
+
+    <form
+      v-else
+      class="auth-panel glass-frame glass-frame--soft"
+      @submit.prevent="step === 'email' ? requestCode() : verifyCode()"
+    >
       <div class="field">
         <label for="email">{{ t('profile.fields.email') }}</label>
         <input
           id="email"
           v-model="form.email"
+          class="soft-control"
           type="email"
           autocomplete="email"
           :disabled="step === 'code' || auth.isSubmitting"
@@ -162,6 +334,7 @@ async function logout() {
         <input
           id="code"
           v-model="form.code"
+          class="soft-control"
           type="text"
           inputmode="numeric"
           autocomplete="one-time-code"
@@ -172,308 +345,546 @@ async function logout() {
         />
       </div>
 
-      <p v-if="devCode" class="notice">
+      <p v-if="devCode" class="notice glass-card">
         {{ t('profile.login.devCode', { code: devCode }) }}
       </p>
       <p v-if="auth.errorMessage" class="error">{{ auth.errorMessage }}</p>
 
       <div class="actions">
-        <button class="primary" type="submit" :disabled="auth.isSubmitting">
-          {{
-            step === 'email'
-              ? t('profile.actions.sendCode')
-              : t('profile.actions.verifyCode')
-          }}
+        <button
+          class="primary-action primary-action--compact button-loader-host"
+          type="submit"
+          :disabled="auth.isSubmitting"
+        >
+          <ButtonLoader v-if="profileSubmitLoading" />
+          <span
+            class="button-loader-content"
+            :class="{ 'button-loader-content--loading': profileSubmitLoading }"
+          >
+            {{
+              step === 'email'
+                ? t('profile.actions.sendCode')
+                : t('profile.actions.verifyCode')
+            }}
+          </span>
         </button>
         <button
           v-if="step === 'code'"
-          class="ghost"
+          class="secondary-action secondary-action--compact"
           type="button"
           :disabled="auth.isSubmitting"
-          @click="step = 'email'; form.code = ''; devCode = ''"
+          @click="
+            step = 'email';
+            form.code = '';
+            devCode = '';
+          "
         >
           {{ t('profile.actions.changeEmail') }}
         </button>
       </div>
     </form>
+
+    <Teleport to="body">
+      <div
+        v-if="deleteDialogOpen"
+        class="delete-backdrop"
+        role="presentation"
+        @click.self="cancelDeleteAccount"
+      >
+        <section
+          class="delete-dialog glass-frame"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="delete-account-dialog-title"
+        >
+          <div>
+            <p class="panel-label">{{ t('profile.delete.kicker') }}</p>
+            <h2 id="delete-account-dialog-title">
+              {{ t('profile.delete.title') }}
+            </h2>
+            <p class="dialog-copy">{{ t('profile.delete.text') }}</p>
+          </div>
+
+          <p v-if="deleteError" class="delete-error">{{ deleteError }}</p>
+
+          <div class="dialog-actions">
+            <button
+              type="button"
+              class="secondary-action secondary-action--compact"
+              :disabled="isDeletingAccount"
+              @click="cancelDeleteAccount"
+            >
+              {{ t('profile.delete.cancel') }}
+            </button>
+            <button
+              type="button"
+              class="delete-action button-loader-host"
+              :disabled="isDeletingAccount"
+              @click="deleteAccount"
+            >
+              <ButtonLoader v-if="isDeletingAccount" />
+              <span
+                class="button-loader-content"
+                :class="{
+                  'button-loader-content--loading': isDeletingAccount,
+                }"
+              >
+                {{ t('profile.delete.confirm') }}
+              </span>
+            </button>
+          </div>
+        </section>
+      </div>
+    </Teleport>
   </div>
 </template>
 
 <style scoped>
-.page {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-}
-
-.header {
-  max-width: 720px;
-}
-
-.eyebrow {
-  margin: 0 0 8px;
-  color: var(--color-accent);
-  font-weight: 700;
-  font-size: 13px;
-  text-transform: uppercase;
-}
-
-h1,
-h2,
-h3,
-p {
-  margin: 0;
-}
-
-.header h1 {
-  font-size: clamp(30px, 4vw, 44px);
-  line-height: 1.06;
-  margin-bottom: 10px;
-}
-
-.header p:last-child,
-.muted {
-  color: var(--color-muted);
-}
-
-.panel {
-  width: min(680px, 100%);
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
-  padding: 22px;
-}
-
-.account {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  align-items: flex-start;
-  margin-bottom: 18px;
-}
-
-.label {
-  color: var(--color-muted);
-  font-size: 13px;
-  margin-bottom: 4px;
-}
-
-.role {
-  border: 1px solid color-mix(in srgb, var(--color-accent) 25%, white);
-  color: var(--color-accent);
-  border-radius: 999px;
-  padding: 4px 10px;
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.details {
-  display: grid;
-  gap: 12px;
-  margin: 0 0 20px;
-}
-
-.details div {
-  display: grid;
-  grid-template-columns: 130px minmax(0, 1fr);
-  gap: 12px;
-}
-
-dt {
-  color: var(--color-muted);
-}
-
-dd {
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-
-.billing {
-  display: flex;
-  justify-content: space-between;
-  gap: 14px;
-  align-items: center;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: var(--color-bg);
-  padding: 14px;
-  margin-bottom: 18px;
-}
-
-.preferences {
-  display: grid;
-  gap: 14px;
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-md);
-  background: var(--surface-soft);
-  padding: 14px;
-  margin-bottom: 18px;
-}
-
-.preferences-head {
-  display: flex;
-  gap: 12px;
-  align-items: flex-start;
-}
-
-.preferences-icon {
-  display: grid;
-  flex: 0 0 auto;
-  place-items: center;
-  width: 38px;
-  height: 38px;
-  border-radius: 13px;
-  background: var(--surface-raised);
-  color: var(--text-primary);
-}
-
-.preferences-icon svg {
-  width: 18px;
-  height: 18px;
-}
-
-.font-options {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-  padding: 5px;
-  border: 1px solid var(--glass-border);
-  border-radius: 999px;
-  background: var(--surface-soft);
-}
-
-.font-option {
-  min-width: 0;
-  min-height: 38px;
-  border: 0;
-  border-radius: 999px;
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  font: inherit;
-  font-size: 13px;
-  font-weight: 900;
-}
-
-.font-option--active {
-  background: var(--button-bg);
-  color: var(--button-text);
-  box-shadow: var(--button-shadow);
-}
-
-.billing h3 {
-  font-size: 18px;
-  margin-bottom: 4px;
-}
-
-.upgrade {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 38px;
-  border-radius: 8px;
-  background: var(--color-accent);
-  color: #fff;
-  padding: 0 12px;
-  text-decoration: none;
-  font-weight: 800;
-  white-space: nowrap;
-}
-
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-bottom: 16px;
-}
-
-label {
-  font-weight: 700;
-}
-
-input {
-  width: 100%;
-  border: 1px solid var(--color-border);
-  border-radius: 10px;
-  padding: 12px 14px;
-  font: inherit;
-  background: white;
-}
-
-input:disabled {
-  color: var(--color-muted);
-  background: var(--color-bg);
-}
-
-.notice {
-  border: 1px solid color-mix(in srgb, var(--color-accent) 20%, white);
-  border-radius: 10px;
-  padding: 10px 12px;
-  color: var(--color-accent);
-  background: color-mix(in srgb, var(--color-accent) 8%, white);
-  margin-bottom: 14px;
-}
-
-.error {
-  color: var(--color-danger);
-  margin-bottom: 14px;
-}
-
-.actions {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.primary,
-.secondary,
-.ghost {
-  border: 0;
-  border-radius: 10px;
-  padding: 11px 16px;
-  font: inherit;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.primary {
-  color: white;
-  background: var(--color-accent);
-}
-
-.secondary {
-  color: var(--button-text);
-  background: var(--button-bg);
-}
-
-.ghost {
-  color: var(--color-text);
-  background: var(--color-bg);
-}
-
-button:disabled {
-  cursor: default;
-  opacity: 0.65;
-}
-
-@media (max-width: 640px) {
-  .panel {
-    padding: 18px;
-  }
-
-  .account,
-  .details div {
-    grid-template-columns: 1fr;
-  }
-
-  .account,
-  .billing {
+  .profile-page {
+    display: flex;
     flex-direction: column;
+    gap: clamp(12px, 1.6vw, 16px);
+    align-items: flex-start;
+  }
+
+  .profile-shell {
+    display: grid;
+    grid-template-columns: minmax(0, 1.08fr) minmax(320px, 0.92fr);
+    gap: clamp(12px, 1.6vw, 16px);
+    width: 100%;
+    max-width: 1040px;
     align-items: stretch;
   }
 
-  .upgrade {
+  .profile-skeleton {
     width: 100%;
+    max-width: 1040px;
+    gap: clamp(12px, 1.6vw, 16px);
   }
-}
+
+  h1,
+  h2,
+  h3,
+  p {
+    margin: 0;
+  }
+
+  .muted {
+    color: var(--text-muted);
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+  }
+
+  .profile-card,
+  .auth-panel {
+    min-width: 0;
+    padding: clamp(18px, 2.2vw, 26px);
+  }
+
+  .profile-card {
+    display: grid;
+    gap: 18px;
+  }
+
+  .profile-card--wide {
+    grid-column: 1 / -1;
+  }
+
+  .profile-card__head {
+    display: grid;
+    grid-template-columns: 42px minmax(0, 1fr) auto;
+    gap: 14px;
+    align-items: start;
+  }
+
+  .profile-card__title {
+    display: grid;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .profile-card__icon,
+  .settings-row__icon {
+    display: grid;
+    flex: 0 0 auto;
+    place-items: center;
+    width: 42px;
+    height: 42px;
+    border-radius: var(--radius-sm);
+    background: var(--surface-raised);
+    box-shadow: inset 0 1px 0 var(--inner-highlight);
+    color: var(--text-primary);
+  }
+
+  .profile-card__icon svg,
+  .settings-row__icon svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  .profile-card h2,
+  .profile-card h3 {
+    color: var(--text-primary);
+    line-height: 1.2;
+  }
+
+  .profile-card h2 {
+    font-size: 20px;
+  }
+
+  .profile-card h3 {
+    font-size: 18px;
+  }
+
+  .role {
+    justify-self: end;
+    align-self: start;
+    border: 1px solid color-mix(in srgb, var(--accent) 38%, transparent);
+    color: var(--accent-2);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    font-family: var(--font-mono);
+    padding: 5px 10px;
+    font-size: 12px;
+    font-weight: 900;
+    line-height: 1;
+  }
+
+  .details {
+    display: grid;
+    margin: 0;
+    border-top: 1px solid var(--glass-border);
+  }
+
+  .details div {
+    display: grid;
+    grid-template-columns: 128px minmax(0, 1fr);
+    gap: 14px;
+    align-items: baseline;
+    padding: 11px 0;
+    border-bottom: 1px solid
+      color-mix(in srgb, var(--glass-border) 70%, transparent);
+  }
+
+  dt {
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    font-weight: 800;
+  }
+
+  dd {
+    min-width: 0;
+    margin: 0;
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    overflow-wrap: anywhere;
+  }
+
+  .subscription-card {
+    grid-template-rows: auto 1fr;
+  }
+
+  .subscription-action {
+    align-self: end;
+    justify-self: start;
+  }
+
+  .font-options {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+    width: 100%;
+    padding: 5px;
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-control);
+    background: var(--surface-soft);
+    box-shadow: inset 0 1px 0 var(--inner-highlight);
+  }
+
+  .font-option {
+    min-width: 0;
+    min-height: 42px;
+    border: 0;
+    border-radius: calc(var(--radius-control) - 5px);
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 900;
+    transition: background var(--motion-normal) var(--ease-out),
+      color var(--motion-normal) var(--ease-out),
+      transform var(--motion-fast) var(--ease-out);
+  }
+
+  .font-option:hover {
+    background: var(--surface-raised);
+    color: var(--text-primary);
+  }
+
+  .font-option:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent);
+    outline-offset: 2px;
+  }
+
+  .font-option--active {
+    background: var(--button-bg);
+    color: var(--button-text);
+    box-shadow: var(--button-shadow);
+  }
+
+  .settings-list {
+    display: grid;
+    gap: 10px;
+  }
+
+  .settings-row {
+    display: grid;
+    grid-template-columns: 42px minmax(0, 1fr);
+    gap: clamp(12px, 1.6vw, 16px);
+    align-items: center;
+    min-height: 62px;
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-sm);
+    background: var(--surface-soft);
+    color: var(--text-primary);
+    font: inherit;
+    padding: 10px 14px 10px 10px;
+    text-align: left;
+  }
+
+  .settings-row:disabled {
+    cursor: default;
+    opacity: 0.78;
+  }
+
+  .settings-row__content {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    justify-content: space-between;
+    gap: clamp(12px, 1.6vw, 16px);
+  }
+
+  .settings-row__content > span {
+    min-width: 0;
+    font-weight: 800;
+    overflow-wrap: anywhere;
+  }
+
+  .settings-row small {
+    flex: 0 0 auto;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 900;
+    text-transform: uppercase;
+  }
+
+  .danger-panel {
+    align-items: start;
+  }
+
+  .danger-actions,
+  .dialog-actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .danger-actions {
+    justify-content: flex-start;
+    margin-top: auto;
+  }
+
+  .secondary-action,
+  .delete-action {
+    gap: 8px;
+  }
+
+  .secondary-action svg,
+  .delete-action svg {
+    flex: 0 0 auto;
+    width: 16px;
+    height: 16px;
+  }
+
+  .delete-action {
+    display: inline-flex;
+    justify-content: center;
+    align-items: center;
+    gap: 8px;
+    min-height: 42px;
+    border: 1px solid color-mix(in srgb, var(--danger) 38%, transparent);
+    border-radius: var(--radius-control);
+    background: color-mix(in srgb, var(--danger) 12%, transparent);
+    color: var(--danger);
+    cursor: pointer;
+    font: inherit;
+    font-weight: 900;
+    padding: 0 16px;
+    text-decoration: none;
+    transition: transform var(--motion-normal) var(--ease-out),
+      background var(--motion-normal) var(--ease-out),
+      border-color var(--motion-normal) var(--ease-out),
+      color var(--motion-normal) var(--ease-out);
+  }
+
+  .delete-action:hover {
+    transform: translateY(-1px);
+    border-color: color-mix(in srgb, var(--danger) 62%, var(--glass-border));
+    background: color-mix(in srgb, var(--danger) 18%, var(--surface-raised));
+    color: var(--text-primary);
+  }
+
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+
+  label {
+    font-weight: 700;
+  }
+
+  input {
+    width: 100%;
+    padding: 12px 14px;
+  }
+
+  input:disabled {
+    color: var(--text-muted);
+    background: var(--surface-soft);
+  }
+
+  .notice {
+    padding: 10px 12px;
+    color: var(--accent-2);
+    margin-bottom: 14px;
+  }
+
+  .error,
+  .delete-error {
+    color: var(--danger);
+    margin-bottom: 14px;
+  }
+
+  .delete-error {
+    font-weight: 800;
+  }
+
+  .actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  button:disabled {
+    cursor: default;
+    opacity: 0.65;
+  }
+
+  button:disabled:hover {
+    transform: none;
+  }
+
+  .delete-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 80;
+    display: grid;
+    place-items: center;
+    padding: 20px;
+    background: color-mix(in srgb, var(--app-bg) 72%, transparent);
+    backdrop-filter: blur(18px);
+  }
+
+  .delete-dialog {
+    display: grid;
+    gap: 18px;
+    width: min(460px, 100%);
+    padding: clamp(18px, 2vw, 24px);
+  }
+
+  .delete-dialog h2 {
+    color: var(--text-primary);
+    font-size: 24px;
+    margin: 6px 0 8px;
+  }
+
+  .dialog-copy {
+    color: var(--text-secondary);
+    line-height: 1.5;
+  }
+
+  @media (max-width: 920px) {
+    .profile-shell {
+      grid-template-columns: 1fr;
+      max-width: 760px;
+    }
+
+    .profile-card--wide {
+      grid-column: auto;
+    }
+  }
+
+  @media (max-width: 640px) {
+    .profile-card,
+    .auth-panel {
+      padding: 18px;
+    }
+
+    .profile-card__head {
+      grid-template-columns: 38px minmax(0, 1fr);
+    }
+
+    .profile-card__icon,
+    .settings-row__icon {
+      width: 38px;
+      height: 38px;
+    }
+
+    .role {
+      grid-column: 1 / -1;
+      justify-self: start;
+    }
+
+    .details div {
+      grid-template-columns: 1fr;
+      gap: 5px;
+    }
+
+    .danger-panel {
+      grid-template-columns: 1fr;
+    }
+
+    .primary-action,
+    .secondary-action,
+    .delete-action {
+      width: 100%;
+    }
+
+    .dialog-actions {
+      flex-direction: column-reverse;
+    }
+
+    .font-options {
+      border-radius: var(--radius-md);
+      grid-template-columns: 1fr;
+    }
+
+    .danger-actions,
+    .actions {
+      width: 100%;
+    }
+
+    .settings-row__content {
+      align-items: flex-start;
+      flex-direction: column;
+      gap: 4px;
+    }
+  }
 </style>

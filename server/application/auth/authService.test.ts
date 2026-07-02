@@ -56,6 +56,7 @@ function createRepository() {
         emailVerifiedAt: new Date('2026-06-28T10:01:00.000Z'),
         createdAt: new Date('2026-06-28T10:01:00.000Z'),
         updatedAt: new Date('2026-06-28T10:01:00.000Z'),
+        deletedAt: null,
       };
       users.push(user);
       return user;
@@ -80,7 +81,24 @@ function createRepository() {
     },
     async touchAuthSession() {},
     async findUserById(id: string) {
-      return users.find((user) => user.id === id) ?? null;
+      return users.find((user) => user.id === id && !user.deletedAt) ?? null;
+    },
+    async anonymizeUserAccount(userId: string, now: Date) {
+      const user = users.find((item) => item.id === userId);
+      if (!user || user.deletedAt) return false;
+      user.email = null;
+      user.telegramId = null;
+      user.telegramUsername = null;
+      user.displayName = null;
+      user.role = 'user';
+      user.deletedAt = now;
+      user.updatedAt = now;
+      sessions
+        .filter((session) => session.userId === userId)
+        .forEach((session) => {
+          session.revokedAt = now;
+        });
+      return true;
     },
   };
 }
@@ -132,6 +150,50 @@ describe('AuthService', () => {
       { anonymousSessionId: 'anon_1', userId: 'user_1' },
     ]);
     expect(repository.codes[0].consumedAt).toBeInstanceOf(Date);
+
+    vi.useRealTimers();
+  });
+
+  it('anonymizes account data and makes the user unavailable for future sessions', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-28T11:00:00.000Z'));
+
+    const repository = createRepository();
+    const sessionService = new AuthSessionService({
+      repository: repository as any,
+      sessionSecret: 'session-secret',
+    });
+    const service = new AuthService({
+      repository: repository as any,
+      sessionService,
+      authEmailCodeSecret: 'code-secret',
+      emailHashPepper: 'email-pepper',
+      telegramBotToken: '',
+      exposeDevCode: true,
+    });
+
+    const started = await service.startEmailLogin({ email: 'delete@example.com' });
+    const verified = await service.verifyEmailLogin({
+      email: 'delete@example.com',
+      code: started.devCode!,
+      anonymousSessionId: 'anon_delete',
+    });
+
+    await expect(service.deleteAccount(verified.user.id)).resolves.toEqual({
+      ok: true,
+    });
+    await expect(repository.findUserById(verified.user.id)).resolves.toBeNull();
+    expect(repository.users[0]).toMatchObject({
+      email: null,
+      telegramId: null,
+      telegramUsername: null,
+      displayName: null,
+      role: 'user',
+      deletedAt: new Date('2026-06-28T11:00:00.000Z'),
+    });
+    expect(repository.sessions[0].revokedAt).toEqual(
+      new Date('2026-06-28T11:00:00.000Z')
+    );
 
     vi.useRealTimers();
   });

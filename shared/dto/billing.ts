@@ -50,6 +50,19 @@ export const BillingCheckoutResponseDto = z.object({
   confirmationUrl: z.string().url(),
 });
 
+export const BillingPaymentStatusResponseDto = z.object({
+  provider: z.literal('yookassa'),
+  orderId: z.string().nullable(),
+  localStatus: z.string().nullable(),
+  providerPaymentId: z.string().nullable(),
+  providerStatus: z.string().nullable(),
+  paid: z.boolean(),
+  providerVerified: z.boolean(),
+  hasActiveSubscription: z.boolean(),
+  subscriptionExpiresAt: z.string().nullable(),
+  shouldContinuePolling: z.boolean(),
+});
+
 export const BillingWebhookResponseDto = z.object({
   ok: z.literal(true),
 });
@@ -64,4 +77,7 @@ export type BillingCheckoutRequest = z.infer<
 >;
 export type BillingCheckoutResponse = z.infer<
   typeof BillingCheckoutResponseDto
+>;
+export type BillingPaymentStatusResponse = z.infer<
+  typeof BillingPaymentStatusResponseDto
 >;

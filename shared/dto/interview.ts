@@ -3,6 +3,15 @@ import { z } from 'zod';
 export const InterviewSourceTypeDto = z.enum(['hh_url', 'text', 'profession']);
 export const InterviewLevelDto = z.enum(['junior', 'middle', 'senior']);
 export const InterviewerModeDto = z.enum(['soft', 'neutral', 'strict']);
+// Тип/фокус сессии — что именно тренируем. Не выбор профессии (её даёт
+// вакансия/роль), а формат вопросов внутри интервью. Используется быстрыми
+// сценариями на дашборде и параметром на странице создания интервью.
+export const InterviewFocusDto = z.enum([
+  'hr_screening',
+  'professional',
+  'behavioral',
+  'salary_negotiation',
+]);
 export const InterviewSessionStatusDto = z.enum(['created', 'running', 'done']);
 export const InterviewTurnKindDto = z.enum(['main', 'clarification']);
 export const InterviewLanguageDto = z.enum(['ru', 'en']);
@@ -65,12 +74,21 @@ export const RealtimeSessionLimitsDto = z.object({
   hardLimitMinutes: z.number().int().positive(),
 });
 
+export const QuestionHintDetailsDto = z.object({
+  focus: z.string(),
+  answerPlan: z.array(z.string()),
+  keyDefinitions: z.array(z.string()),
+  sampleAnswerQuestion: z.string().trim().max(800).optional(),
+  sampleAnswer: z.string(),
+});
+
 export const QuestionHintPackDto = z.object({
   structure: z.string(),
   bullets: z.array(z.string()),
   terms: z.array(z.string()),
   avoid: z.array(z.string()),
   strongDirection: z.string(),
+  detailed: QuestionHintDetailsDto.optional(),
 });
 
 export const InterviewPlanItemDto = z.object({
@@ -91,13 +109,14 @@ export const InterviewPlanDto = z.object({
 
 export const CreateInterviewSessionRequestDto = z.object({
   source: InterviewSourceDto,
-  resumeText: z.string().trim().max(30_000).optional(),
+  resumeText: z.string().trim().max(15_000).optional(),
   role: z.string().trim().max(160).optional(),
   level: InterviewLevelDto.default('middle'),
   questionCount: QuestionCountDto.optional(),
   sessionGoal: InterviewSessionGoalDto.default('quick'),
   questionSourceMode: InterviewQuestionSourceModeDto.optional(),
   customQuestionsText: z.string().trim().max(10_000).optional(),
+  focus: InterviewFocusDto.optional(),
   responseMode: InterviewResponseModeDto.default('text'),
   hintMode: InterviewHintModeDto.default('off'),
   language: InterviewLanguageDto.default('ru'),
@@ -119,6 +138,7 @@ export const InterviewSessionDto = z.object({
   sessionGoal: InterviewSessionGoalDto,
   expectedDurationMinutes: z.number().int().positive(),
   questionSourceMode: InterviewQuestionSourceModeDto,
+  focus: InterviewFocusDto.nullable().default(null),
   responseMode: InterviewResponseModeDto,
   hintMode: InterviewHintModeDto,
   realtimeLimits: RealtimeSessionLimitsDto,
@@ -165,6 +185,10 @@ export const InterviewStateResponseDto = z.object({
   currentTurn: InterviewTurnDto.nullable(),
 });
 
+export const DeleteInterviewSessionResponseDto = z.object({
+  ok: z.literal(true),
+});
+
 // Чанк SSE-стрима ответа интервьюера (текстовый режим, постепенное появление).
 // output_text_delta — очередной фрагмент текста; done+state — финальное
 // состояние интервью после сохранения диалога; error — ошибка стрима.
@@ -200,6 +224,10 @@ export const NextInterviewQuestionRequestDto = z.object({
   turnId: z.string().min(1),
 });
 
+export const GenerateInterviewHintsRequestDto = z.object({
+  turnId: z.string().min(1),
+});
+
 // Смена интервьюера в кабинете: выбор лица меняет и внешность, и тон ИИ.
 export const UpdateInterviewerRequestDto = z.object({
   faceId: InterviewerFaceIdDto,
@@ -220,6 +248,7 @@ export const QuestionInputExtractResponseDto = z.object({
 export type InterviewSourceType = z.infer<typeof InterviewSourceTypeDto>;
 export type InterviewLevel = z.infer<typeof InterviewLevelDto>;
 export type InterviewerMode = z.infer<typeof InterviewerModeDto>;
+export type InterviewFocus = z.infer<typeof InterviewFocusDto>;
 export type InterviewerAvatarId = z.infer<typeof InterviewerAvatarIdDto>;
 export type InterviewerFaceId = z.infer<typeof InterviewerFaceIdDto>;
 export type InterviewSessionStatus = z.infer<typeof InterviewSessionStatusDto>;
@@ -234,6 +263,7 @@ export type InterviewResponseMode = z.infer<typeof InterviewResponseModeDto>;
 export type InterviewHintMode = z.infer<typeof InterviewHintModeDto>;
 export type InterviewDialogueRole = z.infer<typeof InterviewDialogueRoleDto>;
 export type RealtimeSessionLimits = z.infer<typeof RealtimeSessionLimitsDto>;
+export type QuestionHintDetails = z.infer<typeof QuestionHintDetailsDto>;
 export type QuestionHintPack = z.infer<typeof QuestionHintPackDto>;
 export type InterviewPlanItem = z.infer<typeof InterviewPlanItemDto>;
 export type InterviewPlan = z.infer<typeof InterviewPlanDto>;
@@ -256,6 +286,9 @@ export type AppendInterviewTurnMessageRequest = z.infer<
 export type NextInterviewQuestionRequest = z.infer<
   typeof NextInterviewQuestionRequestDto
 >;
+export type GenerateInterviewHintsRequest = z.infer<
+  typeof GenerateInterviewHintsRequestDto
+>;
 export type UpdateInterviewerRequest = z.infer<
   typeof UpdateInterviewerRequestDto
 >;
@@ -268,6 +301,9 @@ export type InterviewReplyStreamChunk = z.infer<
 export type InterviewSession = z.infer<typeof InterviewSessionDto>;
 export type InterviewTurn = z.infer<typeof InterviewTurnDto>;
 export type InterviewStateResponse = z.infer<typeof InterviewStateResponseDto>;
+export type DeleteInterviewSessionResponse = z.infer<
+  typeof DeleteInterviewSessionResponseDto
+>;
 export type ResumeExtractResponse = z.infer<typeof ResumeExtractResponseDto>;
 export type QuestionInputExtractResponse = z.infer<
   typeof QuestionInputExtractResponseDto

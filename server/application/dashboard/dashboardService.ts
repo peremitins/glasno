@@ -11,33 +11,45 @@ import type {
 } from '@/server/interface/dashboardRepository';
 import { FREE_SESSIONS_LIMIT } from '@/server/application/billing/plans';
 
+// Универсальные форматы интервью — подходят для любой профессии, поэтому
+// роль не задаём: пользователь укажет её (или вакансию) сам на экране
+// создания интервью. Плитка задаёт только фокус, уровень и тон интервьюера.
 const QUICK_SCENARIOS: DashboardQuickScenario[] = [
   {
-    id: 'product-case',
-    title: 'Product case',
-    subtitle: 'Приоритизация, метрики и конфликт стейкхолдеров.',
+    id: 'hr-screening',
+    title: 'HR-скрининг',
+    subtitle: 'Мотивация, ожидания и базовый скрининг перед этапом с руководителем.',
     sourceType: 'profession',
-    role: 'Product Manager',
+    focus: 'hr_screening',
+    level: 'middle',
+    interviewerMode: 'soft',
+  },
+  {
+    id: 'professional',
+    title: 'Профессиональное',
+    subtitle: 'Хард-скиллы и практические задачи по вашей роли.',
+    sourceType: 'profession',
+    focus: 'professional',
     level: 'middle',
     interviewerMode: 'neutral',
   },
   {
-    id: 'sales-b2b',
-    title: 'B2B sales',
-    subtitle: 'Discovery, возражения и переговоры с клиентом.',
+    id: 'behavioral',
+    title: 'Поведенческое',
+    subtitle: 'Кейсы из опыта по структуре STAR: ситуация, задача, действие, результат.',
     sourceType: 'profession',
-    role: 'B2B Sales Manager',
+    focus: 'behavioral',
+    level: 'middle',
+    interviewerMode: 'neutral',
+  },
+  {
+    id: 'salary-negotiation',
+    title: 'Зарплатные переговоры',
+    subtitle: 'Обсуждение оффера, аргументация цифры и работа с возражениями.',
+    sourceType: 'profession',
+    focus: 'salary_negotiation',
     level: 'middle',
     interviewerMode: 'strict',
-  },
-  {
-    id: 'frontend-live',
-    title: 'Frontend live',
-    subtitle: 'Производительность, архитектура и отладка.',
-    sourceType: 'profession',
-    role: 'Frontend Engineer',
-    level: 'middle',
-    interviewerMode: 'neutral',
   },
 ];
 
@@ -123,4 +135,3 @@ function latestTopFixes(rows: DashboardSessionRecord[]): string[] {
 function titleByStatus(status: DashboardSessionRecord['status']): string {
   return status === 'done' ? 'Завершённое интервью' : 'Интервью';
 }
-

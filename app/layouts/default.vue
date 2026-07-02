@@ -1,7 +1,6 @@
 <script setup lang="ts">
   import {
     BarChartIcon,
-    BellIcon,
     ClockIcon,
     DashboardIcon,
     DoubleArrowLeftIcon,
@@ -14,14 +13,36 @@
     ReaderIcon,
     SunIcon,
   } from '@radix-icons/vue';
-  import { defineComponent, useSlots } from 'vue';
+  import { computed, defineComponent, useSlots } from 'vue';
   import { useI18n } from 'vue-i18n';
   import AuroraField from '@/app/components/design/AuroraField.vue';
+  import type { DashboardSummaryResponse } from '@/shared/dto';
 
   const { t } = useI18n();
+  const api = useAPI();
   const slots = useSlots();
   const { theme, toggleTheme } = useDesignPreferences();
   const isSidebarCollapsed = useLocalStorage('jobai-sidebar-collapsed', false);
+  const { data: layoutSummary } = await useAsyncData(
+    'layout-dashboard-summary',
+    async () => {
+      try {
+        return await api<DashboardSummaryResponse>('/api/dashboard/summary');
+      } catch {
+        return null;
+      }
+    }
+  );
+
+  const completedSessions = computed(
+    () => layoutSummary.value?.totals.completed ?? 0
+  );
+  const averageScore = computed(() => {
+    const score = layoutSummary.value?.totals.averageScore;
+    return typeof score === 'number'
+      ? t('common.score', { score })
+      : t('common.noScore');
+  });
 
   const SlotOutlet = defineComponent({
     name: 'DefaultLayoutSlotOutlet',
@@ -93,10 +114,18 @@
         </NuxtLink>
       </nav>
 
-      <section class="sidebar-card">
+      <section class="sidebar-card sidebar-card--progress">
         <p>{{ t('layout.weekProgress') }}</p>
-        <strong>7</strong>
-        <span>{{ t('layout.weekProgressHint') }}</span>
+        <div class="sidebar-metrics">
+          <span>
+            <strong>{{ completedSessions }}</strong>
+            <small>{{ t('layout.progressCompletedShort') }}</small>
+          </span>
+          <span>
+            <strong>{{ averageScore }}</strong>
+            <small>{{ t('layout.progressAverageShort') }}</small>
+          </span>
+        </div>
       </section>
 
       <section class="sidebar-card sidebar-card--accent">
@@ -126,17 +155,12 @@
             <MoonIcon v-else aria-hidden="true" />
           </button>
 
-          <button
-            type="button"
-            class="icon-button"
-            :aria-label="t('layout.notifications')"
+          <NuxtLink
+            to="/profile"
+            class="profile-pill"
+            :aria-label="t('nav.profile')"
           >
-            <BellIcon aria-hidden="true" />
-          </button>
-
-          <NuxtLink to="/profile" class="profile-pill">
-            <span class="avatar" aria-hidden="true">A</span>
-            <span>Анна</span>
+            <PersonIcon aria-hidden="true" />
           </NuxtLink>
         </div>
       </header>
@@ -179,7 +203,7 @@
     grid-template-columns: 260px minmax(0, 1fr);
     min-height: 100dvh;
     padding: 20px;
-    gap: 22px;
+    gap: clamp(12px, 1.6vw, 16px);
     transition: grid-template-columns var(--motion-normal) var(--ease-out),
       gap var(--motion-normal) var(--ease-out);
   }
@@ -210,7 +234,7 @@
   .brand {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: clamp(12px, 1.6vw, 16px);
     min-width: 0;
     color: var(--text-primary);
     text-decoration: none;
@@ -218,8 +242,7 @@
 
   .brand-mark,
   .nav-ico,
-  .icon-button,
-  .avatar {
+  .icon-button {
     display: grid;
     place-items: center;
   }
@@ -285,7 +308,7 @@
   .nav-item {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: clamp(12px, 1.6vw, 16px);
     min-height: 46px;
     padding: 0 12px;
     border: 1px solid transparent;
@@ -365,6 +388,34 @@
     line-height: 1;
   }
 
+  .sidebar-metrics {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .sidebar-metrics span {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+  }
+
+  .sidebar-metrics strong {
+    overflow: hidden;
+    font-size: 18px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .sidebar-metrics small {
+    overflow: hidden;
+    color: var(--text-muted);
+    font-size: 10px;
+    font-weight: 800;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   .sidebar-card--accent {
     margin-top: 12px;
   }
@@ -422,7 +473,7 @@
   .workspace {
     display: grid;
     grid-template-rows: auto 1fr;
-    gap: 22px;
+    gap: clamp(12px, 1.6vw, 16px);
     min-width: 0;
   }
 
@@ -487,31 +538,23 @@
   }
 
   .profile-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 9px;
+    display: grid;
+    place-items: center;
+    width: 44px;
     min-height: 44px;
-    padding: 0 12px 0 7px;
-    border-radius: 999px;
+    border-radius: 16px;
     text-decoration: none;
-    font-size: 13px;
-    font-weight: 800;
   }
 
-  .avatar {
-    width: 30px;
-    height: 30px;
-    border-radius: 999px;
-    background: var(--avatar-bg);
-    color: var(--avatar-text);
-    font-family: var(--font-mono);
-    font-size: 12px;
+  .profile-pill svg {
+    width: 18px;
+    height: 18px;
   }
 
   .content-surface {
     min-width: 0;
     /* width: min(1180px, 100%); */
-    padding: clamp(4px, 1vw, 14px) 0 72px;
+    padding: 0 0 72px;
   }
 
   .bottom-nav {
@@ -531,7 +574,7 @@
     .topbar {
       align-items: flex-start;
       flex-direction: column;
-      gap: 12px;
+      gap: clamp(12px, 1.6vw, 16px);
     }
 
     .toolbar {
@@ -616,7 +659,7 @@
     .topbar {
       flex-direction: row;
       align-items: center;
-      gap: 12px;
+      gap: clamp(12px, 1.6vw, 16px);
       min-height: 72px;
     }
 
