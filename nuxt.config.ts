@@ -60,7 +60,7 @@ export default defineNuxtConfig({
     databaseUrl: '',
     redisUrl: '',
     openaiApiKey: '',
-    openaiModel: 'gpt-4o-mini',
+    openaiModel: 'gpt-5.4-nano', // была 'gpt-4o-mini' (заменено 2026-07: дешевле/сильнее преемник)
     realtimeModel: 'gpt-realtime',
     realtimeVoice: 'marin',
     realtimeTranscriptionModel: 'gpt-4o-mini-transcribe',

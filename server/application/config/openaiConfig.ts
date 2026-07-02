@@ -18,7 +18,7 @@ export function resolveOpenAiConfig(
     normalizeSecret(runtimeConfig.openaiModel) ||
     normalizeSecret(env.NUXT_OPENAI_MODEL) ||
     normalizeSecret(env.OPENAI_MODEL) ||
-    'gpt-4o-mini';
+    'gpt-5.4-nano'; // была 'gpt-4o-mini' (заменено 2026-07)
 
   return { apiKey, model };
 }
