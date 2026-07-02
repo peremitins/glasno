@@ -49,7 +49,7 @@ function usageContext(session: InterviewSessionRecord) {
 }
 
 const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
-const DEFAULT_MODEL = 'gpt-4o-mini';
+const DEFAULT_MODEL = 'gpt-5.4-nano'; // была 'gpt-4o-mini' (заменено 2026-07)
 
 export function extractResponsesText(response: any): string {
   const chunks: string[] = [];

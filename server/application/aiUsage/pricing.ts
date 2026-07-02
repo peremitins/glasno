@@ -24,11 +24,21 @@ const ZERO: ModelPricing = {
 };
 
 export const OPENAI_PRICING: Record<string, ModelPricing> = {
+  // Была основной моделью интервью-движка до 2026-07 (см. gpt-5.4-nano ниже),
+  // оставлена в прайсе ради корректного расчёта стоимости старых записей ai_usage.
   'gpt-4o-mini': {
     ...ZERO,
     inputPerMTokensUsd: 0.15,
     cachedInputPerMTokensUsd: 0.075,
     outputPerMTokensUsd: 0.6,
+    note: undefined,
+  },
+  // Текущая модель интервью-движка (заменили gpt-4o-mini 2026-07: дешевле/сильнее преемник).
+  'gpt-5.4-nano': {
+    ...ZERO,
+    inputPerMTokensUsd: 0.2,
+    cachedInputPerMTokensUsd: 0.02,
+    outputPerMTokensUsd: 1.25,
     note: undefined,
   },
   'gpt-4o': {
