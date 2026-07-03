@@ -1,12 +1,14 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import {
   useRealtimeVoiceSession,
   type RealtimeVoiceControl,
 } from '@/app/composables/useRealtimeVoiceSession';
 import { useRealtimeVoiceCallFeedback } from '@/app/composables/useRealtimeVoiceCallFeedback';
+import { useBillingStatus } from '@/app/composables/useBillingStatus';
 import ButtonLoader from '@/app/components/design/ButtonLoader.vue';
+import PaywallModal from '@/app/components/billing/PaywallModal.vue';
 import type { RealtimeSessionLimits } from '@/shared/dto';
 
 const props = defineProps<{
@@ -40,9 +42,28 @@ const callFeedback = useRealtimeVoiceCallFeedback({
   errorMessage: realtimeVoice.errorMessage,
 });
 
+// Пейволл (паттерн Mentala): если минуты голоса кончились — на кнопке
+// бейдж ⭐, клик открывает пейволл вместо запуска сессии.
+const billing = useBillingStatus();
+const paywallOpen = ref(false);
+const paywallMode = computed(() =>
+  billing.hasActiveSubscription.value ? 'minutes' : 'plans'
+);
+const isLocked = computed(
+  () => billing.realtimeLocked.value && !realtimeVoice.isActive.value
+);
+
+onMounted(() => {
+  void billing.ensureLoaded();
+});
+
 // Обёртка над toggle: запускаем фидбэк в рамках жеста пользователя
 // (это же разблокирует аудио для гудка/сигнала готовности).
 function onToggle() {
+  if (isLocked.value) {
+    paywallOpen.value = true;
+    return;
+  }
   if (realtimeVoice.isActive.value) {
     callFeedback.notifyHangupIntent();
   } else {
@@ -168,10 +189,13 @@ onBeforeUnmount(() => {
     :class="{ 'rt-icon--active': realtimeVoice.isActive.value }"
     :disabled="disabled || realtimeVoice.isBusy.value"
     v-tooltip="
-      realtimeVoice.isActive.value
-        ? t('voice.realtime.stop')
-        : t('voice.realtime.start')
+      isLocked
+        ? t('voice.realtime.locked')
+        : realtimeVoice.isActive.value
+          ? t('voice.realtime.stop')
+          : t('voice.realtime.start')
     "
+    :aria-label="isLocked ? t('voice.realtime.locked') : undefined"
     @click="onToggle"
   >
     <ButtonLoader v-if="realtimeVoice.isBusy.value" />
@@ -190,6 +214,8 @@ onBeforeUnmount(() => {
         />
       </svg>
     </span>
+    <!-- Бейдж премиум-фичи (паттерн Mentala: ⭐ в углу кнопки) -->
+    <span v-if="isLocked" class="rt-lock-badge" aria-hidden="true">⭐</span>
   </button>
 
   <section v-else class="realtime-panel glass-frame glass-frame--soft">
@@ -220,6 +246,7 @@ onBeforeUnmount(() => {
             'button-loader-content--loading': realtimeVoice.isBusy.value,
           }"
         >
+          <span v-if="isLocked" aria-hidden="true">⭐</span>
           {{
             realtimeVoice.isActive.value
               ? t('voice.realtime.stop')
@@ -236,6 +263,8 @@ onBeforeUnmount(() => {
       {{ limitMessage }}
     </p>
   </section>
+
+  <PaywallModal v-model:open="paywallOpen" :mode="paywallMode" />
 </template>
 
 <style scoped>
@@ -272,6 +301,28 @@ onBeforeUnmount(() => {
   cursor: not-allowed;
   opacity: 0.55;
 }
+/* Бейдж премиум-фичи в углу кнопки (размеры/позиция — как в Mentala). */
+.rt-lock-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  border: 1px solid var(--glass-border-strong);
+  background: color-mix(in srgb, #08080a 82%, transparent);
+  font-size: 9px;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.rt-icon {
+  position: relative;
+}
+
 /* Идёт разговор — акцентная подсветка + пульс. */
 .rt-icon--active {
   border-color: color-mix(in srgb, var(--accent) 55%, transparent);

@@ -18,11 +18,15 @@ export default defineApiHandler(async (event) => {
   const input = await readDto(event, CreateInterviewSessionRequestDto);
   await new BillingAccessService({
     repository: new DrizzleBillingRepository(),
-  }).assertCanCreateInterview({
-    anonymousSessionId: session.id,
-    userId: session.userId ?? null,
-    role: session.role ?? null,
-  });
+  }).assertCanCreateInterview(
+    {
+      anonymousSessionId: session.id,
+      userId: session.userId ?? null,
+      role: session.role ?? null,
+    },
+    // Free — только быстрый формат; стандарт/глубокий — по тарифу (ТЗ §11).
+    { sessionGoal: input.sessionGoal }
+  );
 
   const service = createInterviewService(event);
   const state = await service.createSession({

@@ -49,6 +49,10 @@ function createSubscription(
     provider: 'yookassa',
     providerPaymentId: 'payment_1',
     currentPeriodEnd: new Date('2026-07-31T10:00:00.000Z'),
+    autoRenew: false,
+    nextChargeAt: null,
+    lastChargeAttemptAt: null,
+    lastChargeError: null,
     createdAt: new Date('2026-07-01T10:00:00.000Z'),
     updatedAt: new Date('2026-07-01T10:00:00.000Z'),
     ...overrides,
@@ -57,8 +61,11 @@ function createSubscription(
 
 function createRepository(order = createOrder()) {
   let activeSubscription: SubscriptionRecord | null = null;
+  let fulfilledAt: Date | null = null;
   const repository = {
     countOwnerSessions: vi.fn().mockResolvedValue(1),
+    countOwnerSessionsSince: vi.fn().mockResolvedValue(0),
+    findUserEmail: vi.fn().mockResolvedValue('user@example.com'),
     findActiveSubscriptionByUserId: vi
       .fn()
       .mockImplementation(async () => activeSubscription),
@@ -68,19 +75,55 @@ function createRepository(order = createOrder()) {
         activeSubscription ? [activeSubscription] : []
       ),
     countRealtimeVoiceUsageSeconds: vi.fn().mockResolvedValue(0),
+    getRealtimeMinuteBalance: vi.fn().mockResolvedValue({
+      totalSeconds: 0,
+      consumedSeconds: 0,
+      remainingSeconds: 0,
+    }),
+    debitRealtimeSeconds: vi.fn().mockResolvedValue(undefined),
     createPaymentOrder: vi.fn(),
     findPaymentOrderById: vi.fn().mockResolvedValue(order),
     findPaymentOrderByProviderPaymentId: vi.fn().mockResolvedValue(order),
     findLatestPaymentOrderByUserId: vi.fn().mockResolvedValue(order),
     updatePaymentOrder: vi.fn().mockResolvedValue(order),
     findSubscriptionByProviderPaymentId: vi.fn().mockResolvedValue(null),
+    findPaymentMethodByUserId: vi.fn().mockResolvedValue(null),
+    savePendingPaymentMethod: vi.fn().mockResolvedValue(undefined),
+    activatePaymentMethod: vi.fn().mockResolvedValue(undefined),
+    deletePaymentMethodByUserId: vi.fn().mockResolvedValue(undefined),
+    setSubscriptionAutoRenew: vi.fn().mockResolvedValue(undefined),
+    claimSubscriptionForCharge: vi.fn().mockResolvedValue(null),
+    recordSubscriptionChargeError: vi.fn().mockResolvedValue(undefined),
     grantSubscription: vi.fn().mockImplementation(async (input) => {
       activeSubscription = createSubscription(input);
       return activeSubscription;
     }),
+    // Эмуляция идемпотентности продовой реализации: повторный вызов
+    // по тому же заказу доступ не выдаёт.
+    fulfillPaidOrder: vi.fn().mockImplementation(async (params) => {
+      if (fulfilledAt) {
+        return { fulfilled: false, alreadyFulfilled: true };
+      }
+      fulfilledAt = new Date();
+      activeSubscription = createSubscription({
+        planId: params.plan.id,
+        providerPaymentId: params.providerPaymentId,
+      });
+      return { fulfilled: true, alreadyFulfilled: false };
+    }),
   } satisfies BillingRepository;
 
   return repository;
+}
+
+function createService(repository: ReturnType<typeof createRepository>) {
+  return new BillingService({
+    repository,
+    config: {
+      yookassa: { shopId: '123456', secretKey: 'test_secret' },
+      appUrl: 'https://jobai.test',
+    },
+  });
 }
 
 describe('BillingService payment reconciliation', () => {
@@ -99,14 +142,9 @@ describe('BillingService payment reconciliation', () => {
       amountValue: '990.00',
       currency: 'RUB',
       metadata: { orderId: 'order_1' },
+      paymentMethod: null,
     });
-    const service = new BillingService({
-      repository,
-      config: {
-        yookassa: { shopId: '123456', secretKey: 'test_secret' },
-        appUrl: 'https://jobai.test',
-      },
-    });
+    const service = createService(repository);
 
     await expect(
       service.reconcileYooKassaCheckout({
@@ -123,24 +161,21 @@ describe('BillingService payment reconciliation', () => {
       shouldContinuePolling: false,
     });
 
-    expect(repository.grantSubscription).toHaveBeenCalledWith({
-      userId: 'user_1',
-      planId: 'pro_monthly',
-      provider: 'yookassa',
+    expect(repository.fulfillPaidOrder).toHaveBeenCalledWith({
+      orderId: 'order_1',
       providerPaymentId: 'payment_1',
-      currentPeriodEnd: new Date('2026-07-31T10:00:00.000Z'),
+      plan: {
+        id: 'pro_monthly',
+        kind: 'subscription',
+        periodDays: 30,
+        realtimeVoiceMinutes: 60,
+      },
+      paymentMethod: null,
     });
   });
 
   it('does not grant access twice for the same YooKassa payment', async () => {
-    const existingSubscription = createSubscription();
     const repository = createRepository();
-    repository.findSubscriptionByProviderPaymentId.mockResolvedValue(
-      existingSubscription
-    );
-    repository.findActiveSubscriptionByUserId.mockResolvedValue(
-      existingSubscription
-    );
     mockedGetYooKassaPayment.mockResolvedValue({
       id: 'payment_1',
       status: 'succeeded',
@@ -148,15 +183,20 @@ describe('BillingService payment reconciliation', () => {
       amountValue: '990.00',
       currency: 'RUB',
       metadata: { orderId: 'order_1' },
+      paymentMethod: null,
     });
-    const service = new BillingService({
-      repository,
-      config: {
-        yookassa: { shopId: '123456', secretKey: 'test_secret' },
-        appUrl: 'https://jobai.test',
+    const service = createService(repository);
+
+    // Гонка «вебхук + поллинг»: оба пути пытаются выдать доступ.
+    await service.handleYooKassaWebhook({
+      event: 'payment.succeeded',
+      object: {
+        id: 'payment_1',
+        status: 'succeeded',
+        paid: true,
+        metadata: { orderId: 'order_1' },
       },
     });
-
     await expect(
       service.reconcileYooKassaCheckout({
         userId: 'user_1',
@@ -167,7 +207,27 @@ describe('BillingService payment reconciliation', () => {
       shouldContinuePolling: false,
     });
 
-    expect(repository.grantSubscription).not.toHaveBeenCalled();
+    expect(repository.fulfillPaidOrder).toHaveBeenCalledTimes(2);
+    const results = await Promise.all(
+      repository.fulfillPaidOrder.mock.results.map((item) => item.value)
+    );
+    expect(results.filter((result) => result.fulfilled)).toHaveLength(1);
+  });
+
+  it('ignores webhooks for unknown orders without throwing', async () => {
+    const repository = createRepository();
+    repository.findPaymentOrderById.mockResolvedValue(null);
+    repository.findPaymentOrderByProviderPaymentId.mockResolvedValue(null);
+    const service = createService(repository);
+
+    await expect(
+      service.handleYooKassaWebhook({
+        event: 'payment.succeeded',
+        object: { id: 'payment_unknown', status: 'succeeded', paid: true },
+      })
+    ).resolves.toBeUndefined();
+    expect(repository.fulfillPaidOrder).not.toHaveBeenCalled();
+    expect(mockedGetYooKassaPayment).not.toHaveBeenCalled();
   });
 
   it('refuses to activate access when YooKassa amount differs from the order', async () => {
@@ -179,14 +239,9 @@ describe('BillingService payment reconciliation', () => {
       amountValue: '1.00',
       currency: 'RUB',
       metadata: { orderId: 'order_1' },
+      paymentMethod: null,
     });
-    const service = new BillingService({
-      repository,
-      config: {
-        yookassa: { shopId: '123456', secretKey: 'test_secret' },
-        appUrl: 'https://jobai.test',
-      },
-    });
+    const service = createService(repository);
 
     await expect(
       service.reconcileYooKassaCheckout({
@@ -200,7 +255,7 @@ describe('BillingService payment reconciliation', () => {
       shouldContinuePolling: false,
     });
 
-    expect(repository.grantSubscription).not.toHaveBeenCalled();
+    expect(repository.fulfillPaidOrder).not.toHaveBeenCalled();
     expect(repository.updatePaymentOrder).toHaveBeenCalledWith(
       expect.objectContaining({
         metadata: expect.objectContaining({
@@ -208,5 +263,52 @@ describe('BillingService payment reconciliation', () => {
         }),
       })
     );
+  });
+
+  it('refuses to activate access when currency is missing', async () => {
+    const repository = createRepository();
+    mockedGetYooKassaPayment.mockResolvedValue({
+      id: 'payment_1',
+      status: 'succeeded',
+      paid: true,
+      amountValue: '990.00',
+      currency: null,
+      metadata: { orderId: 'order_1' },
+      paymentMethod: null,
+    });
+    const service = createService(repository);
+
+    await service.reconcileYooKassaCheckout({
+      userId: 'user_1',
+      orderId: 'order_1',
+    });
+    expect(repository.fulfillPaidOrder).not.toHaveBeenCalled();
+  });
+});
+
+describe('BillingService checkout guards', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useRealTimers();
+  });
+
+  it('blocks minute pack purchase without an active base subscription', async () => {
+    const repository = createRepository();
+    const service = createService(repository);
+
+    await expect(
+      service.createCheckout({ userId: 'user_1', planId: 'realtime_pack_60' })
+    ).rejects.toThrow('Пакеты минут доступны при активном тарифе');
+    expect(repository.createPaymentOrder).not.toHaveBeenCalled();
+  });
+
+  it('rejects checkout of the legacy realtime_voice_60 plan', async () => {
+    const repository = createRepository();
+    const service = createService(repository);
+
+    await expect(
+      service.createCheckout({ userId: 'user_1', planId: 'realtime_voice_60' })
+    ).rejects.toThrow();
+    expect(repository.createPaymentOrder).not.toHaveBeenCalled();
   });
 });

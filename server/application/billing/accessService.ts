@@ -1,11 +1,23 @@
 import type { BillingStatusResponse } from '@/shared/dto';
-import { REALTIME_VOICE_IDLE_TIMEOUT_SECONDS } from '@/server/application/realtime/realtimeVoiceLimits';
 import { apiError } from '@/server/utils/errors';
 import type {
   BillingOwner,
   BillingRepository,
+  SubscriptionRecord,
 } from '@/server/interface/billingRepository';
-import { FREE_SESSIONS_LIMIT, getBillingPlan } from './plans';
+import {
+  ALL_SESSION_GOALS,
+  FREE_ALLOWED_SESSION_GOALS,
+  FREE_SESSIONS_LIMIT,
+  getBillingPlan,
+  type BillingPlanConfig,
+  type SessionGoalAccess,
+} from './plans';
+
+interface ActivePlan {
+  subscription: SubscriptionRecord;
+  plan: BillingPlanConfig;
+}
 
 export class BillingAccessService {
   constructor(
@@ -13,8 +25,10 @@ export class BillingAccessService {
       repository: Pick<
         BillingRepository,
         | 'countOwnerSessions'
+        | 'countOwnerSessionsSince'
         | 'findActiveSubscriptionsByUserId'
-        | 'countRealtimeVoiceUsageSeconds'
+        | 'getRealtimeMinuteBalance'
+        | 'findPaymentMethodByUserId'
       >;
     }
   ) {}
@@ -26,10 +40,14 @@ export class BillingAccessService {
         freeSessionsLimit: FREE_SESSIONS_LIMIT,
         freeSessionsUsed: 0,
         canCreateInterview: true,
+        allowedSessionGoals: ALL_SESSION_GOALS,
+        paidInterviewsRemaining: null,
         hasActiveSubscription: false,
         unlimited: true,
         activePlanId: null,
+        activePlanName: null,
         subscriptionExpiresAt: null,
+        billing: null,
         needsAuthForCheckout: false,
         realtimeVoice: {
           includedMinutes: 999_999,
@@ -40,67 +58,132 @@ export class BillingAccessService {
       };
     }
 
-    const [freeSessionsUsed, subscriptions] = await Promise.all([
-      this.deps.repository.countOwnerSessions(owner),
-      owner.userId
-        ? this.deps.repository.findActiveSubscriptionsByUserId(owner.userId)
-        : Promise.resolve([]),
-    ]);
+    const [freeSessionsUsed, subscriptions, minuteBalance, paymentMethod] =
+      await Promise.all([
+        this.deps.repository.countOwnerSessions(owner),
+        owner.userId
+          ? this.deps.repository.findActiveSubscriptionsByUserId(owner.userId)
+          : Promise.resolve([]),
+        owner.userId
+          ? this.deps.repository.getRealtimeMinuteBalance(owner.userId)
+          : Promise.resolve({
+              totalSeconds: 0,
+              consumedSeconds: 0,
+              remainingSeconds: 0,
+            }),
+        owner.userId
+          ? this.deps.repository.findPaymentMethodByUserId(owner.userId)
+          : Promise.resolve(null),
+      ]);
 
-    const plans = subscriptions.map((subscription) => ({
+    const plans: ActivePlan[] = subscriptions.map((subscription) => ({
       subscription,
       plan: getBillingPlan(subscription.planId),
     }));
-    const activeSubscription = plans.find(
+    const subscriptionPlans = plans.filter(
       (item) => item.plan.kind === 'subscription'
     );
-    const hasActiveSubscription = Boolean(activeSubscription);
-    const includedRealtimeMinutes = plans.reduce(
-      (sum, item) => sum + item.plan.realtimeVoiceMinutes,
-      0
+    const oneTimePlans = plans.filter((item) => item.plan.kind === 'one_time');
+    const hasActiveSubscription = subscriptionPlans.length > 0;
+
+    // «Основной» тариф — с наибольшим приоритетом (Career Pack > Pro > разовый).
+    const primaryPlan =
+      [...subscriptionPlans, ...oneTimePlans].sort(
+        (a, b) => b.plan.priority - a.plan.priority
+      )[0] ?? null;
+
+    // Разовый доступ: считаем интервью, созданные после его покупки.
+    let paidInterviewsRemaining: number | null = null;
+    if (!hasActiveSubscription && oneTimePlans.length > 0) {
+      const earliestGrantedAt = oneTimePlans.reduce(
+        (min, item) =>
+          item.subscription.createdAt < min ? item.subscription.createdAt : min,
+        oneTimePlans[0]!.subscription.createdAt
+      );
+      const includedInterviews = oneTimePlans.reduce(
+        (sum, item) => sum + (item.plan.includedInterviews ?? 0),
+        0
+      );
+      const usedSince = await this.deps.repository.countOwnerSessionsSince(
+        owner,
+        earliestGrantedAt
+      );
+      paidInterviewsRemaining = Math.max(0, includedInterviews - usedSince);
+    }
+
+    const canCreateInterview =
+      hasActiveSubscription ||
+      (paidInterviewsRemaining ?? 0) > 0 ||
+      freeSessionsUsed < FREE_SESSIONS_LIMIT;
+
+    const allowedSessionGoals: SessionGoalAccess[] =
+      hasActiveSubscription || (paidInterviewsRemaining ?? 0) > 0
+        ? ALL_SESSION_GOALS
+        : FREE_ALLOWED_SESSION_GOALS;
+
+    const includedMinutes = Math.floor(minuteBalance.totalSeconds / 60);
+    const remainingMinutes = Math.floor(minuteBalance.remainingSeconds / 60);
+    const usedMinutes = Math.max(0, includedMinutes - remainingMinutes);
+
+    // Информация об автопродлении (по образцу Mentala): когда и сколько
+    // спишется, с какой карты, была ли ошибка последнего списания.
+    // Блок возвращается ЛЮБОМУ авторизованному пользователю — UI показывает
+    // «Привязать карту», когда карты нет.
+    const renewalSubscription = subscriptionPlans.find(
+      (item) => item.subscription.autoRenew
     );
-    const now = new Date();
-    const usageWindow = resolveRealtimeUsageWindow(
-      activeSubscription?.subscription.currentPeriodEnd ??
-        plans[0]?.subscription.currentPeriodEnd ??
-        now
-    );
-    const realtimeUsedSeconds = owner.userId
-      ? await this.deps.repository.countRealtimeVoiceUsageSeconds(owner, {
-          windowStart: usageWindow.windowStart,
-          windowEnd: usageWindow.windowEnd,
-          idleTimeoutMs: REALTIME_VOICE_IDLE_TIMEOUT_SECONDS * 1000,
-          now,
-        })
-      : 0;
-    const usedRealtimeMinutes = Math.ceil(realtimeUsedSeconds / 60);
-    const remainingRealtimeMinutes = Math.max(
-      0,
-      includedRealtimeMinutes - usedRealtimeMinutes
-    );
+    const activePaymentMethod =
+      paymentMethod?.status === 'active' ? paymentMethod : null;
+    const billing = owner.userId
+      ? {
+          autoRenew: Boolean(renewalSubscription),
+          nextChargeAt:
+            renewalSubscription?.subscription.nextChargeAt?.toISOString() ??
+            null,
+          nextChargeAmountRub: renewalSubscription
+            ? renewalSubscription.plan.priceRub
+            : null,
+          lastChargeError:
+            renewalSubscription?.subscription.lastChargeError ?? null,
+          paymentMethod: activePaymentMethod
+            ? {
+                title: activePaymentMethod.title,
+                cardBrand: activePaymentMethod.cardBrand,
+                cardLast4: activePaymentMethod.cardLast4,
+                cardExpiryMonth: activePaymentMethod.cardExpiryMonth,
+                cardExpiryYear: activePaymentMethod.cardExpiryYear,
+              }
+            : null,
+        }
+      : null;
 
     return {
       freeSessionsLimit: FREE_SESSIONS_LIMIT,
       freeSessionsUsed,
-      canCreateInterview:
-        hasActiveSubscription || freeSessionsUsed < FREE_SESSIONS_LIMIT,
+      canCreateInterview,
+      allowedSessionGoals,
+      paidInterviewsRemaining,
       hasActiveSubscription,
       unlimited: false,
-      activePlanId: activeSubscription?.plan.id ?? null,
+      activePlanId: primaryPlan?.plan.id ?? null,
+      activePlanName: primaryPlan?.plan.name ?? null,
       subscriptionExpiresAt:
-        activeSubscription?.subscription.currentPeriodEnd.toISOString() ?? null,
+        primaryPlan?.subscription.currentPeriodEnd.toISOString() ?? null,
+      billing,
       needsAuthForCheckout: !owner.userId,
       realtimeVoice: {
-        includedMinutes: includedRealtimeMinutes,
-        usedMinutes: usedRealtimeMinutes,
-        remainingMinutes: remainingRealtimeMinutes,
-        canBuyMore: Boolean(owner.userId),
+        includedMinutes,
+        usedMinutes,
+        remainingMinutes,
+        // Пакеты минут продаются только при активной подписке.
+        canBuyMore: Boolean(owner.userId) && hasActiveSubscription,
       },
     };
   }
 
   async assertCanCreateInterview(
-    owner: BillingOwner
+    owner: BillingOwner,
+    params?: { sessionGoal?: SessionGoalAccess }
   ): Promise<BillingStatusResponse> {
     const status = await this.getStatus(owner);
     if (!status.canCreateInterview) {
@@ -110,16 +193,18 @@ export class BillingAccessService {
         status
       );
     }
+    const sessionGoal = params?.sessionGoal;
+    if (
+      sessionGoal &&
+      !status.unlimited &&
+      !status.allowedSessionGoals.includes(sessionGoal)
+    ) {
+      throw apiError(
+        'E_FORBIDDEN',
+        'Бесплатно доступно быстрое интервью. Стандартный и глубокий форматы — на платных тарифах.',
+        status
+      );
+    }
     return status;
   }
-}
-
-function resolveRealtimeUsageWindow(periodEnd: Date): {
-  windowStart: Date;
-  windowEnd: Date;
-} {
-  return {
-    windowStart: new Date(periodEnd.getTime() - 30 * 24 * 60 * 60 * 1000),
-    windowEnd: periodEnd,
-  };
 }

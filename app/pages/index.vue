@@ -131,9 +131,6 @@
               <ArrowRightIcon />
             </span>
           </NuxtLink>
-          <NuxtLink to="/questions" class="secondary-link">
-            {{ t('dashboard.questionBankCta') }}
-          </NuxtLink>
         </div>
       </article>
     </section>

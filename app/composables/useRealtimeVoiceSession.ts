@@ -34,6 +34,10 @@ export function useRealtimeVoiceSession(options: {
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
   let hardLimitTimer: ReturnType<typeof setTimeout> | null = null;
   let lastActivitySentAt = 0;
+  // Пользователь сейчас говорит: сегмент речи открыт (пришёл
+  // input_audio_buffer.speech_started, но ещё не speech_stopped). Пока он
+  // открыт, сессию нельзя закрывать по тишине — сколько бы человек ни говорил.
+  let userIsSpeaking = false;
 
   const isActive = computed(() => realtimeVoiceUi.status === 'connected');
   const isBusy = computed(
@@ -154,7 +158,26 @@ export function useRealtimeVoiceSession(options: {
     const type = (event as { type?: unknown }).type;
     if (typeof type !== 'string') return;
 
+    // Начало реплики пользователя: держим сегмент открытым, чтобы длинный
+    // монолог (semantic_vad шлёт speech_started лишь один раз в начале) не
+    // упёрся в idle-таймер и не оборвал сессию посреди речи.
+    if (type === 'input_audio_buffer.speech_started') {
+      userIsSpeaking = true;
+      void registerRealtimeActivity();
+      return;
+    }
+
+    // Реплика закончилась: только теперь запускаем честный отсчёт тишины (30с).
+    if (type === 'input_audio_buffer.speech_stopped') {
+      userIsSpeaking = false;
+      void registerRealtimeActivity();
+      return;
+    }
+
     if (type === 'response.created') {
+      // Ассистент отвечает — значит ход пользователя точно завершён
+      // (страховка на случай потерянного speech_stopped).
+      userIsSpeaking = false;
       muteMicrophoneForAssistantResponse(
         readResponseId((event as { response?: unknown }).response)
       );
@@ -275,7 +298,12 @@ export function useRealtimeVoiceSession(options: {
   function scheduleIdleStop(idleTimeoutSeconds: number) {
     if (idleTimer) clearTimeout(idleTimer);
     idleTimer = setTimeout(() => {
-      if (shouldDeferRealtimeIdleStop(assistantMicrophoneMuteResponseIds.size)) {
+      if (
+        shouldDeferRealtimeIdleStop(
+          assistantMicrophoneMuteResponseIds.size,
+          userIsSpeaking
+        )
+      ) {
         void registerRealtimeActivity();
         return;
       }
@@ -288,6 +316,7 @@ export function useRealtimeVoiceSession(options: {
     if (hardLimitTimer) clearTimeout(hardLimitTimer);
     idleTimer = null;
     hardLimitTimer = null;
+    userIsSpeaking = false;
   }
 
   async function endServerSession(reason: RealtimeSessionEndReason) {
@@ -418,10 +447,16 @@ export function shouldPhysicallyMuteRealtimeMicrophone(
   return true;
 }
 
+// Idle-остановку откладываем, пока (а) ассистент ещё озвучивает ответ, либо
+// (б) пользователь ещё говорит (открыт речевой сегмент). Во втором случае
+// тишины по сути нет: semantic_vad с eagerness 'low' присылает speech_started
+// один раз в начале длинной реплики и молчит до speech_stopped, поэтому без
+// этой проверки 30-секундный таймер срубал бы сессию посреди рассказа.
 export function shouldDeferRealtimeIdleStop(
-  activeAssistantResponseCount: number
+  activeAssistantResponseCount: number,
+  userIsSpeaking = false
 ): boolean {
-  return activeAssistantResponseCount > 0;
+  return activeAssistantResponseCount > 0 || userIsSpeaking;
 }
 
 function csrfHeader(): Record<string, string> {

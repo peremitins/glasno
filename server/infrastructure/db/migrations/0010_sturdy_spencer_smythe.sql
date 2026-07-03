@@ -1,0 +1,1 @@
+ALTER TABLE "user_payment_methods" ADD COLUMN "status" text DEFAULT 'active' NOT NULL;

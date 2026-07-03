@@ -10,7 +10,6 @@
     MoonIcon,
     PersonIcon,
     PlusCircledIcon,
-    ReaderIcon,
     SunIcon,
   } from '@radix-icons/vue';
   import { computed, defineComponent, useSlots } from 'vue';
@@ -55,7 +54,6 @@
     { to: '/', key: 'dashboard', icon: HomeIcon },
     { to: '/interview/new', key: 'newInterview', icon: PlusCircledIcon },
     { to: '/history', key: 'history', icon: ClockIcon },
-    { to: '/questions', key: 'questionBank', icon: ReaderIcon },
     { to: '/pricing', key: 'pricing', icon: BarChartIcon },
     { to: '/profile', key: 'profile', icon: PersonIcon },
   ];
@@ -175,7 +173,7 @@
       aria-label="Мобильная навигация"
     >
       <NuxtLink
-        v-for="item in nav.slice(0, 5)"
+        v-for="item in nav.slice(0, 4)"
         :key="item.to"
         :to="item.to"
         class="bottom-item"

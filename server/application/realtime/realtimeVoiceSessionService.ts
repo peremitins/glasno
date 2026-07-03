@@ -1,6 +1,7 @@
 import { and, eq, isNull } from 'drizzle-orm';
 import { getDb, schema } from '@/server/infrastructure/db/client';
 import { recordAiUsageSafe } from '@/server/application/aiUsage/serviceFactory';
+import { DrizzleBillingRepository } from '@/server/infrastructure/billing/drizzleBillingRepository';
 import { apiError } from '@/server/utils/errors';
 import type { RealtimeSessionEndReason } from '@/shared/dto';
 import {
@@ -19,6 +20,8 @@ export interface StartRealtimeVoiceSessionInput {
   model: string;
   maxDurationSeconds?: number;
   remainingSeconds?: number;
+  // Admin: не ограничиваем леджером минут.
+  unlimited?: boolean;
 }
 
 export async function startRealtimeVoiceSession(
@@ -29,8 +32,28 @@ export async function startRealtimeVoiceSession(
   idleTimeoutSeconds: number;
   remainingSeconds: number;
 }> {
-  const remainingSeconds = Math.max(0, input.remainingSeconds ?? 0);
-  if (!input.userId || remainingSeconds <= 0) {
+  if (!input.userId || Math.max(0, input.remainingSeconds ?? 0) <= 0) {
+    throw apiError(
+      'E_FORBIDDEN',
+      'Минуты realtime voice закончились. Можно продолжить текстом или докупить пакет минут.'
+    );
+  }
+
+  // Параллельные realtime-сессии запрещены: закрываем предыдущие активные,
+  // чтобы минуты не списывались дважды и remaining не считался с гонкой.
+  await endActiveRealtimeVoiceSessionsForUser(input.userId, 'superseded');
+
+  // Пересчитываем остаток по леджеру ПОСЛЕ закрытия старых сессий: их
+  // секунды уже списаны, гонка «две вкладки видят по 60 минут» исключена.
+  let remainingSeconds = Math.max(0, input.remainingSeconds ?? 0);
+  if (!input.unlimited) {
+    const balance =
+      await new DrizzleBillingRepository().getRealtimeMinuteBalance(
+        input.userId
+      );
+    remainingSeconds = Math.min(remainingSeconds, balance.remainingSeconds);
+  }
+  if (remainingSeconds <= 0) {
     throw apiError(
       'E_FORBIDDEN',
       'Минуты realtime voice закончились. Можно продолжить текстом или докупить пакет минут.'
@@ -149,7 +172,60 @@ export async function endRealtimeVoiceSession(params: {
     })
     .where(eq(schema.realtimeVoiceSessions.id, session.id));
 
+  await debitRealtimeMinutes(session, durationSeconds);
   recordRealtimeUsage(session, durationSeconds, params.reason);
+}
+
+// Закрывает все активные realtime-сессии пользователя (например, перед
+// запуском новой). Списание минут происходит внутри endRealtimeVoiceSession.
+export async function endActiveRealtimeVoiceSessionsForUser(
+  userId: string,
+  reason: RealtimeSessionEndReason
+): Promise<void> {
+  const db = getDb();
+  const rows = await db
+    .select({
+      id: schema.realtimeVoiceSessions.id,
+      anonymousSessionId: schema.realtimeVoiceSessions.anonymousSessionId,
+    })
+    .from(schema.realtimeVoiceSessions)
+    .where(
+      and(
+        eq(schema.realtimeVoiceSessions.userId, userId),
+        isNull(schema.realtimeVoiceSessions.endedAt)
+      )
+    );
+  for (const row of rows) {
+    await endRealtimeVoiceSession({
+      realtimeSessionId: row.id,
+      anonymousSessionId: row.anonymousSessionId,
+      userId,
+      reason,
+    });
+  }
+}
+
+// Списание секунд из леджера минут. Ошибка списания не должна ронять
+// завершение сессии — логируем и продолжаем (баланс сверяется по debits).
+async function debitRealtimeMinutes(
+  session: RealtimeVoiceSessionRow,
+  durationSeconds: number
+): Promise<void> {
+  if (!session.userId || durationSeconds <= 0) return;
+  try {
+    await new DrizzleBillingRepository().debitRealtimeSeconds({
+      userId: session.userId,
+      seconds: durationSeconds,
+      realtimeSessionId: session.id,
+    });
+  } catch (error) {
+    console.error('[billing] realtime minutes debit failed', {
+      realtimeSessionId: session.id,
+      userId: session.userId,
+      durationSeconds,
+      error,
+    });
+  }
 }
 
 function recordRealtimeUsage(

@@ -12,16 +12,25 @@ import type {
 } from '@/server/interface/billingRepository';
 import { BillingAccessService } from './accessService';
 import {
+  getBillingPlan,
   getPaidBillingPlan,
   getPublicBillingPlans,
 } from './plans';
 import {
+  buildYooKassaReceipt,
   createYooKassaPayment,
+  createYooKassaPaymentMethodBinding,
+  createYooKassaRecurringPayment,
   extractYooKassaPaymentEvent,
   getYooKassaConfirmationUrl,
   getYooKassaPayment,
+  getYooKassaPaymentMethod,
   type YooKassaConfig,
 } from './yookassaClient';
+
+// Не чаще одной попытки автосписания раз в 6 часов (анти-даблчардж +
+// щадящие ретраи при ошибке карты).
+const AUTO_RENEW_RETRY_AFTER_MS = 6 * 60 * 60 * 1000;
 
 export interface BillingServiceConfig {
   yookassa: YooKassaConfig;
@@ -60,6 +69,26 @@ export class BillingService {
     this.requireYooKassaConfig();
 
     const plan = getPaidBillingPlan(params.planId);
+
+    // Пакеты минут — расходник к активному тарифу: без подписки они
+    // бесполезны (нельзя создавать интервью), поэтому покупку блокируем.
+    if (plan.requiresActiveSubscription) {
+      const activeSubscriptions =
+        await this.deps.repository.findActiveSubscriptionsByUserId(
+          params.userId
+        );
+      const hasBaseSubscription = activeSubscriptions.some(
+        (subscription) =>
+          getBillingPlan(subscription.planId).kind === 'subscription'
+      );
+      if (!hasBaseSubscription) {
+        throw apiError(
+          'E_FORBIDDEN',
+          'Пакеты минут доступны при активном тарифе Pro. Сначала подключите тариф.'
+        );
+      }
+    }
+
     const order = await this.deps.repository.createPaymentOrder({
       userId: params.userId,
       planId: plan.id,
@@ -71,18 +100,32 @@ export class BillingService {
       },
     });
 
+    // Чек 54-ФЗ: передаём receipt, если у пользователя указан email
+    // (паттерн Mentala: без email платёж уходит без чека из кода).
+    const email = await this.deps.repository.findUserEmail(params.userId);
+    const description = `JobAI ${plan.name}`;
+
     try {
       const payment = await createYooKassaPayment({
         ...this.deps.config.yookassa,
         idempotenceKey: order.id,
         amountRub: plan.priceRub,
         returnUrl: buildYooKassaReturnUrl(this.deps.config.appUrl, order.id),
-        description: `JobAI ${plan.name}`,
+        description,
         metadata: {
           orderId: order.id,
           userId: params.userId,
           planId: plan.id,
         },
+        receipt: email
+          ? buildYooKassaReceipt({
+              email,
+              amountRub: plan.priceRub,
+              description,
+            })
+          : undefined,
+        // Подписки: просим YooKassa сохранить карту для автопродления.
+        savePaymentMethod: plan.kind === 'subscription',
       });
       const confirmationUrl = getYooKassaConfirmationUrl(payment);
       await this.deps.repository.updatePaymentOrder({
@@ -117,7 +160,13 @@ export class BillingService {
           event.providerPaymentId
         );
     if (!order) {
-      throw apiError('E_NOT_FOUND', 'Платёжный заказ не найден');
+      // Неизвестный заказ: отвечаем 200, иначе YooKassa будет ретраить
+      // вечно, а злоумышленник получит сигнал для перебора.
+      console.warn('[billing] yookassa webhook: unknown order', {
+        providerPaymentId: event.providerPaymentId,
+        event: event.event,
+      });
+      return;
     }
 
     // КРИТИЧНО: телу вебхука доверять нельзя (его может подделать кто угодно).
@@ -183,6 +232,226 @@ export class BillingService {
     );
   }
 
+  // Явная привязка карты БЕЗ платежа (по образцу Mentala): создаём
+  // payment_method в YooKassa, сохраняем pending-запись и отправляем
+  // пользователя на страницу подтверждения банка.
+  async startPaymentMethodBinding(
+    userId: string | null | undefined
+  ): Promise<{ confirmationUrl: string }> {
+    if (!userId) {
+      throw apiError('E_AUTH', 'Войдите в профиль');
+    }
+    this.requireYooKassaConfig();
+
+    const binding = await createYooKassaPaymentMethodBinding({
+      ...this.deps.config.yookassa,
+      idempotenceKey: `bind-${userId}-${Date.now()}`,
+      returnUrl: buildBindingReturnUrl(this.deps.config.appUrl),
+    });
+    const confirmationUrl = binding.confirmation?.confirmation_url;
+    if (!binding.id || !confirmationUrl) {
+      throw apiError(
+        'E_UPSTREAM',
+        'YooKassa не вернула ссылку для привязки карты. Проверьте, что для магазина включено сохранение платёжных методов.'
+      );
+    }
+
+    await this.deps.repository.savePendingPaymentMethod({
+      userId,
+      providerPaymentMethodId: binding.id,
+    });
+
+    return { confirmationUrl };
+  }
+
+  // Синхронизация pending-привязки (вызывается опортунистически из
+  // /api/billing/status, как syncPendingPaymentMethodBinding в Mentala).
+  async syncPendingPaymentMethod(
+    userId: string | null | undefined
+  ): Promise<void> {
+    if (!userId) return;
+    const method = await this.deps.repository.findPaymentMethodByUserId(userId);
+    if (!method || method.status !== 'pending') return;
+
+    this.requireYooKassaConfig();
+    const remote = await getYooKassaPaymentMethod(
+      this.deps.config.yookassa,
+      method.providerPaymentMethodId
+    );
+
+    if (remote.saved === true || remote.status === 'active') {
+      await this.deps.repository.activatePaymentMethod({
+        userId,
+        providerPaymentMethodId: remote.id,
+        methodType: remote.type ?? null,
+        title: remote.title ?? null,
+        cardBrand: remote.card?.card_type ?? null,
+        cardLast4: remote.card?.last4 ?? null,
+        cardExpiryMonth: remote.card?.expiry_month ?? null,
+        cardExpiryYear: remote.card?.expiry_year ?? null,
+      });
+      // Карта появилась — включаем автопродление активной подписки.
+      await this.deps.repository.setSubscriptionAutoRenew({
+        userId,
+        autoRenew: true,
+      });
+      return;
+    }
+
+    // Привязка отклонена/протухла — убираем pending-запись.
+    if (remote.status === 'inactive' || remote.status === 'canceled') {
+      await this.deps.repository.deletePaymentMethodByUserId(userId);
+    }
+  }
+
+  // Отвязка карты: удаляем способ оплаты и выключаем автопродление.
+  // Текущий оплаченный период остаётся активным до конца.
+  async unbindPaymentMethod(userId: string | null | undefined): Promise<void> {
+    if (!userId) {
+      throw apiError('E_AUTH', 'Войдите в профиль');
+    }
+    await this.deps.repository.deletePaymentMethodByUserId(userId);
+    await this.deps.repository.setSubscriptionAutoRenew({
+      userId,
+      autoRenew: false,
+    });
+  }
+
+  async setAutoRenew(params: {
+    userId: string | null | undefined;
+    enabled: boolean;
+  }): Promise<void> {
+    if (!params.userId) {
+      throw apiError('E_AUTH', 'Войдите в профиль');
+    }
+    if (params.enabled) {
+      const method = await this.deps.repository.findPaymentMethodByUserId(
+        params.userId
+      );
+      if (!method || method.status !== 'active') {
+        throw apiError(
+          'E_VALIDATION',
+          'Сначала привяжите карту — автопродление списывает оплату с неё'
+        );
+      }
+    }
+    await this.deps.repository.setSubscriptionAutoRenew({
+      userId: params.userId,
+      autoRenew: params.enabled,
+    });
+  }
+
+  // Автопродление (по образцу Mentala: списание запускается опортунистически
+  // при обращении пользователя к биллинг-статусу, без отдельного крона).
+  // Безопасно вызывать часто: claim-паттерн не даст списать дважды.
+  async maybeRunAutoRenewal(userId: string | null | undefined): Promise<void> {
+    if (!userId) return;
+    const now = new Date();
+    const subscriptions =
+      await this.deps.repository.findActiveSubscriptionsByUserId(userId, now);
+    const due = subscriptions.find(
+      (subscription) =>
+        subscription.autoRenew &&
+        subscription.nextChargeAt &&
+        subscription.nextChargeAt <= now &&
+        getBillingPlan(subscription.planId).kind === 'subscription'
+    );
+    if (!due) return;
+
+    const claimed = await this.deps.repository.claimSubscriptionForCharge({
+      subscriptionId: due.id,
+      retryAfterMs: AUTO_RENEW_RETRY_AFTER_MS,
+      now,
+    });
+    if (!claimed) return;
+
+    const method = await this.deps.repository.findPaymentMethodByUserId(userId);
+    if (!method || method.status !== 'active') {
+      await this.deps.repository.setSubscriptionAutoRenew({
+        userId,
+        autoRenew: false,
+        now,
+      });
+      return;
+    }
+
+    this.requireYooKassaConfig();
+    const plan = getBillingPlan(due.planId);
+    const order = await this.deps.repository.createPaymentOrder({
+      userId,
+      planId: plan.id,
+      amountRub: plan.priceRub,
+      currency: 'RUB',
+      metadata: {
+        userId,
+        planId: plan.id,
+        renewal: true,
+        subscriptionId: due.id,
+      },
+    });
+
+    try {
+      const email = await this.deps.repository.findUserEmail(userId);
+      const description = `JobAI ${plan.name} (автопродление)`;
+      const payment = await createYooKassaRecurringPayment({
+        ...this.deps.config.yookassa,
+        idempotenceKey: order.id,
+        amountRub: plan.priceRub,
+        description,
+        paymentMethodId: method.providerPaymentMethodId,
+        metadata: {
+          orderId: order.id,
+          userId,
+          planId: plan.id,
+        },
+        receipt: email
+          ? buildYooKassaReceipt({
+              email,
+              amountRub: plan.priceRub,
+              description,
+            })
+          : undefined,
+      });
+
+      await this.deps.repository.updatePaymentOrder({
+        id: order.id,
+        providerPaymentId: payment.id,
+        status: payment.status || 'pending',
+      });
+
+      // Верифицируем и выдаём продление тем же путём, что и обычные оплаты.
+      const verified = await getYooKassaPayment(
+        this.deps.config.yookassa,
+        payment.id
+      );
+      await this.applyVerifiedYooKassaPayment(order, verified, 'auto-renewal');
+
+      if (verified.status === 'canceled' || verified.status === 'failed') {
+        await this.deps.repository.recordSubscriptionChargeError({
+          subscriptionId: due.id,
+          error: `Списание отклонено (${verified.status})`,
+          now,
+        });
+      }
+    } catch (err) {
+      await this.deps.repository.updatePaymentOrder({
+        id: order.id,
+        status: 'failed',
+      });
+      await this.deps.repository.recordSubscriptionChargeError({
+        subscriptionId: due.id,
+        error:
+          err instanceof Error ? err.message : 'Не удалось выполнить списание',
+        now,
+      });
+      console.error('[billing] auto-renewal charge failed', {
+        userId,
+        subscriptionId: due.id,
+        err,
+      });
+    }
+  }
+
   private requireYooKassaConfig() {
     if (
       !this.deps.config.yookassa.shopId ||
@@ -197,11 +466,12 @@ export class BillingService {
     verified: Awaited<ReturnType<typeof getYooKassaPayment>>,
     source: string
   ): Promise<BillingPaymentStatusResponse> {
-    const plan = getPaidBillingPlan(order.planId);
+    // getBillingPlan (не getPaidBillingPlan): legacy-тарифы с выключенной
+    // продажей всё ещё должны корректно обслуживать старые оплаченные заказы.
+    const plan = getBillingPlan(order.planId);
     const expectedAmount = order.amountRub.toFixed(2);
     const amountOk =
-      verified.amountValue === expectedAmount &&
-      (verified.currency === 'RUB' || verified.currency === null);
+      verified.amountValue === expectedAmount && verified.currency === 'RUB';
     const paymentOk =
       verified.status === 'succeeded' && verified.paid && amountOk;
 
@@ -220,20 +490,31 @@ export class BillingService {
     });
 
     if (paymentOk) {
-      const existingSubscription =
-        await this.deps.repository.findSubscriptionByProviderPaymentId(
-          verified.id
-        );
-
-      if (!existingSubscription) {
-        await this.deps.repository.grantSubscription({
-          userId: order.userId,
-          planId: plan.id,
-          provider: 'yookassa',
-          providerPaymentId: verified.id,
-          currentPeriodEnd: addDays(new Date(), plan.periodDays),
-        });
-      }
+      // Идемпотентно: заказ блокируется в транзакции, повторный вызов
+      // (вебхук + поллинг) доступ второй раз не выдаст.
+      const savedMethod =
+        verified.paymentMethod?.saved && verified.paymentMethod.id
+          ? {
+              providerPaymentMethodId: verified.paymentMethod.id,
+              methodType: verified.paymentMethod.methodType,
+              title: verified.paymentMethod.title,
+              cardBrand: verified.paymentMethod.cardBrand,
+              cardLast4: verified.paymentMethod.cardLast4,
+              cardExpiryMonth: verified.paymentMethod.cardExpiryMonth,
+              cardExpiryYear: verified.paymentMethod.cardExpiryYear,
+            }
+          : null;
+      await this.deps.repository.fulfillPaidOrder({
+        orderId: order.id,
+        providerPaymentId: verified.id,
+        plan: {
+          id: plan.id,
+          kind: plan.kind,
+          periodDays: plan.periodDays,
+          realtimeVoiceMinutes: plan.realtimeVoiceMinutes,
+        },
+        paymentMethod: savedMethod,
+      });
     }
 
     return await this.buildCheckoutStatus({
@@ -277,12 +558,6 @@ export class BillingService {
   }
 }
 
-function addDays(date: Date, days: number): Date {
-  const next = new Date(date);
-  next.setDate(next.getDate() + days);
-  return next;
-}
-
 function isPendingPaymentStatus(status: string | null | undefined): boolean {
   return status === 'pending' || status === 'waiting_for_capture';
 }
@@ -291,5 +566,11 @@ function buildYooKassaReturnUrl(appUrl: string, orderId: string): string {
   const url = new URL('/pricing', `${appUrl.replace(/\/$/, '')}/`);
   url.searchParams.set('payment', 'return');
   url.searchParams.set('orderId', orderId);
+  return url.toString();
+}
+
+function buildBindingReturnUrl(appUrl: string): string {
+  const url = new URL('/pricing', `${appUrl.replace(/\/$/, '')}/`);
+  url.searchParams.set('binding', 'return');
   return url.toString();
 }
