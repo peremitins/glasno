@@ -4,6 +4,9 @@
   import GlassSkeletonStack from '@/app/components/design/GlassSkeletonStack.vue';
   import type { QuestionBankListResponse } from '@/shared/dto';
 
+  // Раздел «База вопросов» временно скрыт (вернём в Фазе 7 — SEO + монетизация).
+  definePageMeta({ redirect: '/' });
+
   const { t } = useI18n();
   const api = useAPI();
 

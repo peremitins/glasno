@@ -33,6 +33,9 @@ export const RealtimeSessionEndReasonDto = z.enum([
   'page_leave',
   'network_error',
   'provider_error',
+  // Пользователь запустил новую realtime-сессию — предыдущую закрываем,
+  // чтобы минуты не утекали параллельно.
+  'superseded',
 ]);
 
 export const RealtimeSessionEndRequestDto = z.object({

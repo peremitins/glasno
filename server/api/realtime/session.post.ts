@@ -65,6 +65,7 @@ export default defineApiHandler(async (event) => {
     model: realtimeConfig.model,
     maxDurationSeconds: state.session.realtimeLimits.hardLimitMinutes * 60,
     remainingSeconds: billingStatus.realtimeVoice.remainingMinutes * 60,
+    unlimited: billingStatus.unlimited,
   });
   const payload = buildRealtimeSessionPayload(
     {

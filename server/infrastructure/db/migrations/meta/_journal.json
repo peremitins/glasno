@@ -57,6 +57,27 @@
       "when": 1782934769207,
       "tag": "0007_many_abomination",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1783020168174,
+      "tag": "0008_short_scarlet_spider",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1783023022178,
+      "tag": "0009_happy_tana_nile",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1783024239428,
+      "tag": "0010_sturdy_spencer_smythe",
+      "breakpoints": true
     }
   ]
 }

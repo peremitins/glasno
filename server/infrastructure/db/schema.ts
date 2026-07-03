@@ -7,6 +7,8 @@ import {
   jsonb,
   boolean,
   doublePrecision,
+  index,
+  uniqueIndex,
 } from 'drizzle-orm/pg-core';
 
 // МИНИМАЛЬНАЯ стартовая схема. Расширяем по мере реализации фич.
@@ -152,24 +154,119 @@ export const paymentOrders = pgTable('payment_orders', {
   currency: text('currency').default('RUB').notNull(),
   confirmationUrl: text('confirmation_url'),
   metadata: jsonb('metadata'),
+  // Момент выдачи доступа по оплаченному заказу. Используется как
+  // идемпотентный флаг: вебхук и поллинг checkout-status не выдадут доступ дважды.
+  fulfilledAt: timestamp('fulfilled_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
 // Гранты доступа после успешной оплаты.
-export const userSubscriptions = pgTable('user_subscriptions', {
-  id: uuid('id').defaultRandom().primaryKey(),
-  userId: uuid('user_id')
-    .references(() => users.id)
-    .notNull(),
-  planId: text('plan_id').notNull(),
-  status: text('status').default('active').notNull(),
-  provider: text('provider').default('yookassa').notNull(),
-  providerPaymentId: text('provider_payment_id'),
-  currentPeriodEnd: timestamp('current_period_end', { withTimezone: true }).notNull(),
-  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
-});
+export const userSubscriptions = pgTable(
+  'user_subscriptions',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    userId: uuid('user_id')
+      .references(() => users.id)
+      .notNull(),
+    planId: text('plan_id').notNull(),
+    status: text('status').default('active').notNull(),
+    provider: text('provider').default('yookassa').notNull(),
+    providerPaymentId: text('provider_payment_id'),
+    currentPeriodEnd: timestamp('current_period_end', { withTimezone: true }).notNull(),
+    // Автопродление (по образцу Mentala): включается, когда YooKassa
+    // сохранила карту при оплате. next_charge_at = момент автосписания.
+    autoRenew: boolean('auto_renew').default(false).notNull(),
+    nextChargeAt: timestamp('next_charge_at', { withTimezone: true }),
+    lastChargeAttemptAt: timestamp('last_charge_attempt_at', {
+      withTimezone: true,
+    }),
+    lastChargeError: text('last_charge_error'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    // Один платёж YooKassa не может породить две подписки (защита от
+    // гонки «вебхук + поллинг checkout-status»).
+    uniqueIndex('user_subscriptions_provider_payment_id_uq').on(
+      table.providerPaymentId
+    ),
+  ]
+);
+
+// Привязанная карта для автосписаний (одна на пользователя, YooKassa
+// payment_method). Хранится презентация карты для UI, сам PAN — у YooKassa.
+export const userPaymentMethods = pgTable(
+  'user_payment_methods',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    userId: uuid('user_id')
+      .references(() => users.id)
+      .notNull(),
+    provider: text('provider').default('yookassa').notNull(),
+    providerPaymentMethodId: text('provider_payment_method_id').notNull(),
+    // pending — привязка начата, ждём подтверждения на стороне YooKassa;
+    // active — карта подтверждена и готова к автосписаниям.
+    status: text('status').default('active').notNull(),
+    methodType: text('method_type'),
+    title: text('title'),
+    cardBrand: text('card_brand'),
+    cardLast4: text('card_last4'),
+    cardExpiryMonth: text('card_expiry_month'),
+    cardExpiryYear: text('card_expiry_year'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [uniqueIndex('user_payment_methods_user_id_uq').on(table.userId)]
+);
+
+// Леджер минут realtime voice: начисления (гранты) с сроком действия.
+// Остаток = SUM(total_seconds - consumed_seconds) по активным грантам.
+// Требование ТЗ: «хранить начисления минут, списания по realtime session
+// events и срок действия add-on пакетов».
+export const realtimeMinuteGrants = pgTable(
+  'realtime_minute_grants',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    userId: uuid('user_id')
+      .references(() => users.id)
+      .notNull(),
+    planId: text('plan_id').notNull(),
+    // subscription | addon | admin
+    sourceType: text('source_type').notNull(),
+    subscriptionId: uuid('subscription_id').references(() => userSubscriptions.id),
+    providerPaymentId: text('provider_payment_id'),
+    totalSeconds: integer('total_seconds').notNull(),
+    consumedSeconds: integer('consumed_seconds').default(0).notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index('realtime_minute_grants_user_id_idx').on(table.userId, table.expiresAt),
+  ]
+);
+
+// Списания минут: одна запись = списание с конкретного гранта по итогам
+// realtime-сессии (аудит-след для поддержки и сверки).
+export const realtimeMinuteDebits = pgTable(
+  'realtime_minute_debits',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    userId: uuid('user_id')
+      .references(() => users.id)
+      .notNull(),
+    grantId: uuid('grant_id')
+      .references(() => realtimeMinuteGrants.id)
+      .notNull(),
+    realtimeSessionId: uuid('realtime_session_id').references(
+      () => realtimeVoiceSessions.id
+    ),
+    seconds: integer('seconds').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [index('realtime_minute_debits_user_id_idx').on(table.userId)]
+);
 
 // Детальный учёт использования AI. Одна запись = один вызов модели.
 // Позволяет точно посчитать стоимость по пользователям/сессиям.

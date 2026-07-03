@@ -38,6 +38,25 @@ describe('useRealtimeVoiceSession helpers', () => {
     expect(shouldDeferRealtimeIdleStop(0)).toBe(false);
   });
 
+  it('defers idle stop while the user is still speaking', () => {
+    // Длинный монолог: сегмент речи открыт — сессию не рвём по тишине.
+    expect(shouldDeferRealtimeIdleStop(0, true)).toBe(true);
+    // Речь закончилась и ассистент молчит — можно отсчитывать тишину.
+    expect(shouldDeferRealtimeIdleStop(0, false)).toBe(false);
+    // Ассистент отвечает — откладываем независимо от речи пользователя.
+    expect(shouldDeferRealtimeIdleStop(1, false)).toBe(true);
+  });
+
+  it('tracks user speech segments to gate the idle timeout', () => {
+    expect(source).toContain("type === 'input_audio_buffer.speech_started'");
+    expect(source).toContain("type === 'input_audio_buffer.speech_stopped'");
+    expect(source).toContain('userIsSpeaking = true');
+    expect(source).toContain('userIsSpeaking = false');
+    expect(source).toContain(
+      'shouldDeferRealtimeIdleStop(\n          assistantMicrophoneMuteResponseIds.size,\n          userIsSpeaking\n        )'
+    );
+  });
+
   it('builds cancel events for active responses with WebRTC audio flush', () => {
     expect(
       buildRealtimeCancelEvents({
