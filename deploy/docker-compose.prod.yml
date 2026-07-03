@@ -2,6 +2,12 @@
 # Traefik (общий, из /opt/mentala/proxy) маршрутизирует по labels через внешнюю
 # сеть proxy. Ничего из инфраструктуры Mentala здесь не переиспользуется:
 # свои postgres/redis/volumes, уникальные имена роутеров glasno-*.
+#
+# КРИТИЧНО: name задаёт имя compose-проекта. Без него проект берётся из имени
+# папки (prod) и КОНФЛИКТУЕТ с проектом Mentala (/opt/mentala/prod → тоже
+# prod): compose «пересоздаёт» чужие сервисы. Не удалять и не переименовывать.
+name: glasno-prod
+
 services:
   postgres:
     image: postgres:16-alpine
