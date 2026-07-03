@@ -33,7 +33,7 @@ describe('glassmorphism visual system', () => {
     );
 
     expect(preferences).toContain(
-      "const font = useState<JobaiFont>('jobai-font', () => 'mono')"
+      "const font = useState<GlasnoFont>('glasno-font', () => 'mono')"
     );
     expect(preferences.indexOf("{ value: 'mono'")).toBeLessThan(
       preferences.indexOf("{ value: 'manrope'")

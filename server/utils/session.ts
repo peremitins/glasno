@@ -8,7 +8,7 @@ import type { UserRole } from '@/shared/dto';
 // Это позволяет привязывать интервью/отчёты к пользователю без логина,
 // а позже — смигрировать анонимные данные на реальный аккаунт.
 
-const COOKIE_NAME = 'jobai_sid';
+const COOKIE_NAME = 'glasno_sid';
 const MAX_AGE = 60 * 60 * 24 * 365; // 1 год
 
 export interface SessionContext {

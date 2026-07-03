@@ -103,7 +103,7 @@ export class BillingService {
     // Чек 54-ФЗ: передаём receipt, если у пользователя указан email
     // (паттерн Mentala: без email платёж уходит без чека из кода).
     const email = await this.deps.repository.findUserEmail(params.userId);
-    const description = `JobAI ${plan.name}`;
+    const description = `Гласно ${plan.name}`;
 
     try {
       const payment = await createYooKassaPayment({
@@ -392,7 +392,7 @@ export class BillingService {
 
     try {
       const email = await this.deps.repository.findUserEmail(userId);
-      const description = `JobAI ${plan.name} (автопродление)`;
+      const description = `Гласно ${plan.name} (автопродление)`;
       const payment = await createYooKassaRecurringPayment({
         ...this.deps.config.yookassa,
         idempotenceKey: order.id,

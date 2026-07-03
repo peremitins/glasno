@@ -5,7 +5,7 @@ import { HealthResponseDto } from '@/shared/dto';
 export default defineEventHandler(() => {
   return HealthResponseDto.parse({
     status: 'ok',
-    service: 'jobai',
+    service: 'glasno',
     time: new Date().toISOString(),
   });
 });

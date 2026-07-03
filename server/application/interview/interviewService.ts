@@ -645,7 +645,7 @@ export class InterviewService {
     let question = planned.question;
     let hintPack = planned.hintPack;
 
-    if (planned.source === 'jobai') {
+    if (planned.source === 'glasno') {
       const generated = await this.deps.engine.generateQuestion({
         session,
         turns,
@@ -939,7 +939,7 @@ function toPlanDto(
 
 function normalizeTurnMetadata(metadata: unknown): {
   planItemId: string | null;
-  questionSource: 'jobai' | 'user';
+  questionSource: 'glasno' | 'user';
   hintPack: QuestionHintPack | null;
   dialogue: InterviewDialogueMessage[];
   suggestMoveOn: boolean;
@@ -947,7 +947,7 @@ function normalizeTurnMetadata(metadata: unknown): {
   if (!metadata || typeof metadata !== 'object') {
     return {
       planItemId: null,
-      questionSource: 'jobai',
+      questionSource: 'glasno',
       hintPack: null,
       dialogue: [],
       suggestMoveOn: false,
@@ -965,7 +965,7 @@ function normalizeTurnMetadata(metadata: unknown): {
       typeof raw.planItemId === 'string' && raw.planItemId.trim()
         ? raw.planItemId
         : null,
-    questionSource: raw.questionSource === 'user' ? 'user' : 'jobai',
+    questionSource: raw.questionSource === 'user' ? 'user' : 'glasno',
     hintPack:
       raw.hintPack && typeof raw.hintPack === 'object'
         ? (raw.hintPack as QuestionHintPack)

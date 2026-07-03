@@ -121,7 +121,7 @@ function createService(repository: ReturnType<typeof createRepository>) {
     repository,
     config: {
       yookassa: { shopId: '123456', secretKey: 'test_secret' },
-      appUrl: 'https://jobai.test',
+      appUrl: 'https://glasno.test',
     },
   });
 }

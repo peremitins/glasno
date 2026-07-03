@@ -30,7 +30,7 @@ export default defineApiHandler(async (event) => {
   setResponseHeader(
     event,
     'Content-Disposition',
-    `attachment; filename="jobai-report-${report.id}.pdf"`
+    `attachment; filename="glasno-report-${report.id}.pdf"`
   );
   return pdf;
 });

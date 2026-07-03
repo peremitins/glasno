@@ -1,7 +1,7 @@
 import { Queue, Worker, type Job } from 'bullmq';
 import type { ReportService } from './reportService';
 
-const QUEUE_NAME = 'jobai:reports';
+const QUEUE_NAME = 'glasno:reports';
 
 export interface ReportGenerationJob {
   anonymousSessionId: string;

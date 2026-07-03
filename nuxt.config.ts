@@ -38,7 +38,7 @@ export default defineNuxtConfig({
   app: {
     head: {
       htmlAttrs: { lang: 'ru' },
-      title: 'JobAI — тренажёр собеседований',
+      title: 'Гласно — тренажёр собеседований',
       viewport: 'width=device-width, initial-scale=1, viewport-fit=cover',
       link: [
         { rel: 'preconnect', href: 'https://fonts.googleapis.com' },
@@ -80,7 +80,7 @@ export default defineNuxtConfig({
     yookassaTestMode: process.env.NUXT_YOOKASSA_TEST_MODE === 'true',
     public: {
       // Доступно на клиенте (префикс NUXT_PUBLIC_)
-      appName: 'JobAI',
+      appName: 'Гласно',
       apiBase: '/api',
       appUrl: process.env.NUXT_PUBLIC_APP_URL || 'http://localhost:3000',
       speechDefaultEngine:

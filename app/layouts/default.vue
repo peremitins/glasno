@@ -21,7 +21,7 @@
   const api = useAPI();
   const slots = useSlots();
   const { theme, toggleTheme } = useDesignPreferences();
-  const isSidebarCollapsed = useLocalStorage('jobai-sidebar-collapsed', false);
+  const isSidebarCollapsed = useLocalStorage('glasno-sidebar-collapsed', false);
   const { data: layoutSummary } = await useAsyncData(
     'layout-dashboard-summary',
     async () => {
@@ -68,7 +68,7 @@
 
     <aside class="sidebar glass-frame glass-frame--soft">
       <div class="sidebar-top">
-        <NuxtLink to="/" class="brand" aria-label="JobAI">
+        <NuxtLink to="/" class="brand" aria-label="Гласно">
           <span class="brand-mark">
             <DashboardIcon />
           </span>

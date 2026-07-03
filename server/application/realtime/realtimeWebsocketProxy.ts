@@ -1,7 +1,7 @@
 export const REALTIME_PROXY_CONNECT_EVENT_TYPE =
-  'jobai.realtime_proxy.connect';
+  'glasno.realtime_proxy.connect';
 export const REALTIME_PROXY_CONNECTED_EVENT_TYPE =
-  'jobai.realtime_proxy.connected';
+  'glasno.realtime_proxy.connected';
 
 const OPENAI_REALTIME_WEBSOCKET_URL = 'wss://api.openai.com/v1/realtime';
 

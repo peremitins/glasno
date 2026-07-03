@@ -18,11 +18,11 @@ describe('russian UI copy', () => {
       .map(([, value]) => value)
       .join('\n');
 
-    expect(text).not.toContain('JobAI не добавит');
-    expect(text).not.toContain('вопросами JobAI');
-    expect(text).not.toContain('вопросы JobAI');
-    expect(text).not.toContain('Мои + JobAI');
-    expect(text).not.toContain('JobAI очистит');
+    expect(text).not.toContain('Гласно не добавит');
+    expect(text).not.toContain('вопросами Гласно');
+    expect(text).not.toContain('вопросы Гласно');
+    expect(text).not.toContain('Мои + Гласно');
+    expect(text).not.toContain('Гласно очистит');
   });
 
   it('uses profession/vacancy wording on the new interview page instead of role wording', () => {

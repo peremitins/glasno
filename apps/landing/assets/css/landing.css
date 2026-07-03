@@ -1,0 +1,32 @@
+/* Базовые стили заглушки. Токены основного приложения подключим вместе с
+   полноценным лендингом. */
+:root {
+  --landing-bg: #0b0d12;
+  --landing-fg: #f5f6f8;
+  --landing-muted: #9aa3b2;
+  --landing-accent: #f5f6f8;
+  --landing-accent-contrast: #0b0d12;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--landing-bg);
+  color: var(--landing-fg);
+  font-family:
+    'Manrope',
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    Roboto,
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+}

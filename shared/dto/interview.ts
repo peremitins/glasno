@@ -16,8 +16,8 @@ export const InterviewSessionStatusDto = z.enum(['created', 'running', 'done']);
 export const InterviewTurnKindDto = z.enum(['main', 'clarification']);
 export const InterviewLanguageDto = z.enum(['ru', 'en']);
 export const InterviewSessionGoalDto = z.enum(['quick', 'standard', 'deep']);
-export const InterviewQuestionSourceModeDto = z.enum(['jobai', 'mixed', 'custom']);
-export const InterviewQuestionSourceDto = z.enum(['jobai', 'user']);
+export const InterviewQuestionSourceModeDto = z.enum(['glasno', 'mixed', 'custom']);
+export const InterviewQuestionSourceDto = z.enum(['glasno', 'user']);
 export const InterviewResponseModeDto = z.enum(['text', 'dictation', 'realtime']);
 export const InterviewHintModeDto = z.enum(['off', 'on_request', 'realtime']);
 export const InterviewPlanItemStatusDto = z.enum([
@@ -166,7 +166,7 @@ export const InterviewTurnDto = z.object({
   index: z.number().int().positive(),
   kind: InterviewTurnKindDto,
   question: z.string(),
-  questionSource: InterviewQuestionSourceDto.default('jobai'),
+  questionSource: InterviewQuestionSourceDto.default('glasno'),
   planItemId: z.string().nullable(),
   hintPack: QuestionHintPackDto.nullable(),
   answerTranscript: z.string().nullable(),

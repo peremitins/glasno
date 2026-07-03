@@ -14,8 +14,8 @@ type RealtimeVoiceWindow = Window &
 
 const REALTIME_WEBSOCKET_SAMPLE_RATE = 24_000;
 const REALTIME_WEBSOCKET_BUFFER_SIZE = 4_096;
-const REALTIME_PROXY_CONNECTED_EVENT_TYPE = 'jobai.realtime_proxy.connected';
-const REALTIME_PROXY_CONNECT_EVENT_TYPE = 'jobai.realtime_proxy.connect';
+const REALTIME_PROXY_CONNECTED_EVENT_TYPE = 'glasno.realtime_proxy.connected';
+const REALTIME_PROXY_CONNECT_EVENT_TYPE = 'glasno.realtime_proxy.connect';
 
 export async function startRealtimeWebsocketClient(
   session: RealtimeSessionResponse,

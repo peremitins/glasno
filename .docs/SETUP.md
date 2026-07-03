@@ -1,4 +1,4 @@
-# SETUP — старт проекта JobAI
+# SETUP — старт проекта Гласно
 
 Пошагово: GitHub, база данных (TablePlus), окружение, запуск.
 
@@ -30,12 +30,12 @@ Host github-peremitins
 ```
 
 ### 1.4. Создать пустой репозиторий
-GitHub (личный аккаунт) → «+» → New repository → `jobai` → **Private** → без README/gitignore/license → Create.
+GitHub (личный аккаунт) → «+» → New repository → `glasno` → **Private** → без README/gitignore/license → Create.
 
 ### 1.5. Проверить и запушить
 ```bash
 ssh -T git@github-peremitins          # должно ответить: Hi <личный-логин>!
-git remote set-url origin git@github-peremitins:<личный-логин>/jobai.git
+git remote set-url origin git@github-peremitins:<личный-логин>/glasno.git
 git push -u origin main
 ```
 В адресе хост — `github-peremitins` (алиас), не `github.com`. Замени `<личный-логин>` на точный логин личного аккаунта.
@@ -44,27 +44,27 @@ git push -u origin main
 
 ## 2. База данных (TablePlus)
 
-Используем **тот же сервер Postgres, что у Mentala**, но **новую отдельную базу** `jobai`.
+Используем **тот же сервер Postgres, что у Mentala**, но **новую отдельную базу** `glasno`.
 
 ### Создать базу
 1. Открой TablePlus → подключись к серверу Postgres, который уже используешь для Mentala (то же подключение: хост `127.0.0.1`, порт `54320`, пользователь как в Mentala).
 2. Открой SQL-редактор: меню **SQL** (или ⌘E) и выполни:
    ```sql
-   CREATE DATABASE jobai;
+   CREATE DATABASE glasno;
    ```
    (по желанию — отдельный пользователь для изоляции:)
    ```sql
-   CREATE USER jobai_user WITH PASSWORD 'придумай_пароль';
-   GRANT ALL PRIVILEGES ON DATABASE jobai TO jobai_user;
+   CREATE USER glasno_user WITH PASSWORD 'придумай_пароль';
+   GRANT ALL PRIVILEGES ON DATABASE glasno TO glasno_user;
    ```
 3. Нажми **Run Current** (⌘↵).
 
 ### Подключиться к новой базе
-Самый простой путь в TablePlus — **продублировать** существующее подключение Mentala и поменять в нём поле **Database** на `jobai`:
+Самый простой путь в TablePlus — **продублировать** существующее подключение Mentala и поменять в нём поле **Database** на `glasno`:
 1. Правый клик по подключению Mentala → **Duplicate**.
-2. Открой копию → переименуй (например, «JobAI dev») → в поле **Database** впиши `jobai` → **Save** → **Connect**.
+2. Открой копию → переименуй (например, «Гласно dev») → в поле **Database** впиши `glasno` → **Save** → **Connect**.
 
-Теперь ты внутри пустой базы `jobai` — таблицы появятся после миграций (шаг 4).
+Теперь ты внутри пустой базы `glasno` — таблицы появятся после миграций (шаг 4).
 
 ## 3. Окружение (.env)
 
@@ -73,22 +73,22 @@ cp .env.example .env.development
 ```
 Заполни в `.env.development`:
 ```
-NUXT_DATABASE_URL=postgres://<user>:<password>@127.0.0.1:54320/jobai
+NUXT_DATABASE_URL=postgres://<user>:<password>@127.0.0.1:54320/glasno
 NUXT_REDIS_URL=redis://localhost:6379/1        # тот же Redis, отдельный logical DB
 NUXT_OPENAI_API_KEY=sk-...                      # для LLM и Realtime Voice (можно позже)
 NUXT_SESSION_SECRET=<длинная_случайная_строка>
 ```
-`<user>:<password>` — те же, что подключался в TablePlus (или `jobai_user`, если создал отдельного).
+`<user>:<password>` — те же, что подключался в TablePlus (или `glasno_user`, если создал отдельного).
 
 ## 4. Запуск
 
 ```bash
 pnpm install
 pnpm db:generate      # создаст SQL-миграции из schema.ts
-pnpm db:migrate       # применит их к базе jobai (появятся таблицы)
+pnpm db:migrate       # применит их к базе glasno (появятся таблицы)
 pnpm dev              # http://localhost:3000
 ```
 Проверка бэкенда: открой `http://localhost:3000/api/health` → `{"status":"ok",...}`.
 
-## 5. Деплой (позже)
-На время теста — поддомен на домене Mentala (`jobai.mentala.app`) через Caddy, тот же сервер. Перед боевым запуском — отдельный сервер + собственный домен.
+## 5. Деплой
+Прод: собственный домен `glasno.app` — лендинг на `glasno.app`, приложение на `my.glasno.app`. Сервер общий с Mentala (Docker + Traefik, авто-SSL). Полная инструкция — `.docs/DEPLOY.md`.

@@ -50,7 +50,7 @@ describe('authCrypto', () => {
     const payload = {
       id: 42,
       first_name: 'Ivan',
-      username: 'ivan_jobai',
+      username: 'ivan_glasno',
       auth_date: Math.floor(Date.now() / 1000),
     };
     const hash = signTelegramPayload(payload, botToken);

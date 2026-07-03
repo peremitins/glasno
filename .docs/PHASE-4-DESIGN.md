@@ -35,16 +35,16 @@
 ## Сессии
 
 Сохраняем две cookie:
-- `jobai_sid` — существующая подписанная anonymous cookie, httpOnly, 1 год;
-- `jobai_auth` — auth session id + подпись, httpOnly, 30 дней;
-- `jobai_csrf` — клиентская CSRF cookie, не httpOnly, 30 дней.
+- `glasno_sid` — существующая подписанная anonymous cookie, httpOnly, 1 год;
+- `glasno_auth` — auth session id + подпись, httpOnly, 30 дней;
+- `glasno_csrf` — клиентская CSRF cookie, не httpOnly, 30 дней.
 
-`jobai_sid` не удаляется при логине: она нужна для миграции данных и для безопасного продолжения текущего интервью. После входа новые интервью получают и `anonymous_session_id`, и `user_id`.
+`glasno_sid` не удаляется при логине: она нужна для миграции данных и для безопасного продолжения текущего интервью. После входа новые интервью получают и `anonymous_session_id`, и `user_id`.
 
 ## CSRF
 
 Для авторизованных пользователей все unsafe `/api` методы (`POST`, `PUT`, `PATCH`, `DELETE`) требуют:
-- cookie `jobai_csrf`;
+- cookie `glasno_csrf`;
 - заголовок `x-csrf-token`;
 - совпадение значения cookie и заголовка;
 - совпадение hash токена с записью auth-сессии.

@@ -87,7 +87,7 @@ export function buildInterviewPlanMetadata(params: {
   );
   const config = getSessionGoalConfig(sessionGoal);
   const questionSourceMode = params.input.questionSourceMode ?? (
-    params.input.customQuestionsText?.trim() ? 'mixed' : 'jobai'
+    params.input.customQuestionsText?.trim() ? 'mixed' : 'glasno'
   );
   const customQuestions = normalizeCustomQuestions(
     params.input.customQuestionsText
@@ -113,15 +113,15 @@ export function buildInterviewPlanMetadata(params: {
     0,
     config.targetQuestionCount - requiredUserItems.length
   );
-  const jobAiItems =
+  const glasnoItems =
     questionSourceMode === 'custom'
       ? []
       : Array.from({ length: remainingSlots }, (_, index) => {
           const planIndex = requiredUserItems.length + index + 1;
           return {
-            id: `plan_jobai_${index + 1}`,
+            id: `plan_glasno_${index + 1}`,
             index: planIndex,
-            source: 'jobai' as const,
+            source: 'glasno' as const,
             question: null,
             priority: index === remainingSlots - 1 ? 'reserve' : 'required',
             status: 'planned' as const,
@@ -148,7 +148,7 @@ export function buildInterviewPlanMetadata(params: {
     plan: {
       goal: sessionGoal,
       expectedDurationMinutes: config.expectedDurationMinutes,
-      items: [...requiredUserItems, ...jobAiItems],
+      items: [...requiredUserItems, ...glasnoItems],
     },
   };
 }
@@ -162,7 +162,7 @@ export function parseInterviewSessionMetadata(
         source: { type: 'profession', role: 'Кандидат' },
         level: 'middle',
         sessionGoal: 'quick',
-        questionSourceMode: 'jobai',
+        questionSourceMode: 'glasno',
         responseMode: 'text',
         hintMode: 'off',
         language: 'ru',
@@ -191,7 +191,7 @@ export function parseInterviewSessionMetadata(
       numberOrNull(raw.expectedDurationMinutes) ?? config.expectedDurationMinutes,
     questionSourceMode: isQuestionSourceMode(raw.questionSourceMode)
       ? raw.questionSourceMode
-      : 'jobai',
+      : 'glasno',
     responseMode:
       raw.responseMode === 'dictation' || raw.responseMode === 'realtime'
         ? raw.responseMode
@@ -238,15 +238,15 @@ export function resolveNextPlannedQuestion(params: {
     return null;
   }
 
-  const nextJobAiItem = params.metadata.plan.items.find(
-    (item) => item.source === 'jobai' && !askedPlanItemIds.has(item.id)
+  const nextGlasnoItem = params.metadata.plan.items.find(
+    (item) => item.source === 'glasno' && !askedPlanItemIds.has(item.id)
   );
 
-  if (!nextJobAiItem) return null;
+  if (!nextGlasnoItem) return null;
 
   return {
-    planItemId: nextJobAiItem.id,
-    source: 'jobai',
+    planItemId: nextGlasnoItem.id,
+    source: 'glasno',
     question: '',
     hintPack: buildHintPack({ question: '' }),
   };
@@ -350,7 +350,7 @@ function isSessionGoal(value: unknown): value is InterviewSessionGoal {
 }
 
 function isQuestionSourceMode(value: unknown): value is InterviewQuestionSourceMode {
-  return value === 'jobai' || value === 'mixed' || value === 'custom';
+  return value === 'glasno' || value === 'mixed' || value === 'custom';
 }
 
 function isHintMode(value: unknown): value is InterviewHintMode {

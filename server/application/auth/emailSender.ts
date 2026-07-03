@@ -31,7 +31,7 @@ function readSmtpConfig(): SmtpConfig | null {
     user,
     pass,
     from,
-    fromName: process.env.SMTP_FROM_NAME || 'JobAI',
+    fromName: process.env.SMTP_FROM_NAME || 'Гласно',
   };
 }
 
@@ -58,11 +58,11 @@ export async function sendLoginCodeEmail(
     return false;
   }
 
-  const subject = 'Код для входа — JobAI';
-  const text = `Ваш код для входа в JobAI: ${code}. Действителен 10 минут.`;
+  const subject = 'Код для входа — Гласно';
+  const text = `Ваш код для входа в Гласно: ${code}. Действителен 10 минут.`;
   const html = `
     <div style="font-family: -apple-system, Inter, Arial, sans-serif; line-height: 1.6; color: #14142a;">
-      <h2 style="margin: 0 0 12px;">Код для входа в JobAI</h2>
+      <h2 style="margin: 0 0 12px;">Код для входа в Гласно</h2>
       <p style="margin: 0 0 16px;">Введите этот код, чтобы войти:</p>
       <div style="display: inline-block; font-size: 26px; letter-spacing: 8px; font-weight: 700; padding: 14px 18px; background: #f1f0fb; border-radius: 14px; color: #4f46e5;">
         ${code}

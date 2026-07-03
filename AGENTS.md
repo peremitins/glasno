@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Правила для AI-агентов (Claude / Cursor) в проекте JobAI.
+Правила для AI-агентов (Claude / Cursor) в проекте Гласно.
 
 ## Скиллы (Superpowers) — ВАЖНО
 
