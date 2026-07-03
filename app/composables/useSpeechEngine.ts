@@ -42,7 +42,7 @@ export function useSpeechEngine() {
   async function pickEngine(id: SpeechEngineId): Promise<SpeechEngine> {
     const target = resolveEngineId(id);
     if (target === 'whisper') {
-      throw new Error('Whisper в JobAI отключён');
+      throw new Error('Whisper в Гласно отключён');
     }
 
     const { createWebSpeechEngine } = await import(

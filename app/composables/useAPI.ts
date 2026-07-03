@@ -1,3 +1,5 @@
+import { CSRF_COOKIE_NAME } from '@/shared/constants';
+
 const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 function readClientCookie(name: string): string | null {
@@ -19,7 +21,7 @@ export function useAPI() {
     onRequest({ options }) {
       const method = String(options.method || 'GET').toUpperCase();
       const csrfToken = UNSAFE_METHODS.has(method)
-        ? readClientCookie('jobai_csrf')
+        ? readClientCookie(CSRF_COOKIE_NAME)
         : null;
       if (!csrfToken) return;
 

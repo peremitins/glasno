@@ -2,7 +2,7 @@ import { $fetch } from 'ofetch';
 import { apiError } from '@/server/utils/errors';
 import type { HhClient, HhVacancy } from '@/server/interface/hh';
 
-const HH_USER_AGENT = 'JobAI/0.1 (interview trainer)';
+const HH_USER_AGENT = 'Glasno/0.1 (interview trainer)';
 const HH_WEB_BASE_URL = 'https://hh.ru';
 
 interface HhHttpClientOptions {

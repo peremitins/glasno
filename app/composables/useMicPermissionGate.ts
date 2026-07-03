@@ -3,7 +3,7 @@ import { computed, ref } from 'vue';
 export type MicPermissionState = 'granted' | 'denied' | 'prompt' | null;
 
 const showMicDeniedModal = ref(false);
-const WEB_MIC_DENIED_STORAGE_KEY = 'jobai.mic.web.denied';
+const WEB_MIC_DENIED_STORAGE_KEY = 'glasno.mic.web.denied';
 
 function normalizePermissionState(value: unknown): MicPermissionState {
   return value === 'granted' || value === 'denied' || value === 'prompt'

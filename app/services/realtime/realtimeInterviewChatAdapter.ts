@@ -38,7 +38,7 @@ export const REALTIME_QUESTION_ANNOUNCEMENT_KIND = 'question_announcement';
 
 function readResponseMetadataKind(response: unknown): string {
   const metadata = (response as { metadata?: unknown } | undefined)?.metadata;
-  const kind = (metadata as { jobai_kind?: unknown } | undefined)?.jobai_kind;
+  const kind = (metadata as { glasno_kind?: unknown } | undefined)?.glasno_kind;
   return typeof kind === 'string' ? kind : '';
 }
 

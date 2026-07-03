@@ -357,7 +357,7 @@ describe('RealtimeInterviewChatAdapter', () => {
       type: 'response.created',
       response: {
         id: 'response_announce',
-        metadata: { jobai_kind: 'question_announcement' },
+        metadata: { glasno_kind: 'question_announcement' },
       },
     });
     adapter.handleServerEvent({

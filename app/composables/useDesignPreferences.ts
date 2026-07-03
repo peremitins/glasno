@@ -1,35 +1,35 @@
 import { onMounted, watch } from 'vue';
 
-export type JobaiTheme = 'dark' | 'light';
-export type JobaiFont = 'manrope' | 'space' | 'mono';
+export type GlasnoTheme = 'dark' | 'light';
+export type GlasnoFont = 'manrope' | 'space' | 'mono';
 
-const THEME_KEY = 'jobai:theme';
-const FONT_KEY = 'jobai:font';
+const THEME_KEY = 'glasno:theme';
+const FONT_KEY = 'glasno:font';
 
-const themeValues: JobaiTheme[] = ['dark', 'light'];
-const fontValues: JobaiFont[] = ['mono', 'manrope', 'space'];
+const themeValues: GlasnoTheme[] = ['dark', 'light'];
+const fontValues: GlasnoFont[] = ['mono', 'manrope', 'space'];
 
 export function useDesignPreferences() {
-  const theme = useState<JobaiTheme>('jobai-theme', () => 'dark');
-  const font = useState<JobaiFont>('jobai-font', () => 'mono');
+  const theme = useState<GlasnoTheme>('glasno-theme', () => 'dark');
+  const font = useState<GlasnoFont>('glasno-font', () => 'mono');
 
-  const themeOptions: Array<{ value: JobaiTheme; label: string }> = [
+  const themeOptions: Array<{ value: GlasnoTheme; label: string }> = [
     { value: 'dark', label: 'Темная' },
     { value: 'light', label: 'Светлая' },
   ];
 
-  const fontOptions: Array<{ value: JobaiFont; label: string; title: string }> = [
+  const fontOptions: Array<{ value: GlasnoFont; label: string; title: string }> = [
     { value: 'mono', label: 'Mono', title: 'JetBrains Mono' },
     { value: 'manrope', label: 'Manrope', title: 'Современный UI' },
     { value: 'space', label: 'Grotesk', title: 'Акцентный гротеск' },
   ];
 
-  function isTheme(value: string | null): value is JobaiTheme {
-    return value !== null && themeValues.includes(value as JobaiTheme);
+  function isTheme(value: string | null): value is GlasnoTheme {
+    return value !== null && themeValues.includes(value as GlasnoTheme);
   }
 
-  function isFont(value: string | null): value is JobaiFont {
-    return value !== null && fontValues.includes(value as JobaiFont);
+  function isFont(value: string | null): value is GlasnoFont {
+    return value !== null && fontValues.includes(value as GlasnoFont);
   }
 
   function applyPreferences() {
@@ -40,11 +40,11 @@ export function useDesignPreferences() {
     root.style.colorScheme = theme.value;
   }
 
-  function setTheme(nextTheme: JobaiTheme) {
+  function setTheme(nextTheme: GlasnoTheme) {
     theme.value = nextTheme;
   }
 
-  function setFont(nextFont: JobaiFont) {
+  function setFont(nextFont: GlasnoFont) {
     font.value = nextFont;
   }
 

@@ -25,11 +25,11 @@ export async function renderReportPdf(report: InterviewReport): Promise<Buffer> 
 
     const fontPath = FONT_CANDIDATES.find((candidate) => existsSync(candidate));
     if (fontPath) {
-      doc.registerFont('JobAISans', fontPath);
-      doc.font('JobAISans');
+      doc.registerFont('GlasnoSans', fontPath);
+      doc.font('GlasnoSans');
     }
 
-    doc.fontSize(22).text('JobAI — отчёт по интервью');
+    doc.fontSize(22).text('Гласно — отчёт по интервью');
     doc.moveDown(0.7);
     doc.fontSize(12).fillColor('#555').text(`Отчёт: ${report.id}`);
     doc.fillColor('#000').moveDown();

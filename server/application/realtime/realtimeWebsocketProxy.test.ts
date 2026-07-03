@@ -16,7 +16,7 @@ describe('realtimeWebsocketProxy', () => {
     expect(
       parseRealtimeProxyConnectMessage(
         JSON.stringify({
-          type: 'jobai.realtime_proxy.connect',
+          type: 'glasno.realtime_proxy.connect',
           model: 'gpt-realtime',
           clientSecret: 'secret',
         })
@@ -32,7 +32,7 @@ describe('realtimeWebsocketProxy', () => {
     expect(
       parseRealtimeProxyConnectMessage(
         JSON.stringify({
-          type: 'jobai.realtime_proxy.connect',
+          type: 'glasno.realtime_proxy.connect',
           model: '',
           clientSecret: 'secret',
         })

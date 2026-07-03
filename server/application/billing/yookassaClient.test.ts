@@ -11,8 +11,8 @@ describe('yookassaClient helpers', () => {
       secretKey: 'test_secret',
       idempotenceKey: 'payment_order_1',
       amountRub: 990,
-      returnUrl: 'https://jobai.test/pricing?payment=return',
-      description: 'JobAI Pro',
+      returnUrl: 'https://glasno.test/pricing?payment=return',
+      description: 'Гласно Pro',
       metadata: {
         orderId: 'payment_order_1',
         userId: 'user_1',
@@ -28,7 +28,7 @@ describe('yookassaClient helpers', () => {
       capture: true,
       confirmation: {
         type: 'redirect',
-        return_url: 'https://jobai.test/pricing?payment=return',
+        return_url: 'https://glasno.test/pricing?payment=return',
       },
       metadata: {
         orderId: 'payment_order_1',

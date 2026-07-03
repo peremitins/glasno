@@ -36,7 +36,7 @@ describe('browserPermissionGuide', () => {
     });
 
     expect(guide.copy).toContain('микрофон');
-    expect(guide.copy).not.toContain('JobAI');
+    expect(guide.copy).not.toContain('Гласно');
     expect(guide.steps.join(' ')).toContain('иконку слева от адреса');
   });
 

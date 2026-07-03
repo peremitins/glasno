@@ -1,5 +1,5 @@
 {
-  "name": "jobai",
+  "name": "glasno",
   "type": "module",
   "private": true,
   "packageManager": "pnpm@10.33.0",
@@ -8,6 +8,10 @@
     "build": "nuxt build",
     "preview": "nuxt preview",
     "generate": "nuxt generate",
+    "landing:dev": "nuxt dev apps/landing --dotenv .env.development --host localhost --port 3001",
+    "landing:build": "nuxt build apps/landing",
+    "landing:generate": "nuxt generate apps/landing",
+    "landing:preview": "nuxt preview apps/landing --port 3001",
     "postinstall": "nuxt prepare",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",

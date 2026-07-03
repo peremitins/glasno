@@ -3,6 +3,7 @@ import type {
   RealtimeSessionEndReason,
   RealtimeSessionResponse,
 } from '@/shared/dto';
+import { CSRF_COOKIE_NAME } from '@/shared/constants';
 import {
   shouldUseRealtimeWebsocketTransport,
   startRealtimeVoiceClient,
@@ -461,7 +462,7 @@ export function shouldDeferRealtimeIdleStop(
 
 function csrfHeader(): Record<string, string> {
   if (typeof document === 'undefined') return {};
-  const prefix = 'jobai_csrf=';
+  const prefix = `${CSRF_COOKIE_NAME}=`;
   const raw = document.cookie
     .split(';')
     .map((value) => value.trim())

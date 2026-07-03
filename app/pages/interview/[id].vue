@@ -51,6 +51,7 @@
   } from '@/app/utils/interviewVoiceCommand';
   import { useRealtimeVoiceUiStore } from '@/app/stores/realtimeVoiceUi';
   import { resolveTtsVoiceForFace } from '@/shared/interviewerVoice';
+  import { CSRF_COOKIE_NAME } from '@/shared/constants';
   import { useAudioPermissionGate } from '@/app/composables/useAudioPermissionGate';
   import { useCameraPermissionGate } from '@/app/composables/useCameraPermissionGate';
   import { useMicPermissionGate } from '@/app/composables/useMicPermissionGate';
@@ -450,7 +451,7 @@
     control.sendEvent({
       type: 'response.create',
       response: {
-        metadata: { jobai_kind: REALTIME_QUESTION_ANNOUNCEMENT_KIND },
+        metadata: { glasno_kind: REALTIME_QUESTION_ANNOUNCEMENT_KIND },
         instructions,
       },
     });
@@ -792,7 +793,7 @@
   // CSRF-заголовок для прямого fetch (минуя useAPI) к стрим-эндпоинту.
   function streamCsrfHeader(): Record<string, string> {
     if (typeof document === 'undefined') return {};
-    const prefix = 'jobai_csrf=';
+    const prefix = `${CSRF_COOKIE_NAME}=`;
     const raw = document.cookie
       .split(';')
       .map((value) => value.trim())
@@ -1640,7 +1641,7 @@
                     <p>
                       {{
                         item.question ||
-                        t('interview.session.plannedJobAiQuestion')
+                        t('interview.session.plannedGlasnoQuestion')
                       }}
                     </p>
                   </li>

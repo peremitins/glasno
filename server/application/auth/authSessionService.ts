@@ -10,8 +10,8 @@ import {
   safeEqual,
 } from './authCrypto';
 
-export const AUTH_COOKIE_NAME = 'jobai_auth';
-export const CSRF_COOKIE_NAME = 'jobai_csrf';
+export const AUTH_COOKIE_NAME = 'glasno_auth';
+export { CSRF_COOKIE_NAME } from '@/shared/constants';
 export const AUTH_SESSION_TTL_SECONDS = 60 * 60 * 24 * 30;
 
 export interface AuthSessionContext {

@@ -3,7 +3,7 @@ import { computed, ref } from 'vue';
 export type CameraPermissionState = 'granted' | 'denied' | 'prompt' | null;
 
 const showCameraDeniedModal = ref(false);
-const WEB_CAMERA_DENIED_STORAGE_KEY = 'jobai.camera.web.denied';
+const WEB_CAMERA_DENIED_STORAGE_KEY = 'glasno.camera.web.denied';
 
 function normalizePermissionState(value: unknown): CameraPermissionState {
   return value === 'granted' || value === 'denied' || value === 'prompt'

@@ -11,7 +11,7 @@ describe('realtimeConfig', () => {
     level: 'senior',
     interviewerMode: 'strict',
     vacancyTitle: 'Senior Product Manager',
-    companyName: 'Jobai',
+    companyName: 'Glasno',
     currentQuestion: 'Расскажите о запуске сложного продукта.',
   };
 

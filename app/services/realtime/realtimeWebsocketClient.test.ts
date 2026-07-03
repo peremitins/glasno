@@ -121,14 +121,14 @@ describe('realtimeWebsocketClient helpers', () => {
     expect(
       buildRealtimeProxyWebsocketUrl({
         protocol: 'https:',
-        host: 'jobai.test',
+        host: 'glasno.test',
       })
-    ).toBe('wss://jobai.test/api/realtime/openai-websocket');
+    ).toBe('wss://glasno.test/api/realtime/openai-websocket');
   });
 
   it('builds the proxy init event from the ephemeral realtime session', () => {
     expect(buildRealtimeProxyConnectEvent(realtimeSession)).toEqual({
-      type: 'jobai.realtime_proxy.connect',
+      type: 'glasno.realtime_proxy.connect',
       model: 'gpt-realtime',
       clientSecret: 'secret',
     });

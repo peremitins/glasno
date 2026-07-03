@@ -1,5 +1,6 @@
 import { computed, ref } from 'vue';
 import type { TtsFormat } from '@/shared/dto';
+import { CSRF_COOKIE_NAME } from '@/shared/constants';
 import { useAudioPermissionGate } from './useAudioPermissionGate';
 
 interface TtsSpeakOptions {
@@ -70,7 +71,7 @@ export function useTTS() {
         Accept: MIME_BY_FORMAT[format],
         'Content-Type': 'application/json',
       });
-      const csrfToken = readClientCookie('jobai_csrf');
+      const csrfToken = readClientCookie(CSRF_COOKIE_NAME);
       if (csrfToken) headers.set('x-csrf-token', csrfToken);
 
       const response = await fetch('/api/tts/openai', {
