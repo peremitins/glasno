@@ -123,7 +123,7 @@ export class ReportService {
       if (answerCoverage.answered === 0) {
         const saved = await this.deps.reportRepository.saveCompleted(
           reportId,
-          buildZeroAnswerAnalysis(answerCoverage.mainTurns)
+          buildZeroAnswerAnalysis(answerCoverage.reportTurns)
         );
         return saved;
       }
@@ -234,10 +234,14 @@ const ZERO_CRITERIA: ReportCriteria = {
 
 const LOW_EFFORT_REPORT_ANSWER =
   /^(не\s*знаю|незнаю|не\s*уверен(?:а)?|ничего|хз|пропустить|пропуск|skip|нет|—|-|–|\.|…)$/iu;
+const DEFAULT_WHAT_WORKED = 'Сильных элементов в ответе не выявлено.';
+const DEFAULT_WHAT_WEAK = 'Критичных слабых мест не выявлено.';
+const DEFAULT_STRONGER_STAR =
+  'Опишите контекст ситуации, цель, свои действия и измеримый результат реальными фактами из опыта.';
 
 interface AnswerCoverage {
   mainTurns: InterviewTurnRecord[];
-  skippedMainTurns: InterviewTurnRecord[];
+  reportTurns: InterviewTurnRecord[];
   answered: number;
   expected: number;
   ratio: number;
@@ -268,17 +272,17 @@ function calculateAnswerCoverage(
   turns: InterviewTurnRecord[]
 ): AnswerCoverage {
   const mainTurns = turns.filter((turn) => turn.kind === 'main');
+  const reportTurns = turns.filter(
+    (turn) => turn.kind === 'main' || turn.kind === 'clarification'
+  );
   const answered = mainTurns.filter((turn) =>
     normalizeAssessableAnswer(turn.answerTranscript)
   ).length;
   const expected = Math.max(session.questionCount, mainTurns.length, 1);
-  const skippedMainTurns = mainTurns.filter(
-    (turn) => !normalizeAssessableAnswer(turn.answerTranscript)
-  );
 
   return {
     mainTurns,
-    skippedMainTurns,
+    reportTurns,
     answered,
     expected,
     ratio: answered / expected,
@@ -286,7 +290,7 @@ function calculateAnswerCoverage(
 }
 
 function buildZeroAnswerAnalysis(
-  mainTurns: InterviewTurnRecord[]
+  reportTurns: InterviewTurnRecord[]
 ): ReportAnalysis {
   return {
     overallScore: 0,
@@ -301,7 +305,7 @@ function buildZeroAnswerAnalysis(
         'Добавлять конкретные примеры, личную роль, цифры и результат.',
       ],
     },
-    questionAnalysis: buildSkippedQuestionAnalysis(mainTurns),
+    questionAnalysis: buildFallbackQuestionAnalysis(reportTurns),
   };
 }
 
@@ -310,7 +314,11 @@ function applyAnswerCoverage(
   coverage: AnswerCoverage
 ): ReportAnalysis {
   const criteria = scaleCriteria(analysis.criteria, coverage.ratio);
-  const skippedAnalysis = buildSkippedQuestionAnalysis(coverage.skippedMainTurns);
+  const normalizedQuestionAnalysis = normalizeQuestionAnalysis(
+    analysis.questionAnalysis,
+    coverage.reportTurns
+  );
+  const fallbackAnalysis = buildFallbackQuestionAnalysis(coverage.reportTurns);
   const skippedSummary =
     coverage.answered < coverage.expected
       ? `Зачтено ${coverage.answered} из ${coverage.expected} содержательных ответов.`
@@ -337,8 +345,8 @@ function applyAnswerCoverage(
       ).slice(0, 5),
     },
     questionAnalysis: appendMissingQuestionAnalysis(
-      analysis.questionAnalysis,
-      skippedAnalysis
+      normalizedQuestionAnalysis,
+      fallbackAnalysis
     ),
   };
 }
@@ -361,7 +369,7 @@ function scaleScore(score: number, ratio: number): number {
   return Math.max(0, Math.min(100, Math.round(score * ratio)));
 }
 
-function buildSkippedQuestionAnalysis(
+function buildFallbackQuestionAnalysis(
   turns: InterviewTurnRecord[]
 ): ReportQuestionAnalysis[] {
   const sourceTurns = turns.length
@@ -369,25 +377,96 @@ function buildSkippedQuestionAnalysis(
     : [
         {
           id: 'interview_summary',
+          kind: 'main',
           question: 'Вопросы интервью',
+          answerTranscript: null,
         } as InterviewTurnRecord,
       ];
 
-  return sourceTurns.map((turn) => ({
-    turnId: turn.id,
-    question: turn.question,
-    answer: 'Ответ не предоставлен.',
-    whatWorked:
-      'Оценить сильные стороны невозможно, потому что ответа на вопрос нет.',
-    whatWeak:
-      'Вопрос пропущен: нет структуры, конкретики, личной роли и результата.',
-    modelAnswer:
-      'Сильный ответ стоит построить по STAR: кратко описать ситуацию, задачу, свои действия и измеримый результат. Подберите реальный пример из опыта, добавьте цифры, сроки и вашу личную роль.',
-    strongerAnswerStar:
-      'Подготовьте пример по STAR: ситуация, задача, действие, результат. Даже короткий ответ должен показывать контекст, ваш вклад и итог.',
-    nextPractice:
-      'Запишите 2-3 тезиса к этому вопросу и проговорите ответ вслух за 60-90 секунд.',
-  }));
+  return sourceTurns.map((turn) => {
+    const answer = normalizeAssessableAnswer(turn.answerTranscript);
+    if (!answer) {
+      return {
+        turnId: turn.id,
+        kind: turn.kind,
+        question: turn.question,
+        answer: 'Ответ не предоставлен.',
+        criteria: cloneCriteria(ZERO_CRITERIA),
+        whatWorked:
+          'Оценить сильные стороны невозможно, потому что ответа на вопрос нет.',
+        whatWeak:
+          'Вопрос пропущен: нет структуры, конкретики, личной роли и результата.',
+        modelAnswer:
+          'Сильный ответ стоит построить по STAR: кратко описать ситуацию, задачу, свои действия и измеримый результат. Подберите реальный пример из опыта, добавьте цифры, сроки и вашу личную роль.',
+        strongerAnswerStar:
+          'Подготовьте пример по STAR: ситуация, задача, действие, результат. Даже короткий ответ должен показывать контекст, ваш вклад и итог.',
+        nextPractice:
+          'Запишите 2-3 тезиса к этому вопросу и проговорите ответ вслух за 60-90 секунд.',
+      };
+    }
+
+    return {
+      turnId: turn.id,
+      kind: turn.kind,
+      question: turn.question,
+      answer,
+      criteria: null,
+      whatWorked:
+        'Ответ сохранён в структуре отчёта, но отдельный разбор по нему не был сформирован.',
+      whatWeak:
+        'Для точной оценки этого ответа нужно переформировать отчёт или пройти вопрос повторно.',
+      modelAnswer: '',
+      strongerAnswerStar:
+        'Сформулируйте ответ по STAR: ситуация, задача, действие, результат.',
+      nextPractice:
+        'Вернитесь к этому вопросу и добавьте 1-2 факта: личную роль, цифру, срок или результат.',
+    };
+  });
+}
+
+function normalizeQuestionAnalysis(
+  current: ReportQuestionAnalysis[],
+  turns: InterviewTurnRecord[]
+): ReportQuestionAnalysis[] {
+  const turnsById = new Map(turns.map((turn) => [turn.id, turn]));
+  return current.map((item) => {
+    const turn = turnsById.get(item.turnId);
+    return {
+      ...item,
+      kind: item.kind ?? turn?.kind ?? 'main',
+      criteria: item.criteria ?? null,
+      whatWorked: normalizeReportInsightText(item.whatWorked, DEFAULT_WHAT_WORKED),
+      whatWeak: normalizeReportInsightText(item.whatWeak, DEFAULT_WHAT_WEAK),
+      strongerAnswerStar: normalizeStrongerStar(item.strongerAnswerStar),
+    };
+  });
+}
+
+function normalizeReportInsightText(value: string, fallback: string): string {
+  const text = value.trim();
+  return text || fallback;
+}
+
+function normalizeStrongerStar(value: string): string {
+  const text = value.trim();
+  if (!text || isBrokenStarRecommendation(text)) return DEFAULT_STRONGER_STAR;
+  return text;
+}
+
+function isBrokenStarRecommendation(value: string): boolean {
+  const normalized = value.trim();
+  return (
+    /(?:\.\.\.|…)/u.test(normalized) ||
+    /\[[^\]]+\]/u.test(normalized) ||
+    /^s\s*\/\s*t\s*\/\s*a\s*\/\s*r\s*:?\s*$/iu.test(normalized) ||
+    /^s\s*\/\s*t\s*\/\s*a\s*\/\s*r\s*:?\s*(?:\.\.\.|…)$/iu.test(
+      normalized
+    )
+  );
+}
+
+function cloneCriteria(criteria: ReportCriteria): ReportCriteria {
+  return { ...criteria };
 }
 
 function prependUnique(prefix: string[], values: string[]): string[] {
@@ -419,6 +498,19 @@ function toIso(value: Date | string): string {
   return value instanceof Date ? value.toISOString() : value;
 }
 
+function sanitizeReportErrorMessage(message: string | null): string | null {
+  if (!message) return message;
+  if (!/openai|chatgpt/i.test(message)) return message;
+  return 'Не удалось сформировать отчёт. Попробуйте ещё раз.';
+}
+
+function sanitizeReportQuestionAnalysis(
+  items: ReportQuestionAnalysis[] | null
+): ReportQuestionAnalysis[] | null {
+  if (!items) return items;
+  return normalizeQuestionAnalysis(items, []);
+}
+
 export function toReportDto(report: ReportRecord): InterviewReport {
   return {
     id: report.id,
@@ -429,8 +521,8 @@ export function toReportDto(report: ReportRecord): InterviewReport {
     summary: report.summary,
     criteria: report.criteria,
     recommendations: report.recommendations,
-    questionAnalysis: report.questionAnalysis,
-    errorMessage: report.errorMessage,
+    questionAnalysis: sanitizeReportQuestionAnalysis(report.questionAnalysis),
+    errorMessage: sanitizeReportErrorMessage(report.errorMessage),
     model: report.model,
     createdAt: toIso(report.createdAt),
     updatedAt: toIso(report.updatedAt),

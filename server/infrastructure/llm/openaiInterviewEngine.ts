@@ -1,4 +1,3 @@
-import { $fetch } from 'ofetch';
 import OpenAI from 'openai';
 import { apiError } from '@/server/utils/errors';
 import type {
@@ -24,6 +23,11 @@ import type {
   InterviewFocus,
   QuestionHintDetails,
 } from '@/shared/dto';
+import {
+  sendOpenAiResponsesRequest,
+  type OpenAiResponsesPurpose,
+} from './openaiResponsesClient';
+import { compactGeneratedText } from './textNormalization';
 
 // Извлекает usage из ответа Responses API в наши поля.
 export function extractUsageAmounts(response: any): {
@@ -48,7 +52,6 @@ function usageContext(session: InterviewSessionRecord) {
   };
 }
 
-const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
 const DEFAULT_MODEL = 'gpt-5.4-nano'; // была 'gpt-4o-mini' (заменено 2026-07)
 
 export function extractResponsesText(response: any): string {
@@ -85,14 +88,6 @@ function extractObjectCandidate(value: string): string {
   return value.slice(start, end + 1);
 }
 
-function compactText(value: unknown, fallback: string, maxLength: number): string {
-  const raw = typeof value === 'string' ? value : '';
-  const compacted = raw.trim().replace(/\s+/g, ' ');
-  const text = compacted || fallback;
-  if (text.length <= maxLength) return text;
-  return `${text.slice(0, maxLength - 1).trimEnd()}…`;
-}
-
 function compactTextList(
   value: unknown,
   fallback: string[],
@@ -103,7 +98,7 @@ function compactTextList(
   const result: string[] = [];
   const seen = new Set<string>();
   for (const item of source) {
-    const text = compactText(item, '', maxLength);
+    const text = compactGeneratedText(item, '', maxLength);
     if (!text) continue;
     const key = text.toLowerCase();
     if (seen.has(key)) continue;
@@ -121,7 +116,7 @@ export function normalizeQuestionHintDetails(value: unknown): QuestionHintDetail
       : {};
 
   return {
-    focus: compactText(
+    focus: compactGeneratedText(
       raw.focus,
       'Проверяет, насколько ответ связан с текущим вопросом и ролью.',
       260
@@ -137,7 +132,7 @@ export function normalizeQuestionHintDetails(value: unknown): QuestionHintDetail
       220
     ),
     keyDefinitions: compactTextList(raw.keyDefinitions, [], 4, 220),
-    sampleAnswer: compactText(
+    sampleAnswer: compactGeneratedText(
       raw.sampleAnswer,
       'Я бы ответил от первого лица: коротко задал контекст, назвал своё действие и завершил результатом, не добавляя факты, которых нет в моём опыте.',
       700
@@ -154,7 +149,7 @@ export function normalizeSampleAnswerHint(value: unknown): {
       : {};
 
   return {
-    sampleAnswer: compactText(
+    sampleAnswer: compactGeneratedText(
       raw.sampleAnswer,
       'Я бы ответил от первого лица: коротко ответил на уточняющий вопрос, добавил один релевантный пример и не выдумывал факты, которых нет в моём опыте.',
       700
@@ -348,7 +343,7 @@ export class OpenAiInterviewEngine implements InterviewEngine {
 
     const question = typeof raw.question === 'string' ? raw.question.trim() : '';
     if (!question) {
-      throw apiError('E_UPSTREAM', 'OpenAI не вернул текст вопроса');
+      throw apiError('E_UPSTREAM', 'Провайдер не вернул текст вопроса');
     }
     return { question };
   }
@@ -362,7 +357,8 @@ export class OpenAiInterviewEngine implements InterviewEngine {
         'Пиши по-русски, конкретно и кратко. Обязательно привязывайся к вопросу, роли, вакансии и резюме, если они есть. ' +
         'Не выдумывай работодателей, годы опыта, метрики, проекты, технологии и факты, которых нет в контексте. Если конкретики нет — предложи кандидату подставить свой пример или свою метрику. ' +
         'Верни строго JSON вида {"focus":"...","answerPlan":["..."],"keyDefinitions":["..."],"sampleAnswer":"..."}. ' +
-        'answerPlan: 3–5 коротких тезисов. keyDefinitions: 0–4 коротких определения терминов из вопроса. sampleAnswer: 2–4 предложения от первого лица.',
+        'answerPlan: 3–5 коротких тезисов. keyDefinitions: 0–4 коротких определения терминов из вопроса. sampleAnswer: 2–4 предложения от первого лица. ' +
+        'sampleAnswer должен быть законченным: не заканчивай текст многоточием, оборванной фразой или незавершённым списком.',
       userText: [
         sessionContextForConverse(params.session),
         '',
@@ -386,7 +382,7 @@ export class OpenAiInterviewEngine implements InterviewEngine {
         'Ты карьерный тренер Гласно. Обнови только краткий пример ответа для последнего уточняющего вопроса интервьюера. ' +
         'Основной плановый вопрос остаётся прежним, поэтому не меняй тему шире уточнения. ' +
         'Пиши по-русски, 2–4 предложения от первого лица. Не выдумывай работодателей, годы опыта, метрики, проекты, технологии и факты, которых нет в контексте. ' +
-        'Если конкретики нет — формулируй пример так, чтобы кандидат мог подставить свой опыт. Верни строго JSON вида {"sampleAnswer":"..."}.',
+        'Если конкретики нет — формулируй пример так, чтобы кандидат мог подставить свой опыт. Ответ должен быть законченным, без многоточия в конце и без оборванной мысли. Верни строго JSON вида {"sampleAnswer":"..."}.',
       userText: [
         sessionContextForConverse(params.session),
         '',
@@ -446,7 +442,7 @@ export class OpenAiInterviewEngine implements InterviewEngine {
 
     const reply = typeof raw.reply === 'string' ? raw.reply.trim() : '';
     if (!reply) {
-      throw apiError('E_UPSTREAM', 'OpenAI не вернул ответ интервьюера');
+      throw apiError('E_UPSTREAM', 'Провайдер не вернул ответ интервьюера');
     }
     return {
       reply,
@@ -458,7 +454,7 @@ export class OpenAiInterviewEngine implements InterviewEngine {
     params: ConverseParams
   ): AsyncGenerator<string, { suggestMoveOn: boolean }, void> {
     if (!this.options.apiKey) {
-      throw apiError('E_UPSTREAM', 'NUXT_OPENAI_API_KEY не задан');
+      throw apiError('E_UPSTREAM', 'Провайдер обработки не настроен');
     }
 
     const instruction =
@@ -517,20 +513,24 @@ export class OpenAiInterviewEngine implements InterviewEngine {
         } else if (ev?.type === 'response.error') {
           throw apiError(
             'E_UPSTREAM',
-            ev?.error?.message || 'OpenAI Realtime stream error'
+            ev?.error?.message || 'Ошибка потокового ответа провайдера'
           );
         }
       }
     } catch (err) {
       if (err && typeof err === 'object' && 'data' in err) throw err;
-      throw apiError('E_UPSTREAM', 'OpenAI не смог сгенерировать ответ интервьюера', {
-        cause: err instanceof Error ? err.message : String(err),
-      });
+      throw apiError(
+        'E_UPSTREAM',
+        'Не удалось сгенерировать ответ интервьюера',
+        {
+          cause: err instanceof Error ? err.message : String(err),
+        }
+      );
     }
 
     const { clean, suggestMoveOn } = splitMoveOnMarker(full);
     if (!clean) {
-      throw apiError('E_UPSTREAM', 'OpenAI вернул пустой ответ интервьюера');
+      throw apiError('E_UPSTREAM', 'Провайдер вернул пустой ответ интервьюера');
     }
     if (clean.length > emitted) {
       yield clean.slice(emitted);
@@ -560,7 +560,7 @@ export class OpenAiInterviewEngine implements InterviewEngine {
     instruction: string;
     userText: string;
     maxOutputTokens: number;
-    kind: string;
+    kind: OpenAiResponsesPurpose | string;
     context: {
       userId: string | null;
       anonymousSessionId: string;
@@ -568,25 +568,18 @@ export class OpenAiInterviewEngine implements InterviewEngine {
     };
   }): Promise<Record<string, any>> {
     if (!this.options.apiKey) {
-      throw apiError('E_UPSTREAM', 'NUXT_OPENAI_API_KEY не задан');
+      throw apiError('E_UPSTREAM', 'Провайдер обработки не настроен');
     }
 
     const model = this.options.model || DEFAULT_MODEL;
     const startedAt = Date.now();
     try {
-      const response: any = await $fetch(OPENAI_RESPONSES_URL, {
-        method: 'POST',
-        timeout: 30_000,
-        headers: {
-          Authorization: `Bearer ${this.options.apiKey}`,
-          'Content-Type': 'application/json',
-          ...(this.options.organization
-            ? { 'OpenAI-Organization': this.options.organization }
-            : {}),
-          ...(this.options.project
-            ? { 'OpenAI-Project': this.options.project }
-            : {}),
-        },
+      const response = await sendOpenAiResponsesRequest<any>({
+        purpose: params.kind,
+        timeoutMs: 30_000,
+        apiKey: this.options.apiKey,
+        organization: this.options.organization,
+        project: this.options.project,
         body: {
           model,
           max_output_tokens: params.maxOutputTokens,
@@ -618,7 +611,7 @@ export class OpenAiInterviewEngine implements InterviewEngine {
       return parseJsonObject(extractResponsesText(response));
     } catch (err) {
       if (err && typeof err === 'object' && 'data' in err) throw err;
-      throw apiError('E_UPSTREAM', 'OpenAI не смог сгенерировать вопрос', {
+      throw apiError('E_UPSTREAM', 'Не удалось сгенерировать вопрос', {
         cause: err instanceof Error ? err.message : String(err),
       });
     }

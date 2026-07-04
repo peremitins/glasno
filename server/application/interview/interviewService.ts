@@ -507,7 +507,7 @@ export class InterviewService {
 
     reply = reply.trim();
     if (!reply) {
-      throw apiError('E_UPSTREAM', 'OpenAI не вернул ответ интервьюера');
+      throw apiError('E_UPSTREAM', 'Провайдер не вернул ответ интервьюера');
     }
 
     dialogue.push({

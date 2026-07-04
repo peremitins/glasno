@@ -421,6 +421,20 @@
     "modelAnswer": "Вариант сильного ответа",
     "strongerStar": "Как усилить по структуре STAR",
     "nextPractice": "Мини-тренировка",
+    "questionMatrix": {
+      "title": "Вопросы, ответы и оценки",
+      "main": "Основной вопрос",
+      "clarification": "Уточнение",
+      "noScore": "Нет оценки",
+      "low": "Слабо",
+      "high": "Отлично",
+      "count": "{count} вопросов в отчёте",
+      "expand": "Развернуть",
+      "collapse": "Свернуть",
+      "average": "Средний балл",
+      "scoreAria": "{criteria}: {score} из 100",
+      "scoreListAria": "Оценки вопроса {number}"
+    },
     "status": {
       "queued": "Отчёт в очереди",
       "processing": "Отчёт формируется",

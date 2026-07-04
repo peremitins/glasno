@@ -16,7 +16,23 @@ export type InterviewTextSegment =
       term: LearningTermCandidate;
     };
 
+export type InterviewTextDisplaySegment =
+  | Extract<InterviewTextSegment, { kind: 'text' }>
+  | (Extract<InterviewTextSegment, { kind: 'term' }> & {
+      attachedPunctuation?: string;
+    });
+
+type InterviewTextDisplayTermSegment = Extract<
+  InterviewTextDisplaySegment,
+  { kind: 'term' }
+>;
+type InterviewTextDisplayPlainSegment = Extract<
+  InterviewTextDisplaySegment,
+  { kind: 'text' }
+>;
+
 const TERM_PATTERN = /\bSTAR\b/gi;
+const LEADING_PUNCTUATION_PATTERN = /^([,.;:!?)}\]»”]+)/u;
 
 interface TermMatch {
   index: number;
@@ -55,6 +71,44 @@ export function splitTextByInterviewTerms(
   }
 
   return segments.length ? segments : [{ kind: 'text', value: text }];
+}
+
+export function prepareInterviewTextDisplaySegments(
+  segments: InterviewTextSegment[]
+): InterviewTextDisplaySegment[] {
+  const prepared: InterviewTextDisplaySegment[] = segments.map((segment) => ({
+    ...segment,
+  }));
+
+  for (let index = 0; index < prepared.length - 1; index += 1) {
+    const current = prepared[index];
+    const next = prepared[index + 1];
+    if (!isDisplayTermSegment(current) || !isDisplayTextSegment(next)) {
+      continue;
+    }
+
+    const punctuation = next.value.match(LEADING_PUNCTUATION_PATTERN)?.[1];
+    if (!punctuation) continue;
+
+    current.attachedPunctuation = punctuation;
+    next.value = next.value.slice(punctuation.length);
+  }
+
+  return prepared.filter(
+    (segment) => segment.kind === 'term' || segment.value.length > 0
+  );
+}
+
+function isDisplayTermSegment(
+  segment: InterviewTextDisplaySegment | undefined
+): segment is InterviewTextDisplayTermSegment {
+  return segment?.kind === 'term';
+}
+
+function isDisplayTextSegment(
+  segment: InterviewTextDisplaySegment | undefined
+): segment is InterviewTextDisplayPlainSegment {
+  return segment?.kind === 'text';
 }
 
 function selectTermMatches(

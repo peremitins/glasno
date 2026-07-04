@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { InterviewTurnKindDto } from './interview';
 
 export const ReportStatusDto = z.enum(['queued', 'processing', 'done', 'failed']);
 
@@ -17,8 +18,10 @@ export const ReportRecommendationsDto = z.object({
 
 export const ReportQuestionAnalysisDto = z.object({
   turnId: z.string(),
+  kind: InterviewTurnKindDto.default('main'),
   question: z.string(),
   answer: z.string(),
+  criteria: ReportCriteriaDto.nullable().default(null),
   whatWorked: z.string(),
   whatWeak: z.string(),
   // Возможный сильный ответ на этот вопрос (по STAR, с конкретикой).

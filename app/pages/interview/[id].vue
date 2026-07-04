@@ -33,6 +33,7 @@
   import InterviewerCard from '@/app/components/interview/InterviewerCard.vue';
   import LocalCameraPreview from '@/app/components/interview/LocalCameraPreview.vue';
   import ReportGenerationPanel from '@/app/components/interview/ReportGenerationPanel.vue';
+  import { sanitizeProviderErrorMessage } from '@/app/utils/providerErrorMessage';
   import TextWithInterviewTerms from '@/app/components/design/TextWithInterviewTerms.vue';
   import AudioPermissionDeniedDialog from '@/app/components/audio/AudioPermissionDeniedDialog.vue';
   import CameraPermissionDeniedDialog from '@/app/components/camera/CameraPermissionDeniedDialog.vue';
@@ -324,13 +325,15 @@
   );
 
   function extractApiError(error: unknown): string {
+    const fallback = t('interview.common.unknownError');
     if (error && typeof error === 'object' && 'data' in error) {
       const data = (error as { data?: { error?: { message?: string } } }).data;
-      return data?.error?.message || t('interview.common.unknownError');
+      return sanitizeProviderErrorMessage(data?.error?.message, fallback);
     }
-    return error instanceof Error
-      ? error.message
-      : t('interview.common.unknownError');
+    return sanitizeProviderErrorMessage(
+      error instanceof Error ? error.message : '',
+      fallback
+    );
   }
 
   function ensureRealtimeAdapter() {
@@ -2823,12 +2826,20 @@
 
   .hint-status,
   .hint-structure,
-  .hint-sample,
   .hint-error p {
     margin: 0;
     color: var(--text-secondary);
     font-size: 13px;
     line-height: 1.5;
+    overflow-wrap: anywhere;
+  }
+
+  .hint-sample {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 13px;
+    line-height: 1.5;
+    white-space: normal;
     overflow-wrap: anywhere;
   }
 

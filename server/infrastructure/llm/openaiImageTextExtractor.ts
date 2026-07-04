@@ -1,4 +1,3 @@
-import { $fetch } from 'ofetch';
 import { recordAiUsageSafe } from '@/server/application/aiUsage/serviceFactory';
 import { apiError } from '@/server/utils/errors';
 import { normalizeExtractedDocumentText } from '@/server/infrastructure/files/extractInterviewFileText';
@@ -6,8 +5,8 @@ import {
   extractResponsesText,
   extractUsageAmounts,
 } from './openaiInterviewEngine';
+import { sendOpenAiResponsesRequest } from './openaiResponsesClient';
 
-const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
 const DEFAULT_MODEL = 'gpt-4o-mini';
 const DEFAULT_MAX_OUTPUT_TOKENS = 2_400;
 
@@ -30,23 +29,18 @@ export async function extractTextFromImageWithOpenAi(params: {
   maxOutputTokens?: number;
 }): Promise<string> {
   if (!params.apiKey) {
-    throw apiError('E_UPSTREAM', 'NUXT_OPENAI_API_KEY не задан');
+    throw apiError('E_UPSTREAM', 'Провайдер обработки не настроен');
   }
 
   const model = params.model || resolveImageExtractionModel();
   const startedAt = Date.now();
   try {
-    const response: any = await $fetch(OPENAI_RESPONSES_URL, {
-      method: 'POST',
-      timeout: 30_000,
-      headers: {
-        Authorization: `Bearer ${params.apiKey}`,
-        'Content-Type': 'application/json',
-        ...(params.organization
-          ? { 'OpenAI-Organization': params.organization }
-          : {}),
-        ...(params.project ? { 'OpenAI-Project': params.project } : {}),
-      },
+    const response = await sendOpenAiResponsesRequest<any>({
+      purpose: params.usageKind || 'question_file_extract',
+      timeoutMs: 30_000,
+      apiKey: params.apiKey,
+      organization: params.organization,
+      project: params.project,
       body: {
         model,
         max_output_tokens: params.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,

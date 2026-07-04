@@ -20,6 +20,8 @@ const props = withDefaults(
     sourceText?: string;
     context?: LearningTermContext;
     interactive?: boolean;
+    explainable?: boolean;
+    attachedPunctuation?: string;
   }>(),
   {
     term: 'star',
@@ -27,6 +29,7 @@ const props = withDefaults(
     sourceText: '',
     context: () => ({ kind: 'generic' }),
     interactive: true,
+    attachedPunctuation: '',
   }
 );
 
@@ -52,6 +55,10 @@ const description = computed(() =>
     ? t(termMessages.star.description)
     : (props.term as LearningTermCandidate).shortDefinition
 );
+const canExplain = computed(
+  () => props.explainable ?? (props.interactive && props.term !== 'star')
+);
+const displayLabelParts = computed(() => displayLabel.value.split(/(\/)/u));
 
 const explanation = ref<ExplainLearningTermResponse | null>(null);
 const explanationLoading = ref(false);
@@ -78,11 +85,12 @@ function closePopover() {
 }
 
 watch(isShown, (shown) => {
+  if (!canExplain.value) return;
   if (shown) void loadExplanation();
 });
 
 async function loadExplanation() {
-  if (!props.interactive || explanation.value || explanationLoading.value) return;
+  if (!canExplain.value || explanation.value || explanationLoading.value) return;
 
   explanationLoading.value = true;
   explanationError.value = '';
@@ -103,7 +111,7 @@ async function loadExplanation() {
 
 <template>
   <VDropdown
-    v-if="interactive"
+    v-if="canExplain"
     v-model:shown="isShown"
     class="term-popper"
     :triggers="['click']"
@@ -120,6 +128,7 @@ async function loadExplanation() {
         content: description,
         theme: 'learning-term-tooltip',
         triggers: ['hover', 'focus', 'touch'],
+        placement: 'top',
       }"
       class="term-tooltip term-tooltip--button"
       type="button"
@@ -127,7 +136,17 @@ async function loadExplanation() {
       :aria-label="`${displayLabel}: ${description}`"
       @click.stop
     >
-      {{ displayLabel }}
+      <span class="term-tooltip__label">
+        <template
+          v-for="(part, index) in displayLabelParts"
+          :key="`${part}-${index}`"
+        >
+          {{ part }}<wbr v-if="part === '/'">
+        </template>
+      </span><span
+        v-if="attachedPunctuation"
+        class="term-tooltip__punctuation"
+      >{{ attachedPunctuation }}</span>
     </button>
 
     <template #popper>
@@ -170,11 +189,22 @@ async function loadExplanation() {
       content: description,
       theme: 'learning-term-tooltip',
       triggers: ['hover', 'focus', 'touch'],
+      placement: 'top',
     }"
     class="term-tooltip"
     :title="description"
   >
-    {{ displayLabel }}
+    <span class="term-tooltip__label">
+      <template
+        v-for="(part, index) in displayLabelParts"
+        :key="`${part}-${index}`"
+      >
+        {{ part }}<wbr v-if="part === '/'">
+      </template>
+    </span><span
+      v-if="attachedPunctuation"
+      class="term-tooltip__punctuation"
+    >{{ attachedPunctuation }}</span>
   </span>
 </template>
 
@@ -191,10 +221,23 @@ async function loadExplanation() {
   letter-spacing: inherit;
   line-height: inherit;
   padding: 0;
+  text-align: left;
+  vertical-align: baseline;
+  white-space: normal;
+  word-break: normal;
+  overflow-wrap: anywhere;
+}
+
+.term-tooltip__label {
   text-decoration: underline;
   text-decoration-style: dotted;
   text-decoration-thickness: 1px;
   text-underline-offset: 3px;
+  overflow-wrap: anywhere;
+}
+
+.term-tooltip__punctuation::before {
+  content: '\2060';
 }
 
 .term-tooltip--button {

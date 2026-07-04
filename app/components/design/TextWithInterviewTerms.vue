@@ -6,7 +6,10 @@ import {
   learningTermContextKey,
   learningTermTextHash,
 } from '@/app/composables/useLearningTerms';
-import { splitTextByInterviewTerms } from '@/app/utils/interviewTerms';
+import {
+  prepareInterviewTextDisplaySegments,
+  splitTextByInterviewTerms,
+} from '@/app/utils/interviewTerms';
 import {
   clampLearningTermFloatingPosition,
   isEditableLearningTermSelectionTarget,
@@ -61,6 +64,9 @@ let loadVersion = 0;
 
 const segments = computed(() =>
   splitTextByInterviewTerms(props.text, dynamicTerms.value)
+);
+const displaySegments = computed(() =>
+  prepareInterviewTextDisplaySegments(segments.value)
 );
 const manualSelectionKey = computed(() =>
   [
@@ -338,7 +344,7 @@ onBeforeUnmount(() => {
     @keyup="handleManualSelectionRequest"
   >
     <template
-      v-for="(segment, index) in segments"
+      v-for="(segment, index) in displaySegments"
       :key="`${segment.kind}-${index}-${segment.value}`"
     >
       <InterviewTerm
@@ -348,6 +354,8 @@ onBeforeUnmount(() => {
         :source-text="text"
         :context="context"
         :interactive="interactive"
+        :explainable="segment.term !== 'star'"
+        :attached-punctuation="segment.attachedPunctuation"
       />
       <template v-else>{{ segment.value }}</template>
     </template>
@@ -419,7 +427,7 @@ onBeforeUnmount(() => {
 
   <template v-else>
     <template
-      v-for="(segment, index) in segments"
+      v-for="(segment, index) in displaySegments"
       :key="`${segment.kind}-${index}-${segment.value}`"
     >
       <InterviewTerm
@@ -429,6 +437,8 @@ onBeforeUnmount(() => {
         :source-text="text"
         :context="context"
         :interactive="interactive"
+        :explainable="segment.term !== 'star'"
+        :attached-punctuation="segment.attachedPunctuation"
       />
       <template v-else>{{ segment.value }}</template>
     </template>
