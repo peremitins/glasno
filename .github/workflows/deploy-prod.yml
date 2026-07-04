@@ -36,9 +36,41 @@ jobs:
               - '!.docs/**'
               - '!**/*.md'
 
+  # Ранняя диагностика секретов: падает с понятной ошибкой ДО сборки,
+  # если PROD_SSH_KEY пуст или не парсится как приватный ключ.
+  preflight:
+    name: Check deploy secrets
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate deploy secrets
+        env:
+          KEY: ${{ secrets.PROD_SSH_KEY }}
+          HOST: ${{ secrets.PROD_SSH_HOST }}
+          SSH_USER: ${{ secrets.PROD_SSH_USER }}
+        run: |
+          echo "PROD_SSH_HOST: длина ${#HOST}"
+          echo "PROD_SSH_USER: длина ${#SSH_USER}"
+          echo "PROD_SSH_KEY:  длина ${#KEY} символов, строк: $(printf '%s\n' "$KEY" | wc -l)"
+          if [ -z "$KEY" ]; then
+            echo "::error::Секрет PROD_SSH_KEY пуст или не задан (проверь имя и раздел Repository secrets)"
+            exit 1
+          fi
+          printf '%s\n' "$KEY" > key.tmp && chmod 600 key.tmp
+          if ! head -1 key.tmp | grep -q "BEGIN .*PRIVATE KEY"; then
+            echo "::error::Первая строка секрета — не '-----BEGIN OPENSSH PRIVATE KEY-----'. Похоже, вставлен не приватный ключ."
+            exit 1
+          fi
+          if ssh-keygen -y -P "" -f key.tmp >/dev/null 2>&1; then
+            echo "OK: ключ валиден, fingerprint: $(ssh-keygen -lf key.tmp)"
+          else
+            echo "::error::Ключ не парсится (повреждён формат или есть парольная фраза)"
+            exit 1
+          fi
+          rm -f key.tmp
+
   deploy-landing:
     name: Deploy landing to PROD
-    needs: changes
+    needs: [changes, preflight]
     if: needs.changes.outputs.landing == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
 
@@ -88,7 +120,7 @@ jobs:
 
   deploy-app:
     name: Deploy app to PROD
-    needs: changes
+    needs: [changes, preflight]
     if: needs.changes.outputs.app == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
 
