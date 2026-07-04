@@ -74,12 +74,10 @@ describe('realtimeWebrtcClient helpers', () => {
   });
 
   it('waits for ICE gathering to complete before handshake', async () => {
-    let listener: (() => void) | null = null;
+    const addEventListener = vi.fn<(event: string, cb: () => void) => void>();
     const connection = {
       iceGatheringState: 'new',
-      addEventListener: vi.fn((_event: string, callback: () => void) => {
-        listener = callback;
-      }),
+      addEventListener,
       removeEventListener: vi.fn(),
     } as unknown as RTCPeerConnection;
 
@@ -87,6 +85,8 @@ describe('realtimeWebrtcClient helpers', () => {
     (
       connection as unknown as { iceGatheringState: RTCIceGatheringState }
     ).iceGatheringState = 'complete';
+    // Колбэк берём из мока: присваивание в замыкании TS-flow не отслеживает.
+    const listener = addEventListener.mock.calls[0]?.[1];
     listener?.();
     await completed;
 

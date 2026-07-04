@@ -26,6 +26,7 @@ describe('realtimeWebsocketClient helpers', () => {
     idleTimeoutSeconds: 30,
     remainingSeconds: 60,
     realtimeLimits: {
+      targetMinutes: 3,
       warningAtMinutes: 3,
       softLimitMinutes: 4,
       hardLimitMinutes: 5,

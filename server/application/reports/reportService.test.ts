@@ -307,7 +307,9 @@ describe('ReportService', () => {
         ]),
       })
     );
-    const analyzedTurns = engine.analyze.mock.calls[0][0].turns;
+    const firstAnalyzeCall = engine.analyze.mock.calls[0];
+    expect(firstAnalyzeCall).toBeDefined();
+    const analyzedTurns = firstAnalyzeCall![0].turns;
     expect(
       analyzedTurns.filter((turn: any) => turn.answerTranscript)
     ).toHaveLength(1);
