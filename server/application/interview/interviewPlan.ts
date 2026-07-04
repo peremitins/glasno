@@ -8,7 +8,6 @@ import type {
   InterviewPlanItem,
   InterviewQuestionSource,
   InterviewQuestionSourceMode,
-  InterviewTurnKind,
   QuestionHintPack,
   RealtimeSessionLimits,
 } from '@/shared/dto';
@@ -300,7 +299,7 @@ function normalizeCustomQuestions(value?: string | null): string[] {
 function normalizeQuestionText(value: string): string {
   const normalized = value
     .trim()
-    .replace(/^\d+[\).:-]\s*/, '')
+    .replace(/^\d+[).:-]\s*/, '')
     .replace(/\s+/g, ' ');
   if (!normalized) return '';
   return /[?.!]$/.test(normalized) ? normalized : `${normalized}?`;

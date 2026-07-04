@@ -147,7 +147,7 @@ export async function startRealtimeWebsocketClient(
     }
   };
 
-  ws.onerror = (event) => {
+  ws.onerror = () => {
     if (stopped) return;
     handleRealtimeWebsocketError(new Error('Realtime WebSocket error'));
   };

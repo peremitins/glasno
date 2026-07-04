@@ -244,7 +244,7 @@
                 spellcheck="false"
                 :placeholder="t('auth.emailPlaceholder')"
                 required
-              />
+              >
             </div>
           </div>
 
@@ -294,7 +294,7 @@
               placeholder="000000"
               required
               @input="onCodeInput"
-            />
+            >
           </div>
 
           <div class="code-meta">

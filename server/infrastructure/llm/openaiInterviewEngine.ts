@@ -534,6 +534,7 @@ export class OpenAiInterviewEngine implements InterviewEngine {
     }
     if (clean.length > emitted) {
       yield clean.slice(emitted);
+      // eslint-disable-next-line no-useless-assignment -- поддерживаем счётчик консистентным
       emitted = clean.length;
     }
 

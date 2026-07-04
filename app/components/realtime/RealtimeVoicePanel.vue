@@ -184,10 +184,6 @@ onBeforeUnmount(() => {
   <!-- Компактный вариант: одна иконка-кнопка с тултипом (для композера чата) -->
   <button
     v-if="variant === 'icon'"
-    class="rt-icon button-loader-host"
-    type="button"
-    :class="{ 'rt-icon--active': realtimeVoice.isActive.value }"
-    :disabled="disabled || realtimeVoice.isBusy.value"
     v-tooltip="
       isLocked
         ? t('voice.realtime.locked')
@@ -195,6 +191,10 @@ onBeforeUnmount(() => {
           ? t('voice.realtime.stop')
           : t('voice.realtime.start')
     "
+    class="rt-icon button-loader-host"
+    type="button"
+    :class="{ 'rt-icon--active': realtimeVoice.isActive.value }"
+    :disabled="disabled || realtimeVoice.isBusy.value"
     :aria-label="isLocked ? t('voice.realtime.locked') : undefined"
     @click="onToggle"
   >
@@ -227,7 +227,7 @@ onBeforeUnmount(() => {
 
     <div class="controls">
       <span class="status" :class="{ 'status--active': realtimeVoice.isActive.value }">
-        <span aria-hidden="true"></span>
+        <span aria-hidden="true"/>
         {{ statusLabel }}
       </span>
       <span v-if="realtimeVoice.isActive.value" class="timer">

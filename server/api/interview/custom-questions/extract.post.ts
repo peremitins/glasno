@@ -105,7 +105,7 @@ function extractQuestionCandidates(value: string): string[] {
     .map((item) =>
       item
         .trim()
-        .replace(/^\s*(?:[-*•]|\d+[\).:-])\s*/, '')
+        .replace(/^\s*(?:[-*•]|\d+[).:-])\s*/, '')
         .replace(/\s+/g, ' ')
     )
     .filter((item) => item.length >= 8);

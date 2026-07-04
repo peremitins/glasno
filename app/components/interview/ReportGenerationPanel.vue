@@ -32,9 +32,9 @@ const generationSteps = [
     aria-live="polite"
   >
     <div class="report-generation__visual" aria-hidden="true">
-      <span class="report-generation__ring"></span>
-      <span class="report-generation__ring report-generation__ring--slow"></span>
-      <span class="report-generation__core"></span>
+      <span class="report-generation__ring"/>
+      <span class="report-generation__ring report-generation__ring--slow"/>
+      <span class="report-generation__core"/>
     </div>
 
     <div class="report-generation__content">
@@ -60,7 +60,7 @@ const generationSteps = [
           :key="step"
           :style="{ '--step-index': index }"
         >
-          <span></span>
+          <span/>
           {{ t(step) }}
         </li>
       </ol>

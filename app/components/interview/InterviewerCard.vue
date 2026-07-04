@@ -74,8 +74,8 @@
       :src="photoSrc"
       :alt="profile.name"
       @error="photoFailed = true"
-    />
-    <div v-if="showPhoto" class="photo-shade" aria-hidden="true"></div>
+    >
+    <div v-if="showPhoto" class="photo-shade" aria-hidden="true"/>
 
     <div
       v-if="!showPhoto"
@@ -83,14 +83,14 @@
       :class="{ 'portrait--speaking': isSpeaking }"
     >
       <span>{{ profile.initials }}</span>
-      <i aria-hidden="true"></i>
+      <i aria-hidden="true"/>
     </div>
 
     <!-- Аудио-полоски: живой индикатор «интервьюер говорит» под аватаром.
          Держится ровно до конца реальной озвучки (см. isSpeaking). -->
     <div v-if="isSpeaking" class="audio-bars" aria-hidden="true">
-      <span></span><span></span><span></span><span></span><span></span>
-      <span></span><span></span>
+      <span/><span/><span/><span/><span/>
+      <span/><span/>
     </div>
     <div class="meta">
       <p>{{ t('interview.session.stage.interviewer') }}</p>

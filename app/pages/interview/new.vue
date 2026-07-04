@@ -655,7 +655,7 @@
               <p class="panel-label">{{ t('interview.new.source.kicker') }}</p>
               <h3>{{ t('interview.new.source.title') }}</h3>
             </div>
-            <span class="source-help" v-tooltip="t('interview.new.sourceHelp')">
+            <span v-tooltip="t('interview.new.sourceHelp')" class="source-help">
               <QuestionMarkCircledIcon aria-hidden="true" />
             </span>
           </div>
@@ -686,7 +686,7 @@
                 class="text-control"
                 type="url"
                 placeholder="https://company.ru/careers/product-manager"
-              />
+              >
             </div>
           </div>
 
@@ -788,7 +788,7 @@
                 class="text-control"
                 type="text"
                 :placeholder="t('interview.new.placeholders.specialization')"
-              />
+              >
             </div>
 
             <div class="field">
@@ -834,7 +834,7 @@
                   accept=".pdf,.txt,.md,.png,.jpg,.jpeg,text/plain,text/markdown,application/pdf,image/png,image/jpeg"
                   :disabled="isExtractingResume"
                   @change="onResumeFileChange"
-                />
+                >
                 <label
                   class="file-drop file-drop--compact button-loader-host"
                   for="resume-file"
@@ -943,8 +943,8 @@
               class="skip-option"
               :class="{ 'skip-option--active': form.skipCandidateContext }"
             >
-              <input v-model="form.skipCandidateContext" type="checkbox" />
-              <span class="toggle-switch" aria-hidden="true"></span>
+              <input v-model="form.skipCandidateContext" type="checkbox" >
+              <span class="toggle-switch" aria-hidden="true"/>
               <span class="toggle-copy">
                 <strong>{{ t('interview.new.candidate.skip') }}</strong>
                 <small>{{ t('interview.new.candidate.skipHint') }}</small>
@@ -964,8 +964,8 @@
           <h2>{{ t('interview.new.customQuestions.title') }}</h2>
         </div>
         <span
-          class="source-help"
           v-tooltip="t('interview.new.customQuestions.tooltip')"
+          class="source-help"
         >
           <QuestionMarkCircledIcon aria-hidden="true" />
         </span>
@@ -997,7 +997,7 @@
                 accept=".pdf,.txt,.md,.csv,.xls,.xlsx,.png,.jpg,.jpeg,text/plain,text/markdown,text/csv,application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,image/png,image/jpeg"
                 :disabled="isExtractingQuestionsFile"
                 @change="onCustomQuestionsFileChange"
-              />
+              >
               <label
                 class="file-drop file-drop--compact button-loader-host"
                 for="custom-questions-file"
@@ -1041,8 +1041,8 @@
           </div>
 
           <label class="toggle-option">
-            <input v-model="customOnlyEnabled" type="checkbox" />
-            <span class="toggle-switch" aria-hidden="true"></span>
+            <input v-model="customOnlyEnabled" type="checkbox" >
+            <span class="toggle-switch" aria-hidden="true"/>
             <span class="toggle-copy">
               <strong>{{ t('interview.new.customQuestions.onlyMine') }}</strong>
               <small>{{
@@ -1202,9 +1202,9 @@
         aria-live="polite"
       >
         <div class="interview-start-visual" aria-hidden="true">
-          <span class="interview-start-ring"></span>
-          <span class="interview-start-ring interview-start-ring--slow"></span>
-          <span class="interview-start-core"></span>
+          <span class="interview-start-ring"/>
+          <span class="interview-start-ring interview-start-ring--slow"/>
+          <span class="interview-start-core"/>
         </div>
 
         <div class="interview-start-content">
@@ -1222,7 +1222,7 @@
               :key="step"
               :class="{ 'interview-start-steps__item--active': index === preparationStepIndex }"
             >
-              <span></span>
+              <span/>
               {{ t(step) }}
             </li>
           </ol>

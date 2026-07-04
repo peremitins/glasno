@@ -30,13 +30,13 @@ const description = computed(() => t(termMessages[props.term].description));
 
 <template>
   <span
-    class="term-tooltip"
-    tabindex="0"
-    :title="description"
     v-tooltip="{
       content: description,
       triggers: ['hover', 'focus', 'click', 'touch'],
     }"
+    class="term-tooltip"
+    tabindex="0"
+    :title="description"
   >
     {{ displayLabel }}
   </span>
