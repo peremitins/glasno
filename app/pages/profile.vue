@@ -326,7 +326,7 @@
           autocomplete="email"
           :disabled="step === 'code' || auth.isSubmitting"
           required
-        />
+        >
       </div>
 
       <div v-if="step === 'code'" class="field">
@@ -342,7 +342,7 @@
           maxlength="6"
           :disabled="auth.isSubmitting"
           required
-        />
+        >
       </div>
 
       <p v-if="devCode" class="notice glass-card">

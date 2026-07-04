@@ -3,8 +3,7 @@ import {
   ReportAnalysisDto,
   type ReportAnalysis,
 } from '@/shared/dto';
-import type { ReportEngine } from '@/server/interface/reportEngine';
-import type { AnalyzeReportParams } from '@/server/interface/reportEngine';
+import type { ReportEngine, AnalyzeReportParams  } from '@/server/interface/reportEngine';
 import { apiError } from '@/server/utils/errors';
 import type { RecordAiUsageInput } from '@/server/application/aiUsage/aiUsageService';
 import {

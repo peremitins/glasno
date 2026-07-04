@@ -24,16 +24,16 @@ const canUseDictation = computed(() => !props.disabled);
 
 <template>
   <button
-    class="mic-button"
-    type="button"
-    :class="{ 'mic-button--active': dictation.isListening.value }"
-    :disabled="!canUseDictation"
-    :aria-pressed="dictation.isListening.value"
     v-tooltip="
       dictation.isListening.value
         ? t('voice.dictation.stop')
         : t('voice.dictation.start')
     "
+    class="mic-button"
+    type="button"
+    :class="{ 'mic-button--active': dictation.isListening.value }"
+    :disabled="!canUseDictation"
+    :aria-pressed="dictation.isListening.value"
     @click="dictation.toggle"
   >
     <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">

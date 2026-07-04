@@ -42,7 +42,7 @@
     <section class="filters glass-frame glass-frame--soft">
       <label>
         <span>{{ t('questions.search') }}</span>
-        <input v-model="search" class="soft-control" type="search" />
+        <input v-model="search" class="soft-control" type="search" >
       </label>
       <label>
         <span>{{ t('questions.domain') }}</span>

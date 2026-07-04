@@ -491,6 +491,7 @@ export class InterviewService {
     });
 
     let reply = '';
+    // eslint-disable-next-line no-useless-assignment -- явная инициализация для читаемости
     let suggestMoveOn = false;
     while (true) {
       const next = await generator.next();
@@ -754,7 +755,7 @@ function normalizeQuestionList(questions: string[], fallbackRaw: string): string
 function normalizeQuestionCandidate(value: string): string {
   const normalized = value
     .trim()
-    .replace(/^\d+[\).:-]\s*/, '')
+    .replace(/^\d+[).:-]\s*/, '')
     .replace(/\s+/g, ' ');
   if (!normalized) return '';
   return /[?.!]$/.test(normalized) ? normalized : `${normalized}?`;

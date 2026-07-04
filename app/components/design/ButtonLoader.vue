@@ -1,6 +1,6 @@
 <template>
   <span class="button-loader" aria-hidden="true">
-    <span class="button-loader__spinner"></span>
+    <span class="button-loader__spinner"/>
   </span>
 </template>
 

@@ -76,14 +76,14 @@
         </NuxtLink>
 
         <button
-          type="button"
-          class="sidebar-toggle"
-          :aria-label="
+          v-tooltip="
             isSidebarCollapsed
               ? t('layout.sidebarExpand')
               : t('layout.sidebarCollapse')
           "
-          v-tooltip="
+          type="button"
+          class="sidebar-toggle"
+          :aria-label="
             isSidebarCollapsed
               ? t('layout.sidebarExpand')
               : t('layout.sidebarCollapse')
@@ -99,11 +99,11 @@
         <NuxtLink
           v-for="item in nav"
           :key="item.to"
+          v-tooltip="isSidebarCollapsed ? t(`nav.${item.key}`) : undefined"
           :to="item.to"
           class="nav-item"
           active-class="nav-item--active"
           :aria-label="t(`nav.${item.key}`)"
-          v-tooltip="isSidebarCollapsed ? t(`nav.${item.key}`) : undefined"
         >
           <span class="nav-ico" aria-hidden="true">
             <component :is="item.icon" />

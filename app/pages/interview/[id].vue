@@ -1169,9 +1169,9 @@
                 :is-speaking="isInterviewerSpeaking"
               />
               <button
+                v-tooltip="t('interview.session.interviewerPicker.open')"
                 class="interviewer-settings"
                 type="button"
-                v-tooltip="t('interview.session.interviewerPicker.open')"
                 :aria-label="t('interview.session.interviewerPicker.open')"
                 @click="interviewerPickerOpen = true"
               >
@@ -1199,7 +1199,7 @@
                 role="status"
                 aria-live="polite"
               >
-                <span class="vtile-voice-dot" aria-hidden="true"></span>
+                <span class="vtile-voice-dot" aria-hidden="true"/>
                 {{
                   userSpeaking
                     ? t('interview.session.stage.speaking')
@@ -1221,9 +1221,9 @@
             <p><TextWithInterviewTerms :text="currentTurn.question" /></p>
             <button
               v-if="isTtsEnabled"
+              v-tooltip="t('voice.tts.listen')"
               class="listen-mini"
               type="button"
-              v-tooltip="t('voice.tts.listen')"
               :disabled="isSpeakingQuestion || realtimeVoiceLocked"
               :aria-label="t('voice.tts.listen')"
               @click="speakQuestion"
@@ -1235,13 +1235,13 @@
           <!-- Нижний док с иконками (управление звонком) -->
           <div class="dock glass-frame">
             <button
+              v-tooltip="t('interview.session.controls.cameraTip')"
               class="dock-btn"
               :class="{
                 'dock-btn--active': cameraLive,
                 'dock-btn--off': !cameraLive,
               }"
               type="button"
-              v-tooltip="t('interview.session.controls.cameraTip')"
               @click="toggleCamera"
             >
               <VideoIcon aria-hidden="true" />
@@ -1251,10 +1251,10 @@
             </button>
 
             <button
+              v-tooltip="t('interview.session.controls.chatTip')"
               class="dock-btn"
               :class="{ 'dock-btn--active': chatOpen }"
               type="button"
-              v-tooltip="t('interview.session.controls.chatTip')"
               @click="toggleChat"
             >
               <ChatBubbleIcon aria-hidden="true" />
@@ -1264,10 +1264,10 @@
             </button>
 
             <button
+              v-tooltip="t('interview.session.controls.hintsTip')"
               class="dock-btn"
               :class="{ 'dock-btn--active': hintsOpen }"
               type="button"
-              v-tooltip="t('interview.session.controls.hintsTip')"
               @click="toggleHints"
             >
               <LightningBoltIcon aria-hidden="true" />
@@ -1277,14 +1277,14 @@
             </button>
 
             <button
-              class="dock-btn"
-              :class="{ 'dock-btn--active': isFullscreen }"
-              type="button"
               v-tooltip="
                 isFullscreen
                   ? t('interview.session.controls.exitFs')
                   : t('interview.session.controls.enterFs')
               "
+              class="dock-btn"
+              :class="{ 'dock-btn--active': isFullscreen }"
+              type="button"
               @click="toggleFullscreen"
             >
               <ExitFullScreenIcon v-if="isFullscreen" aria-hidden="true" />
@@ -1295,10 +1295,10 @@
             </button>
 
             <button
+              v-tooltip="t('interview.session.controls.end')"
               class="dock-btn dock-btn--end button-loader-host"
               type="button"
               :disabled="isGeneratingReport"
-              v-tooltip="t('interview.session.controls.end')"
               @click="endInterview"
             >
               <ButtonLoader v-if="sessionAction === 'report'" />
@@ -1335,7 +1335,7 @@
                 role="status"
                 aria-live="polite"
               >
-                <span class="chat-conn-dot" aria-hidden="true"></span>
+                <span class="chat-conn-dot" aria-hidden="true"/>
                 <span class="chat-conn-text">{{
                   voiceConnected
                     ? t('voice.realtime.connectedBadge')
@@ -1343,9 +1343,9 @@
                 }}</span>
               </span>
               <button
+                v-tooltip="t('interview.session.controls.hidePanel')"
                 class="side-close"
                 type="button"
-                v-tooltip="t('interview.session.controls.hidePanel')"
                 @click="toggleChat"
               >
                 <Cross2Icon aria-hidden="true" />
@@ -1368,17 +1368,17 @@
                 <p><TextWithInterviewTerms :text="message.content" /></p>
                 <button
                   v-if="isTtsEnabled && message.role === 'assistant'"
+                  v-tooltip="
+                    speakingMessageId === message.id
+                      ? t('voice.tts.stop')
+                      : t('voice.tts.listen')
+                  "
                   class="bubble-listen"
                   :class="{
                     'bubble-listen--active': speakingMessageId === message.id,
                   }"
                   type="button"
                   :disabled="realtimeVoiceLocked"
-                  v-tooltip="
-                    speakingMessageId === message.id
-                      ? t('voice.tts.stop')
-                      : t('voice.tts.listen')
-                  "
                   :aria-label="
                     speakingMessageId === message.id
                       ? t('voice.tts.stop')
@@ -1446,12 +1446,12 @@
                   />
                 </div>
                 <button
+                  v-tooltip="t('interview.session.send')"
                   class="send-btn button-loader-host"
                   type="submit"
                   :disabled="
                     answer.trim().length < 1 || isSending || realtimeVoiceLocked
                   "
-                  v-tooltip="t('interview.session.send')"
                   :aria-label="t('interview.session.send')"
                 >
                   <ButtonLoader v-if="sessionAction === 'message'" />
@@ -1473,9 +1473,9 @@
             <header class="side-head">
               <h3>{{ t('interview.session.tabs.hints') }}</h3>
               <button
+                v-tooltip="t('interview.session.controls.hidePanel')"
                 class="side-close"
                 type="button"
-                v-tooltip="t('interview.session.controls.hidePanel')"
                 @click="toggleHints"
               >
                 <Cross2Icon aria-hidden="true" />
@@ -1708,7 +1708,7 @@
                     :src="getInterviewerFacePhotoSrc(opt.id)"
                     :alt="t(opt.modeLabel)"
                     @error="onThumbError(opt.id)"
-                  />
+                  >
                   <em v-else class="picker-initials">{{
                     group.key === 'male' ? 'М' : 'Ж'
                   }}</em>

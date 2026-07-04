@@ -16,7 +16,7 @@ export default defineNuxtConfig({
     '@': fileURLToPath(new URL('./', import.meta.url)),
   },
 
-  modules: ['@vueuse/nuxt', '@pinia/nuxt', 'shadcn-nuxt'],
+  modules: ['@vueuse/nuxt', '@pinia/nuxt', 'shadcn-nuxt', '@nuxt/eslint'],
 
   shadcn: {
     prefix: '',
