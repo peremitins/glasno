@@ -68,6 +68,27 @@ jobs:
           fi
           rm -f key.tmp
 
+      - name: Validate GHCR_PAT (docker login)
+        env:
+          GHCR_PAT: ${{ secrets.GHCR_PAT }}
+          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
+        run: |
+          echo "GHCR_USERNAME: длина ${#GHCR_USERNAME}; GHCR_PAT: длина ${#GHCR_PAT}"
+          if [ -z "$GHCR_PAT" ]; then
+            echo "::error::Секрет GHCR_PAT пуст. Нужен classic PAT (ghp_...) со scope read:packages"
+            exit 1
+          fi
+          case "$GHCR_PAT" in
+            ghp_*|github_pat_*) : ;;
+            *) echo "::error::GHCR_PAT не похож на GitHub-токен (должен начинаться с ghp_). Похоже, вставлено другое значение."; exit 1 ;;
+          esac
+          if echo "$GHCR_PAT" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin >/dev/null 2>&1; then
+            echo "OK: docker login в ghcr.io прошёл"
+          else
+            echo "::error::docker login ghcr.io отклонён — токен невалиден, истёк или без scope read:packages"
+            exit 1
+          fi
+
   deploy-landing:
     name: Deploy landing to PROD
     needs: [changes, preflight]
