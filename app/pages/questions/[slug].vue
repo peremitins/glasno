@@ -2,7 +2,11 @@
   import { computed } from 'vue';
   import { useI18n } from 'vue-i18n';
   import GlassSkeletonStack from '@/app/components/design/GlassSkeletonStack.vue';
-  import type { QuestionBankItemResponse } from '@/shared/dto';
+  import TextWithInterviewTerms from '@/app/components/design/TextWithInterviewTerms.vue';
+  import type {
+    LearningTermContext,
+    QuestionBankItemResponse,
+  } from '@/shared/dto';
 
   // Раздел «База вопросов» временно скрыт (вернём в Фазе 7 — SEO + монетизация).
   definePageMeta({ redirect: '/' });
@@ -24,6 +28,13 @@
       role: data.value?.item.role || data.value?.item.domainLabel || '',
     },
   }));
+
+  function questionBankTermContext(label: string): LearningTermContext {
+    return {
+      kind: 'question_bank',
+      label,
+    };
+  }
 </script>
 
 <template>
@@ -44,7 +55,12 @@
           {{ data.item.domainLabel }} ·
           {{ t(`questions.types.${data.item.type}`) }}
         </p>
-        <h1 class="page-title">{{ data.item.question }}</h1>
+        <h1 class="page-title">
+          <TextWithInterviewTerms
+            :text="data.item.question"
+            :context="questionBankTermContext('Вопрос из базы')"
+          />
+        </h1>
         <NuxtLink
           class="primary-action primary-action--compact"
           :to="trainLink"
@@ -55,12 +71,22 @@
 
       <section class="panel glass-frame">
         <h2>{{ t('questions.strongAnswer') }}</h2>
-        <p>{{ data.item.strongAnswer }}</p>
+        <p>
+          <TextWithInterviewTerms
+            :text="data.item.strongAnswer || ''"
+            :context="questionBankTermContext('Сильный ответ')"
+          />
+        </p>
       </section>
 
       <section class="panel glass-frame">
         <h2>{{ t('questions.commonMistakes') }}</h2>
-        <p>{{ data.item.commonMistakes }}</p>
+        <p>
+          <TextWithInterviewTerms
+            :text="data.item.commonMistakes || ''"
+            :context="questionBankTermContext('Типичные ошибки')"
+          />
+        </p>
       </section>
 
       <section v-if="data.related.length" class="panel glass-frame">
@@ -71,7 +97,11 @@
             :key="item.slug"
             :to="`/questions/${item.slug}`"
           >
-            {{ item.question }}
+            <TextWithInterviewTerms
+              :text="item.question"
+              :context="questionBankTermContext('Похожий вопрос')"
+              :interactive="false"
+            />
           </NuxtLink>
         </div>
       </section>

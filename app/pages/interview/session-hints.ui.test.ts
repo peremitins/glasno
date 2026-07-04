@@ -92,4 +92,11 @@ describe('interview session hints panel', () => {
     expect(source).toContain('background-clip: text');
     expect(source).not.toContain('hint-text-pulse');
   });
+
+  it('passes learning-term contexts for questions, chat messages, and hints', () => {
+    expect(source).toContain('learningTermContext');
+    expect(source).toContain("learningTermContext('interview_question'");
+    expect(source).toContain("learningTermContext('interview_message'");
+    expect(source).toContain("learningTermContext('interview_hint'");
+  });
 });
