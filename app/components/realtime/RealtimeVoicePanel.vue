@@ -84,6 +84,12 @@ const statusLabel = computed(() =>
   t(`voice.realtime.status.${realtimeVoice.status.value}`)
 );
 
+const iconButtonLabel = computed(() => {
+  if (realtimeVoice.isActive.value) return t('voice.realtime.stopShort');
+  if (isLocked.value) return t('voice.realtime.unlockShort');
+  return t('voice.realtime.startShort');
+});
+
 const elapsedLabel = computed(() => {
   const minutes = Math.floor(elapsedSeconds.value / 60);
   const seconds = elapsedSeconds.value % 60;
@@ -181,7 +187,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <!-- Компактный вариант: одна иконка-кнопка с тултипом (для композера чата) -->
+  <!-- Компактный CTA с тултипом для композера чата. -->
   <button
     v-if="variant === 'icon'"
     v-tooltip="
@@ -205,17 +211,26 @@ onBeforeUnmount(() => {
         'button-loader-content--loading': realtimeVoice.isBusy.value,
       }"
     >
-      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <path
-          d="M4 10v4M8 7v10M12 4v16M16 7v10M20 10v4"
-          stroke="currentColor"
-          stroke-width="1.8"
-          stroke-linecap="round"
-        />
-      </svg>
+      <span class="rt-icon-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none">
+          <path
+            d="M4 10v4M8 7v10M12 4v16M16 7v10M20 10v4"
+            stroke="currentColor"
+            stroke-width="1.8"
+            stroke-linecap="round"
+          />
+        </svg>
+      </span>
+      <span class="rt-icon-label">{{ iconButtonLabel }}</span>
+      <span
+        v-if="!realtimeVoice.isActive.value"
+        class="rt-icon-live"
+        aria-hidden="true"
+      >
+        LIVE
+      </span>
     </span>
-    <!-- Бейдж премиум-фичи (паттерн Mentala: ⭐ в углу кнопки) -->
-    <span v-if="isLocked" class="rt-lock-badge" aria-hidden="true">⭐</span>
+    <span v-if="isLocked" class="rt-lock-badge" aria-hidden="true">Pro</span>
   </button>
 
   <section v-else class="realtime-panel glass-frame glass-frame--soft">
@@ -246,7 +261,7 @@ onBeforeUnmount(() => {
             'button-loader-content--loading': realtimeVoice.isBusy.value,
           }"
         >
-          <span v-if="isLocked" aria-hidden="true">⭐</span>
+          <span v-if="isLocked" aria-hidden="true">Pro</span>
           {{
             realtimeVoice.isActive.value
               ? t('voice.realtime.stop')
@@ -268,31 +283,99 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-/* Иконка-кнопка realtime (вариант 'icon') — согласована с кнопкой диктовки. */
+/* CTA realtime (вариант 'icon') — заметнее обычной иконки и сохраняет текст на узких экранах. */
 .rt-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 44px;
+  gap: 8px;
+  min-width: 44px;
+  max-width: 100%;
   height: 44px;
-  border: 1px solid var(--glass-border);
-  border-radius: 12px;
-  color: var(--text-secondary);
-  background: var(--surface-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 48%, var(--glass-border));
+  border-radius: 999px;
+  color: var(--button-text);
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--accent) 92%, var(--button-bg)),
+      color-mix(in srgb, var(--accent-2) 78%, var(--button-bg))
+    );
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--glass-sheen) 22%, transparent),
+    0 12px 24px -16px color-mix(in srgb, var(--accent) 70%, transparent);
   cursor: pointer;
+  isolation: isolate;
+  overflow: hidden;
+  padding: 0 12px 0 10px;
   transition:
     transform 0.18s ease,
     border-color 0.18s ease,
     color 0.18s ease,
-    background 0.18s ease;
+    background 0.18s ease,
+    box-shadow 0.18s ease;
 }
-.rt-icon svg {
+
+.rt-icon::before {
+  position: absolute;
+  inset: 1px;
+  z-index: -1;
+  border-radius: inherit;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--glass-sheen) 16%, transparent),
+    transparent 44%
+  );
+  content: '';
+  pointer-events: none;
+}
+
+.rt-icon-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--glass-sheen) 16%, transparent);
+  color: currentColor;
+  flex: 0 0 auto;
+}
+
+.rt-icon-mark svg {
   width: 20px;
   height: 20px;
 }
+
+.rt-icon-label {
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 900;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.rt-icon-live {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  height: 18px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--glass-sheen) 18%, transparent);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  line-height: 1;
+}
+
 .rt-icon:hover {
-  border-color: var(--glass-border-strong);
-  color: var(--text-primary);
+  border-color: color-mix(in srgb, var(--accent) 65%, var(--glass-border-strong));
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--glass-sheen) 28%, transparent),
+    0 14px 28px -15px color-mix(in srgb, var(--accent) 78%, transparent);
+  transform: translateY(-1px);
 }
 .rt-icon:active {
   transform: translateY(1px);
@@ -301,7 +384,7 @@ onBeforeUnmount(() => {
   cursor: not-allowed;
   opacity: 0.55;
 }
-/* Бейдж премиум-фичи в углу кнопки (размеры/позиция — как в Mentala). */
+/* Бейдж премиум-фичи в углу кнопки. */
 .rt-lock-badge {
   position: absolute;
   top: -4px;
@@ -313,8 +396,11 @@ onBeforeUnmount(() => {
   justify-content: center;
   border-radius: 9999px;
   border: 1px solid var(--glass-border-strong);
-  background: color-mix(in srgb, #08080a 82%, transparent);
-  font-size: 9px;
+  background: color-mix(in srgb, var(--surface-solid) 82%, transparent);
+  color: var(--button-text);
+  font-family: var(--font-mono);
+  font-size: 8px;
+  font-weight: 900;
   line-height: 1;
   pointer-events: none;
 }
@@ -326,8 +412,13 @@ onBeforeUnmount(() => {
 /* Идёт разговор — акцентная подсветка + пульс. */
 .rt-icon--active {
   border-color: color-mix(in srgb, var(--accent) 55%, transparent);
-  color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--button-text);
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--danger) 72%, var(--button-bg)),
+      color-mix(in srgb, var(--accent) 76%, var(--button-bg))
+    );
   animation: rt-pulse 1.4s ease-in-out infinite;
 }
 @keyframes rt-pulse {
@@ -337,6 +428,12 @@ onBeforeUnmount(() => {
   }
   50% {
     box-shadow: 0 0 0 6px transparent;
+  }
+}
+
+@media (max-width: 380px) {
+  .rt-icon-live {
+    display: none;
   }
 }
 
