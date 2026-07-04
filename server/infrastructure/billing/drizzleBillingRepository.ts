@@ -464,7 +464,7 @@ export class DrizzleBillingRepository implements BillingRepository {
         await tx.insert(schema.realtimeMinuteGrants).values({
           userId: orderRow.userId,
           planId: plan.id,
-          sourceType: plan.kind === 'addon' ? 'addon' : 'subscription',
+          sourceType: plan.kind,
           subscriptionId,
           providerPaymentId: params.providerPaymentId,
           totalSeconds: plan.realtimeVoiceMinutes * 60,
