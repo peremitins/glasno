@@ -1,4 +1,4 @@
-# Заглушка: индексацию запрещаем через meta robots (noindex).
+# Заглушка: индексацию запрещаем через meta robots (noindex) и Disallow.
 # При запуске полноценного лендинга открыть индексацию и добавить sitemap.
 User-agent: *
 Disallow: /
