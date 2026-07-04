@@ -8,7 +8,7 @@
   } from 'vue';
   import { useI18n } from 'vue-i18n';
   import type { ApexOptions } from 'apexcharts';
-  import type { InterviewReportResponse } from '@/shared/dto';
+  import type { InterviewReportResponse, LearningTermContext } from '@/shared/dto';
   import GlassSkeletonStack from '@/app/components/design/GlassSkeletonStack.vue';
   import ReportGenerationPanel from '@/app/components/interview/ReportGenerationPanel.vue';
   import TextWithInterviewTerms from '@/app/components/design/TextWithInterviewTerms.vue';
@@ -149,6 +149,14 @@
     report.value?.id ? `/api/interview/reports/${report.value.id}/pdf` : '#'
   );
 
+  function reportTermContext(label: string): LearningTermContext {
+    return {
+      kind: 'report',
+      reportId: reportId.value,
+      label,
+    };
+  }
+
   watch(
     () => report.value?.status,
     (status) => {
@@ -222,8 +230,20 @@
             <strong>{{ report.overallScore }}</strong>
           </div>
           <div>
-            <h2>{{ report.verdict }}</h2>
-            <p>{{ report.summary }}</p>
+            <h2>
+              <TextWithInterviewTerms
+                :text="report.verdict || ''"
+                :context="reportTermContext('Вердикт')"
+                manual-selection
+              />
+            </h2>
+            <p>
+              <TextWithInterviewTerms
+                :text="report.summary || ''"
+                :context="reportTermContext('Краткое резюме')"
+                manual-selection
+              />
+            </p>
           </div>
           <a
             class="primary-action primary-action--compact"
@@ -253,7 +273,11 @@
             <h2>{{ t('report.topFixes') }}</h2>
             <ul class="fixes">
               <li v-for="fix in report.recommendations?.topFixes" :key="fix">
-                <TextWithInterviewTerms :text="fix" />
+                <TextWithInterviewTerms
+                  :text="fix"
+                  :context="reportTermContext('Главное улучшение')"
+                  manual-selection
+                />
               </li>
             </ul>
           </div>
@@ -267,34 +291,70 @@
               :key="item.turnId"
               class="question-card glass-card"
             >
-              <h3>{{ item.question }}</h3>
+              <h3>
+                <TextWithInterviewTerms
+                  :text="item.question"
+                  :context="reportTermContext('Вопрос')"
+                  manual-selection
+                />
+              </h3>
               <p>
                 <strong>{{ t('report.answer') }}:</strong>
-                <TextWithInterviewTerms :text="item.answer" />
+                <TextWithInterviewTerms
+                  :text="item.answer"
+                  :context="reportTermContext('Ответ')"
+                  manual-selection
+                />
               </p>
               <p>
                 <strong>{{ t('report.whatWorked') }}:</strong>
-                <TextWithInterviewTerms :text="item.whatWorked" />
+                <TextWithInterviewTerms
+                  :text="item.whatWorked"
+                  :context="reportTermContext('Что получилось')"
+                  manual-selection
+                />
               </p>
               <p>
                 <strong>{{ t('report.whatWeak') }}:</strong>
-                <TextWithInterviewTerms :text="item.whatWeak" />
+                <TextWithInterviewTerms
+                  :text="item.whatWeak"
+                  :context="reportTermContext('Что ослабило ответ')"
+                  manual-selection
+                />
               </p>
               <div v-if="item.modelAnswer" class="model-answer">
                 <span class="model-answer__label">{{
                   t('report.modelAnswer')
                 }}</span>
-                <p><TextWithInterviewTerms :text="item.modelAnswer" /></p>
+                <p>
+                  <TextWithInterviewTerms
+                    :text="item.modelAnswer"
+                    :context="reportTermContext('Сильный ответ')"
+                    manual-selection
+                  />
+                </p>
               </div>
               <p>
                 <strong>
-                  <TextWithInterviewTerms :text="t('report.strongerStar')" />:
+                  <TextWithInterviewTerms
+                    :text="t('report.strongerStar')"
+                    :context="reportTermContext('STAR')"
+                    manual-selection
+                  />:
                 </strong>
-                <TextWithInterviewTerms :text="item.strongerAnswerStar" />
+                <TextWithInterviewTerms
+                  :text="item.strongerAnswerStar"
+                  :context="reportTermContext('STAR-рекомендация')"
+                  manual-selection
+                />
               </p>
               <p>
                 <strong>{{ t('report.nextPractice') }}:</strong>
-                <TextWithInterviewTerms :text="item.nextPractice" />
+                <TextWithInterviewTerms
+                  :text="item.nextPractice"
+                  :context="reportTermContext('Следующая тренировка')"
+                  manual-selection
+                />
               </p>
             </article>
           </div>

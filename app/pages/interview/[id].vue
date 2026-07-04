@@ -14,6 +14,7 @@
     InterviewerFaceId,
     InterviewReportResponse,
     InterviewStateResponse,
+    LearningTermContext,
     QuestionHintPack,
   } from '@/shared/dto';
   import {
@@ -182,6 +183,18 @@
     return `${turn.id}:${
       latestInterviewerQuestionForHints(turn) || turn.question
     }`;
+  }
+
+  function learningTermContext(
+    kind: LearningTermContext['kind'],
+    label?: string
+  ): LearningTermContext {
+    return {
+      kind,
+      interviewSessionId: state.value?.session.id || sessionId.value,
+      turnId: currentTurn.value?.id,
+      ...(label ? { label } : {}),
+    };
   }
 
   function latestInterviewerQuestionForHints(
@@ -1199,7 +1212,7 @@
                 role="status"
                 aria-live="polite"
               >
-                <span class="vtile-voice-dot" aria-hidden="true"/>
+                <span class="vtile-voice-dot" aria-hidden="true" />
                 {{
                   userSpeaking
                     ? t('interview.session.stage.speaking')
@@ -1218,7 +1231,13 @@
                   : t('interview.session.question')
               }}
             </span>
-            <p><TextWithInterviewTerms :text="currentTurn.question" /></p>
+            <p>
+              <TextWithInterviewTerms
+                :text="currentTurn.question"
+                :context="learningTermContext('interview_question')"
+                manual-selection
+              />
+            </p>
             <button
               v-if="isTtsEnabled"
               v-tooltip="t('voice.tts.listen')"
@@ -1335,7 +1354,7 @@
                 role="status"
                 aria-live="polite"
               >
-                <span class="chat-conn-dot" aria-hidden="true"/>
+                <span class="chat-conn-dot" aria-hidden="true" />
                 <span class="chat-conn-text">{{
                   voiceConnected
                     ? t('voice.realtime.connectedBadge')
@@ -1365,7 +1384,15 @@
                 :class="`chat-message--${message.role}`"
               >
                 <small v-if="message.meta">{{ message.meta }}</small>
-                <p><TextWithInterviewTerms :text="message.content" /></p>
+                <p>
+                  <TextWithInterviewTerms
+                    :text="message.content"
+                    :context="
+                      learningTermContext('interview_message', message.meta)
+                    "
+                    manual-selection
+                  />
+                </p>
                 <button
                   v-if="isTtsEnabled && message.role === 'assistant'"
                   v-tooltip="
@@ -1518,6 +1545,8 @@
                     <h3 v-if="currentHintDetails?.focus">
                       <TextWithInterviewTerms
                         :text="currentHintDetails.focus"
+                        :context="learningTermContext('interview_hint')"
+                        manual-selection
                       />
                     </h3>
                     <p v-else class="hint-structure">
@@ -1526,6 +1555,8 @@
                           currentHintPack?.strongDirection ||
                           t('interview.session.noHints')
                         "
+                        :context="learningTermContext('interview_hint')"
+                        manual-selection
                       />
                     </p>
 
@@ -1537,7 +1568,11 @@
                         v-for="item in currentHintDetails.answerPlan"
                         :key="item"
                       >
-                        <TextWithInterviewTerms :text="item" />
+                        <TextWithInterviewTerms
+                          :text="item"
+                          :context="learningTermContext('interview_hint')"
+                          manual-selection
+                        />
                       </li>
                     </ul>
 
@@ -1550,7 +1585,11 @@
                           v-for="item in currentHintDetails.keyDefinitions"
                           :key="item"
                         >
-                          <TextWithInterviewTerms :text="item" />
+                          <TextWithInterviewTerms
+                            :text="item"
+                            :context="learningTermContext('interview_hint')"
+                            manual-selection
+                          />
                         </li>
                       </ul>
                     </template>
@@ -1562,11 +1601,17 @@
                       <p class="hint-structure">
                         <TextWithInterviewTerms
                           :text="currentHintPack.structure"
+                          :context="learningTermContext('interview_hint')"
+                          manual-selection
                         />
                       </p>
                       <ul class="hint-list">
                         <li v-for="item in currentHintPack.bullets" :key="item">
-                          <TextWithInterviewTerms :text="item" />
+                          <TextWithInterviewTerms
+                            :text="item"
+                            :context="learningTermContext('interview_hint')"
+                            manual-selection
+                          />
                         </li>
                       </ul>
                     </template>
@@ -1577,7 +1622,11 @@
                       </p>
                       <ul class="hint-list hint-list--avoid">
                         <li v-for="item in currentHintPack.avoid" :key="item">
-                          <TextWithInterviewTerms :text="item" />
+                          <TextWithInterviewTerms
+                            :text="item"
+                            :context="learningTermContext('interview_hint')"
+                            manual-selection
+                          />
                         </li>
                       </ul>
                     </template>
@@ -1587,6 +1636,8 @@
                 <p v-else class="hint-status">
                   <TextWithInterviewTerms
                     :text="t('interview.session.noHints')"
+                    :context="learningTermContext('interview_hint')"
+                    manual-selection
                   />
                 </p>
 
@@ -1615,6 +1666,8 @@
                   >
                     <TextWithInterviewTerms
                       :text="currentHintDetails.sampleAnswer"
+                      :context="learningTermContext('interview_hint')"
+                      manual-selection
                     />
                   </p>
                 </details>
@@ -1639,10 +1692,19 @@
                   >
                     <span>{{ item.index }}</span>
                     <p>
-                      {{
-                        item.question ||
-                        t('interview.session.plannedGlasnoQuestion')
-                      }}
+                      <TextWithInterviewTerms
+                        :text="
+                          item.question ||
+                          t('interview.session.plannedGlasnoQuestion')
+                        "
+                        :context="
+                          learningTermContext(
+                            'interview_question',
+                            'План интервью'
+                          )
+                        "
+                        manual-selection
+                      />
                     </p>
                   </li>
                 </ol>
@@ -2336,7 +2398,7 @@
     grid-template-areas:
       'badge .'
       'question listen';
-    align-items: center;
+    align-items: start;
     column-gap: 14px;
     row-gap: 8px;
     min-width: 0;

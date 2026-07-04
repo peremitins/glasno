@@ -2,7 +2,11 @@
   import { computed, ref } from 'vue';
   import { useI18n } from 'vue-i18n';
   import GlassSkeletonStack from '@/app/components/design/GlassSkeletonStack.vue';
-  import type { QuestionBankListResponse } from '@/shared/dto';
+  import TextWithInterviewTerms from '@/app/components/design/TextWithInterviewTerms.vue';
+  import type {
+    LearningTermContext,
+    QuestionBankListResponse,
+  } from '@/shared/dto';
 
   // Раздел «База вопросов» временно скрыт (вернём в Фазе 7 — SEO + монетизация).
   definePageMeta({ redirect: '/' });
@@ -35,6 +39,13 @@
       return true;
     });
   });
+
+  function questionBankTermContext(label: string): LearningTermContext {
+    return {
+      kind: 'question_bank',
+      label,
+    };
+  }
 </script>
 
 <template>
@@ -105,7 +116,13 @@
             >{{ item.domainLabel }} ·
             {{ t(`questions.types.${item.type}`) }}</span
           >
-          <h2>{{ item.question }}</h2>
+          <h2>
+            <TextWithInterviewTerms
+              :text="item.question"
+              :context="questionBankTermContext('Вопрос из базы')"
+              :interactive="false"
+            />
+          </h2>
           <p>{{ item.role || t('questions.all') }}</p>
         </NuxtLink>
       </template>

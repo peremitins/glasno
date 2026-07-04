@@ -8,7 +8,10 @@
   } from '@radix-icons/vue';
   import { computed } from 'vue';
   import { useI18n } from 'vue-i18n';
-  import type { DashboardSummaryResponse } from '@/shared/dto';
+  import type {
+    DashboardSummaryResponse,
+    LearningTermContext,
+  } from '@/shared/dto';
   import GlassSkeletonStack from '@/app/components/design/GlassSkeletonStack.vue';
   import TextWithInterviewTerms from '@/app/components/design/TextWithInterviewTerms.vue';
 
@@ -87,6 +90,13 @@
       total: activeSession.totalQuestions,
     });
   });
+
+  function dashboardTermContext(label: string): LearningTermContext {
+    return {
+      kind: 'dashboard',
+      label,
+    };
+  }
 
   function scenarioLink(
     scenario: DashboardSummaryResponse['quickScenarios'][number]
@@ -180,7 +190,11 @@
               <span>
                 <strong>{{ scenario.title }}</strong>
                 <small>
-                  <TextWithInterviewTerms :text="scenario.subtitle" />
+                  <TextWithInterviewTerms
+                    :text="scenario.subtitle"
+                    :context="dashboardTermContext('Быстрый сценарий')"
+                    :interactive="false"
+                  />
                 </small>
               </span>
               <ArrowRightIcon aria-hidden="true" />
@@ -198,14 +212,20 @@
 
           <ol v-if="summary?.topFixes.length" class="fixes">
             <li v-for="fix in summary.topFixes" :key="fix">
-              <TextWithInterviewTerms :text="fix" />
+              <TextWithInterviewTerms
+                :text="fix"
+                :context="dashboardTermContext('Главное улучшение')"
+              />
             </li>
           </ol>
           <div v-else class="tips">
             <article v-for="tip in tips" :key="tip.key" class="tip">
               <strong>{{ tip.title }}</strong>
               <span>
-                <TextWithInterviewTerms :text="tip.text" />
+                <TextWithInterviewTerms
+                  :text="tip.text"
+                  :context="dashboardTermContext('Совет')"
+                />
               </span>
             </article>
           </div>
