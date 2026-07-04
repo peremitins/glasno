@@ -44,7 +44,9 @@ export async function startRealtimeWebrtcClient(
 
   const peerConnection = new RTCPeerConnection();
   let stopped = false;
-  let inputActivityInterval: ReturnType<typeof setInterval> | null = null;
+  // number, а не ReturnType<typeof setInterval>: в браузере setInterval
+  // возвращает number, а @types/node подмешивает перегрузку с Timeout.
+  let inputActivityInterval: number | null = null;
   let inputAudioContext: AudioContext | null = null;
   let inputAudioSource: MediaStreamAudioSourceNode | null = null;
   let inputAnalyser: AnalyserNode | null = null;

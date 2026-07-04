@@ -449,7 +449,9 @@ export function float32ToPcm16Bytes(input: Float32Array): Uint8Array {
   return output;
 }
 
-export function pcm16BytesToFloat32(input: Uint8Array): Float32Array {
+export function pcm16BytesToFloat32(
+  input: Uint8Array
+): Float32Array<ArrayBuffer> {
   const view = new DataView(input.buffer, input.byteOffset, input.byteLength);
   const output = new Float32Array(Math.floor(input.byteLength / 2));
 

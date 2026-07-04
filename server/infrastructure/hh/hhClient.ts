@@ -103,8 +103,10 @@ function extractJsonLdVacancy(html: string): HhVacancyJsonLd | null {
   );
 
   for (const script of scripts) {
+    const raw = script[1];
+    if (!raw) continue;
     try {
-      const parsed = JSON.parse(script[1].trim());
+      const parsed = JSON.parse(raw.trim());
       const vacancy = normalizeJsonLdItems(parsed).find(isJobPosting);
       if (vacancy) return vacancy;
     } catch {
