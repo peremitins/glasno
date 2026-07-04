@@ -1,4 +1,3 @@
-import { $fetch } from 'ofetch';
 import type {
   ExplainLearningTermRequest,
   ExplainLearningTermResponse,
@@ -17,17 +16,13 @@ import {
   extractUsageAmounts,
   parseJsonObject,
 } from './openaiInterviewEngine';
+import {
+  sendOpenAiResponsesRequest,
+  type OpenAiResponsesPurpose,
+} from './openaiResponsesClient';
+import { compactGeneratedText } from './textNormalization';
 
-const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
 const MAX_EXTRACTED_TERMS = 3;
-
-function compactText(value: unknown, fallback: string, maxLength: number): string {
-  const raw = typeof value === 'string' ? value : '';
-  const compacted = raw.trim().replace(/\s+/g, ' ');
-  const text = compacted || fallback;
-  if (text.length <= maxLength) return text;
-  return `${text.slice(0, maxLength - 1).trimEnd()}…`;
-}
 
 function findPhraseInText(text: string, phrase: string): string | null {
   const needle = phrase.trim();
@@ -64,7 +59,7 @@ export function normalizeLearningTermsForText(
     if (seen.has(key)) continue;
     seen.add(key);
 
-    const shortDefinition = compactText(
+    const shortDefinition = compactGeneratedText(
       term.shortDefinition ?? term.definition,
       `${phrase} — понятие из текущего текста.`,
       180
@@ -88,13 +83,13 @@ export function normalizeLearningTermExplanation(
 
   return {
     term,
-    title: compactText(raw.title, term, 120),
-    shortDefinition: compactText(
+    title: compactGeneratedText(raw.title, term, 120),
+    shortDefinition: compactGeneratedText(
       raw.shortDefinition,
       fallbackShortDefinition || `${term} — понятие из текущего текста.`,
       180
     ),
-    explanation: compactText(
+    explanation: compactGeneratedText(
       raw.explanation,
       fallbackShortDefinition || `${term} — понятие из текущего текста.`,
       900
@@ -176,7 +171,7 @@ export class OpenAiLearningTermsEngine implements LearningTermsEngine {
     instruction: string;
     userText: string;
     maxOutputTokens: number;
-    kind: string;
+    kind: OpenAiResponsesPurpose | string;
     context: {
       userId: string | null;
       anonymousSessionId: string | null;
@@ -184,24 +179,17 @@ export class OpenAiLearningTermsEngine implements LearningTermsEngine {
     };
   }): Promise<Record<string, unknown>> {
     if (!this.options.apiKey) {
-      throw apiError('E_UPSTREAM', 'NUXT_OPENAI_API_KEY не задан');
+      throw apiError('E_UPSTREAM', 'Провайдер обработки не настроен');
     }
 
     const startedAt = Date.now();
     try {
-      const response: unknown = await $fetch(OPENAI_RESPONSES_URL, {
-        method: 'POST',
-        timeout: 30_000,
-        headers: {
-          Authorization: `Bearer ${this.options.apiKey}`,
-          'Content-Type': 'application/json',
-          ...(this.options.organization
-            ? { 'OpenAI-Organization': this.options.organization }
-            : {}),
-          ...(this.options.project
-            ? { 'OpenAI-Project': this.options.project }
-            : {}),
-        },
+      const response = await sendOpenAiResponsesRequest<unknown>({
+        purpose: params.kind,
+        timeoutMs: 30_000,
+        apiKey: this.options.apiKey,
+        organization: this.options.organization,
+        project: this.options.project,
         body: {
           model: this.options.model,
           max_output_tokens: params.maxOutputTokens,
@@ -233,7 +221,7 @@ export class OpenAiLearningTermsEngine implements LearningTermsEngine {
       return parseJsonObject(extractResponsesText(response));
     } catch (err) {
       if (err && typeof err === 'object' && 'data' in err) throw err;
-      throw apiError('E_UPSTREAM', 'OpenAI не смог обработать термин', {
+      throw apiError('E_UPSTREAM', 'Не удалось обработать термин', {
         cause: err instanceof Error ? err.message : String(err),
       });
     }

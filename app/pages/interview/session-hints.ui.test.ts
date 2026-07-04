@@ -93,6 +93,18 @@ describe('interview session hints panel', () => {
     expect(source).not.toContain('hint-text-pulse');
   });
 
+  it('lets sample answers finish naturally instead of showing UI ellipsis', () => {
+    const hintSampleStart = source.indexOf('.hint-sample {');
+    const hintSampleEnd = source.indexOf('}', hintSampleStart);
+    const hintSampleBlock = source.slice(hintSampleStart, hintSampleEnd);
+
+    expect(hintSampleBlock).toContain('overflow-wrap: anywhere');
+    expect(hintSampleBlock).toContain('white-space: normal');
+    expect(hintSampleBlock).not.toContain('text-overflow: ellipsis');
+    expect(hintSampleBlock).not.toContain('white-space: nowrap');
+    expect(hintSampleBlock).not.toContain('-webkit-line-clamp');
+  });
+
   it('passes learning-term contexts for questions, chat messages, and hints', () => {
     expect(source).toContain('learningTermContext');
     expect(source).toContain("learningTermContext('interview_question'");

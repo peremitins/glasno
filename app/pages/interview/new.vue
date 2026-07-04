@@ -44,6 +44,7 @@
     resolveProfessionSelection,
   } from '@/app/utils/interviewSource';
   import { buildResumePreviewBlocks } from '@/app/utils/resumePreview';
+  import { sanitizeProviderErrorMessage } from '@/app/utils/providerErrorMessage';
 
   type SourceMode = 'hh_url' | 'manual';
   type InterviewLevel = CreateInterviewSessionRequest['level'];
@@ -497,17 +498,19 @@
   }
 
   function extractApiError(error: unknown): string {
+    const fallback = t('interview.common.unknownError');
     if (error && typeof error === 'object' && 'data' in error) {
       const data = (
         error as { data?: { error?: { code?: string; message?: string } } }
       ).data;
       errorCode.value = data?.error?.code || '';
-      return data?.error?.message || t('interview.common.unknownError');
+      return sanitizeProviderErrorMessage(data?.error?.message, fallback);
     }
     errorCode.value = '';
-    return error instanceof Error
-      ? error.message
-      : t('interview.common.unknownError');
+    return sanitizeProviderErrorMessage(
+      error instanceof Error ? error.message : '',
+      fallback
+    );
   }
 
   async function onResumeFileChange(event: Event) {

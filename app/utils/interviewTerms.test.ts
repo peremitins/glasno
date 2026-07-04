@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { splitTextByInterviewTerms } from './interviewTerms';
+import {
+  prepareInterviewTextDisplaySegments,
+  splitTextByInterviewTerms,
+} from './interviewTerms';
 
 describe('interview term highlighter', () => {
   it('splits STAR into a tooltip-ready term segment', () => {
@@ -69,6 +72,30 @@ describe('interview term highlighter', () => {
         },
       },
       { kind: 'text', value: '.' },
+    ]);
+  });
+
+  it('attaches leading punctuation to the previous displayed term', () => {
+    const term = {
+      phrase: 'рендеринга/состояния',
+      shortDefinition: 'Связка рендеринга и состояния.',
+    };
+
+    expect(
+      prepareInterviewTextDisplaySegments(
+        splitTextByInterviewTerms('изменение рендеринга/состояния), затем', [
+          term,
+        ])
+      )
+    ).toEqual([
+      { kind: 'text', value: 'изменение ' },
+      {
+        kind: 'term',
+        value: 'рендеринга/состояния',
+        term,
+        attachedPunctuation: '),',
+      },
+      { kind: 'text', value: ' затем' },
     ]);
   });
 });

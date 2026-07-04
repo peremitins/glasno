@@ -60,6 +60,7 @@ describe('openai learning terms engine helpers', () => {
 
     expect(terms).toHaveLength(1);
     expect(terms[0]?.shortDefinition.length).toBeLessThanOrEqual(180);
+    expect(terms[0]?.shortDefinition).not.toMatch(/…$/);
   });
 
   it('does not use local semantic allow or deny lists', () => {

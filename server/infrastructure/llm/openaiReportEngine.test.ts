@@ -17,12 +17,24 @@ describe('openai report engine helpers', () => {
     });
   });
 
-  it('forbids invented facts and metrics in model answers', () => {
+  it('forbids invented facts without bracket placeholders or ellipsis', () => {
     const instruction = buildInstruction();
 
     expect(instruction).toContain('Не выдумывай факты');
-    expect(instruction).toContain('[подставьте реальный результат]');
-    expect(instruction).toContain('[добавьте метрику]');
+    expect(instruction).toContain('Сильных элементов в ответе не выявлено.');
+    expect(instruction).toContain('без многоточий');
+    expect(instruction).not.toContain('...');
+    expect(instruction).not.toContain('…');
+    expect(instruction).not.toMatch(/\[[^\]]+\]/);
     expect(instruction).toContain('не должен создавать ложное впечатление');
+  });
+
+  it('requires a full scored structure for every main and clarification question', () => {
+    const instruction = buildInstruction();
+
+    expect(instruction).toContain('каждого основного и уточняющего вопроса');
+    expect(instruction).toContain('"kind":"main"');
+    expect(instruction).toContain('"kind":"clarification"');
+    expect(instruction).toContain('"criteria":{"structure"');
   });
 });

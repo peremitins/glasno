@@ -36,6 +36,8 @@
   --accent: #7c5cff;
   --accent-2: #48d7ff;
   --danger: #ff6b7a;
+  --warning: #f2c85b;
+  --success: #54d68a;
   --on-accent: #ffffff;
   --avatar-bg: linear-gradient(135deg, #f5d0fe, #7dd3fc);
   --avatar-text: #101421;
@@ -135,6 +137,8 @@ html[data-theme='light'] {
   --text-secondary: rgba(31, 35, 62, 0.74);
   --text-muted: rgba(59, 65, 101, 0.58);
   --focus-ring: rgba(111, 83, 244, 0.46);
+  --warning: #b97713;
+  --success: #148a52;
   --button-bg: linear-gradient(135deg, #536eff 0%, #795cff 58%, #a85cff 100%);
   --button-bg-hover: linear-gradient(
     135deg,

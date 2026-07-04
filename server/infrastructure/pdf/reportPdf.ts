@@ -78,7 +78,18 @@ export async function renderReportPdf(report: InterviewReport): Promise<Buffer> 
         doc.fontSize(12).text(formatReportPdfText(item.question), {
           underline: true,
         });
+        doc
+          .fontSize(9)
+          .fillColor('#555')
+          .text(reportQuestionKindLabel(item.kind));
+        doc.fillColor('#000');
         doc.fontSize(10).text(`Ответ: ${formatReportPdfText(item.answer)}`);
+        if (item.criteria) {
+          doc.text('Оценки по вопросу');
+          for (const [key, value] of Object.entries(item.criteria)) {
+            doc.text(`${criteriaLabel(key)}: ${value}/100`);
+          }
+        }
         doc.text(`Что хорошо: ${formatReportPdfText(item.whatWorked)}`);
         doc.text(`Что слабо: ${formatReportPdfText(item.whatWeak)}`);
         if (item.modelAnswer) {
@@ -125,4 +136,8 @@ export function reportPdfCriteriaLabel(key: string): string {
 
 function criteriaLabel(key: string): string {
   return reportPdfCriteriaLabel(key);
+}
+
+function reportQuestionKindLabel(kind: string): string {
+  return kind === 'clarification' ? 'Уточнение' : 'Основной вопрос';
 }
