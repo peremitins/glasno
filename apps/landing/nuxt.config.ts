@@ -18,6 +18,21 @@ export default defineNuxtConfig({
   alias: {
     '@': landingRoot,
   },
+  modules: ['nuxt-yandex-metrika'],
+  // Яндекс.Метрика: ID из env (NUXT_PUBLIC_YANDEX_METRIKA_ID). Без ID модуль
+  // не активируется — локальная разработка не шлёт хиты.
+  yandexMetrika: {
+    id:
+      String(process.env.NUXT_PUBLIC_YANDEX_METRIKA_ID || '').trim() ||
+      undefined,
+    cdn: true,
+    options: {
+      webvisor: true,
+      clickmap: true,
+      trackLinks: true,
+      accurateTrackBounce: true,
+    },
+  },
   css: [landingCss],
   nitro: {
     prerender: {

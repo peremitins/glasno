@@ -65,6 +65,7 @@ jobs:
         env:
           NUXT_PUBLIC_APP_AUTH_URL: https://my.glasno.app/auth
           NUXT_PUBLIC_LANDING_SITE_URL: https://glasno.app
+          NUXT_PUBLIC_YANDEX_METRIKA_ID: ${{ vars.NUXT_PUBLIC_YANDEX_METRIKA_ID || '110383411' }}
 
       - name: Prepare SSH key for landing deploy
         run: |

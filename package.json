@@ -41,6 +41,7 @@
     "nanoid": "^5.1.6",
     "nodemailer": "^6.9.14",
     "nuxt": "^4.1.2",
+    "nuxt-yandex-metrika": "^2.0.2",
     "ofetch": "^1.4.1",
     "openai": "^4.104.0",
     "pdf-parse": "^2.4.5",

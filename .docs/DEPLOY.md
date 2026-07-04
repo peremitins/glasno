@@ -90,11 +90,45 @@ HSTS preload — сайт работает **только по HTTPS**; это �
 
 ## Локальная разработка
 
-- Приложение: `pnpm dev` (localhost:3000), БД `glasno` на общем Postgres
-  Mentala (127.0.0.1:54320), Redis logical DB `/1`.
+- Приложение: `pnpm dev` (localhost:3000). БД `glasno` — в контейнере
+  `glasno-postgres-prod` на сервере (общая dev+prod, см. техдолг №1);
+  локальный доступ через ssh-туннель: локальный порт **54340** → серверный
+  5434. Строка для `~/.ssh/config` (блок `Host mentala-yc-dev` или свой):
+  `LocalForward 54340 127.0.0.1:5434`. Redis — локальный, logical DB `/1`.
 - Лендинг: `pnpm landing:dev` (localhost:3001), CTA ведёт на localhost:3000.
 - Статический экспорт лендинга: `pnpm landing:generate` →
   `apps/landing/.output/public`.
+
+## Технический долг (временные решения — исправить обязательно)
+
+Принято 2026-07-04 ради скорости запуска, «потом разделим»:
+
+1. **Общая БД dev и prod** — одна база `glasno` в контейнере
+   `glasno-postgres-prod`; локальная разработка ходит в неё же через
+   ssh-туннель (локальный порт 54340 → серверный 5434). Позже: отдельная
+   dev-БД (локальная или на сервере) + отдельные прод-секреты.
+2. **Секреты сессий/шифрования одинаковые в dev и prod**
+   (`NUXT_SESSION_SECRET`, `AUTH_EMAIL_CODE_SECRET`, `EMAIL_HASH_PEPPER`,
+   `SUMMARY_AES_KEY`). При разделении БД сгенерировать прод-секреты заново
+   (`openssl rand -hex 32`). Внимание: смена `EMAIL_HASH_PEPPER`/
+   `SUMMARY_AES_KEY` ломает доступ к существующим данным — потребуется
+   миграция.
+3. **YooKassa — боевой магазин Mentala** (`NUXT_YOOKASSA_TEST_MODE=false`):
+   платежи Гласно падают в кассу Mentala. Завести отдельный магазин Гласно
+   и прописать webhook `https://my.glasno.app/api/billing/webhook/yookassa`.
+4. **OpenAI ключ и AI-relay общие с Mentala** (тот же ключ, тот же
+   `AI_RELAY_CLIENT_ID`). Позже: отдельный ключ/клиент для раздельного учёта
+   расходов.
+5. **Telegram-алерты деплоя — бот Mentala** (в тексте алертов явно указано
+   `glasno`). Продуктового бота Гласно (для Telegram-входа) нет —
+   `NUXT_TELEGRAM_BOT_TOKEN` пуст; создать через @BotFather при включении
+   Telegram-логина.
+6. **SMTP — общий ящик с Mentala** (отправитель подписан «Гласно»).
+7. **Лендинг — заглушка с noindex**; при запуске полноценного лендинга убрать
+   `robots: noindex` из `apps/landing/nuxt.config.ts` и `Disallow` из
+   `robots.txt`, добавить sitemap.
+8. **Метрика только на лендинге**; в приложение (my.glasno.app) добавить при
+   необходимости.
 
 ## Риски / что проверить после первого деплоя
 
