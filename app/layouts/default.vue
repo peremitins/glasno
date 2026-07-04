@@ -108,7 +108,11 @@
           <span class="nav-ico" aria-hidden="true">
             <component :is="item.icon" />
           </span>
-          <span class="nav-label">{{ t(`nav.${item.key}`) }}</span>
+          <span
+            class="nav-label"
+            :class="{ 'nav-label--collapsed': isSidebarCollapsed }"
+            >{{ t(`nav.${item.key}`) }}</span
+          >
         </NuxtLink>
       </nav>
 
@@ -207,7 +211,7 @@
   }
 
   .layout-shell--collapsed {
-    grid-template-columns: 88px minmax(0, 1fr);
+    grid-template-columns: 72px minmax(0, 1fr);
   }
 
   .sidebar {
@@ -419,36 +423,98 @@
   }
 
   .layout-shell--collapsed .sidebar {
-    padding: 12px;
+    align-items: center;
+    padding: 14px 12px;
+    border-width: 0;
+    border-color: transparent;
+    background: linear-gradient(
+        180deg,
+        color-mix(in srgb, var(--surface-raised) 62%, transparent),
+        color-mix(in srgb, var(--surface-soft) 82%, transparent)
+      ),
+      var(--surface);
+    box-shadow: var(--shadow-soft);
+  }
+
+  .layout-shell--collapsed .sidebar.glass-frame::before {
+    opacity: 0;
+    animation: none;
   }
 
   .layout-shell--collapsed .sidebar-top {
+    align-items: center;
     flex-direction: column;
-    gap: 10px;
+    width: 100%;
+    gap: 12px;
+    margin-bottom: 22px;
   }
 
   .layout-shell--collapsed .brand {
     justify-content: center;
     gap: 0;
+    width: 48px;
+    height: 48px;
+  }
+
+  .layout-shell--collapsed .brand-mark {
+    width: 42px;
+    height: 42px;
+    border-radius: 16px;
+  }
+
+  .layout-shell--collapsed .sidebar-toggle {
+    flex-basis: 40px;
+    width: 40px;
+    height: 40px;
+    border-color: transparent;
+    border-radius: 15px;
+    background: var(--surface-soft);
+    box-shadow: inset 0 1px 0 var(--inner-highlight);
   }
 
   .layout-shell--collapsed .brand-text,
   .layout-shell--collapsed .nav-label {
+    display: none;
     width: 0;
     opacity: 0;
     overflow: hidden;
     transform: translateX(-6px);
   }
 
+  .layout-shell--collapsed .nav {
+    width: 100%;
+    gap: 8px;
+    justify-items: center;
+  }
+
   .layout-shell--collapsed .nav-item {
+    display: grid;
+    place-items: center;
     justify-content: center;
+    width: 48px;
+    height: 48px;
+    min-height: 48px;
     gap: 0;
     padding: 0;
+    border-radius: 16px;
+    background: var(--surface-soft);
+    box-shadow: inset 0 1px 0 var(--inner-highlight);
+  }
+
+  .layout-shell--collapsed .nav-item:hover {
+    transform: translateY(-1px);
   }
 
   .layout-shell--collapsed .nav-ico {
-    width: 40px;
-    height: 40px;
+    width: 20px;
+    height: 20px;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .layout-shell--collapsed .nav-ico svg {
+    width: 18px;
+    height: 18px;
   }
 
   .layout-shell--collapsed .sidebar-card {
