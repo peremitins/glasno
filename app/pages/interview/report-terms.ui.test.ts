@@ -37,7 +37,8 @@ describe('interview terminology UI', () => {
     expect(termComponent).not.toContain('term-tooltip__mark');
     expect(termComponent).not.toContain('display: inline-flex');
     expect(termComponent).not.toContain('font-weight: 900');
-    expect(termComponent).not.toContain('tabindex="0"');
+    // Не-интерактивный термин остаётся доступен с клавиатуры (focus-триггер).
+    expect(termComponent).toContain('tabindex="0"');
     expect(termComponent).toContain('background: var(--surface-solid) !important');
     expect(termComponent).not.toContain('background: var(--surface) !important');
     expect(termComponent).toContain('common.terms.star.description');

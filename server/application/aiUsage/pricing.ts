@@ -41,6 +41,14 @@ export const OPENAI_PRICING: Record<string, ModelPricing> = {
     outputPerMTokensUsd: 1.25,
     note: undefined,
   },
+  // Модель подсказок-терминов (learning terms): самый дешёвый тариф OpenAI.
+  'gpt-5-nano': {
+    ...ZERO,
+    inputPerMTokensUsd: 0.05,
+    cachedInputPerMTokensUsd: 0.005,
+    outputPerMTokensUsd: 0.4,
+    note: undefined,
+  },
   'gpt-4o': {
     ...ZERO,
     inputPerMTokensUsd: 2.5,

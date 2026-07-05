@@ -599,7 +599,7 @@
   }
 
   .status-main h2 {
-    font-size: 22px;
+    font-size: 18px;
     color: var(--text-primary);
   }
 
@@ -693,12 +693,12 @@
   }
 
   .plan-header h2 {
-    font-size: 20px;
+    font-size: 18px;
     color: var(--text-primary);
   }
 
   .plan-header h3 {
-    font-size: 17px;
+    font-size: 15px;
     color: var(--text-primary);
   }
 
@@ -717,7 +717,7 @@
   .price strong {
     color: var(--text-primary);
     font-family: var(--font-mono);
-    font-size: 28px;
+    font-size: 24px;
     line-height: 1;
   }
 

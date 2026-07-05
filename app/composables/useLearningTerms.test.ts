@@ -74,4 +74,26 @@ describe('useLearningTerms helpers', () => {
     expect(requestExtract.mock.calls[0]?.[0].items).toHaveLength(2);
     vi.useRealTimers();
   });
+
+  it('rejects queued entries on request failure instead of resolving empty terms', async () => {
+    vi.useFakeTimers();
+    const requestExtract = vi.fn().mockRejectedValue(new Error('network down'));
+    const batcher = createLearningTermsBatcher({
+      debounceMs: 20,
+      requestExtract,
+    });
+
+    const pending = batcher.enqueue({
+      id: 'one',
+      text: 'Что такое CORS?',
+      context: { kind: 'interview_question' },
+    });
+    // Ошибка сети не должна превращаться в «терминов нет» — иначе пустой
+    // результат навсегда осядет в кэше вызывающего кода.
+    const expectation = expect(pending).rejects.toThrow('network down');
+    await vi.advanceTimersByTimeAsync(20);
+
+    await expectation;
+    vi.useRealTimers();
+  });
 });

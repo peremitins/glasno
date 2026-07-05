@@ -72,6 +72,19 @@ describe('interview session hints panel', () => {
     expect(source).toContain('sampleAnswerQuestion');
   });
 
+  it('resets the hints scroll when new or refreshed hints replace the panel content', () => {
+    expect(source).toContain('hintsPane');
+    expect(source).toContain('scrollHintsToTop');
+    expect(source).toContain('hintsPane.value?.scrollTo({ top: 0');
+    expect(source).toMatch(
+      /state\.value = await api<InterviewStateResponse>\([\s\S]*?await nextTick\(\);[\s\S]*?scrollHintsToTop\('auto'\);/
+    );
+    expect(source).toMatch(
+      /\(\) => currentHintsRequestKey\.value,[\s\S]*?scrollHintsToTop\('auto'\);/
+    );
+    expect(source).toContain('ref="hintsPane"');
+  });
+
   it('applies persisted realtime dialogue state for hint refreshes', () => {
     expect(source).toMatch(
       /state\.value = await api<InterviewStateResponse>\(\s*`\/api\/interview\/sessions\/\$\{sessionId\.value\}\/dialogue`/

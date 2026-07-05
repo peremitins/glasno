@@ -166,11 +166,15 @@ function findPhraseMatches(
 ): TermMatch[] {
   const matches: TermMatch[] = [];
   const lowerText = text.toLocaleLowerCase();
-  const lowerPhrase = phrase.toLocaleLowerCase();
+  // При смене регистра длина строки может измениться (например, «İ» → «i̇»),
+  // тогда индексы сдвигаются относительно оригинала — ищем без сворачивания.
+  const useLower = lowerText.length === text.length;
+  const haystack = useLower ? lowerText : text;
+  const needle = useLower ? phrase.toLocaleLowerCase() : phrase;
   let cursor = 0;
 
   while (cursor < text.length) {
-    const index = lowerText.indexOf(lowerPhrase, cursor);
+    const index = haystack.indexOf(needle, cursor);
     if (index < 0) break;
     const end = index + phrase.length;
     if (hasWordBoundary(text, index, end)) {

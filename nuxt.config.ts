@@ -61,6 +61,7 @@ export default defineNuxtConfig({
     redisUrl: '',
     openaiApiKey: '',
     openaiModel: 'gpt-5.4-nano', // была 'gpt-4o-mini' (заменено 2026-07: дешевле/сильнее преемник)
+    openaiLearningModel: 'gpt-5-nano', // подсказки-термины: самая дешёвая модель
     realtimeModel: 'gpt-realtime',
     realtimeVoice: 'marin',
     realtimeTranscriptionModel: 'gpt-4o-mini-transcribe',

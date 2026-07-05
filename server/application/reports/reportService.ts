@@ -5,6 +5,7 @@ import type {
   ReportQuestionAnalysis,
 } from '@/shared/dto';
 import { apiError } from '@/server/utils/errors';
+import { assertOwnedInterviewSession } from '@/server/application/interview/sessionOwnership';
 import { logger } from '@/server/utils/logger';
 import type {
   InterviewRepository,
@@ -182,15 +183,7 @@ export class ReportService {
     userId?: string | null
   ) {
     const session = await this.deps.interviewRepository.findSessionById(sessionId);
-    if (!session) {
-      throw apiError('E_NOT_FOUND', 'Интервью не найдено');
-    }
-    const ownedByAnonymousSession = session.anonymousSessionId === anonymousSessionId;
-    const ownedByUser = Boolean(userId && session.userId === userId);
-    if (!ownedByAnonymousSession && !ownedByUser) {
-      throw apiError('E_FORBIDDEN', 'Нет доступа к этому интервью');
-    }
-    return session;
+    return assertOwnedInterviewSession(session, { anonymousSessionId, userId });
   }
 }
 

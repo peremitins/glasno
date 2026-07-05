@@ -186,6 +186,9 @@
     }`;
   }
 
+  // Без turnId: он менялся каждым ходом, из-за чего контекст всех видимых
+  // сообщений «обновлялся», перезапуская извлечение терминов и закрывая
+  // открытые попапы. Для владения и кэша достаточно interviewSessionId.
   function learningTermContext(
     kind: LearningTermContext['kind'],
     label?: string
@@ -193,7 +196,6 @@
     return {
       kind,
       interviewSessionId: state.value?.session.id || sessionId.value,
-      turnId: currentTurn.value?.id,
       ...(label ? { label } : {}),
     };
   }
@@ -1016,6 +1018,7 @@
   const hintsOpen = ref(false); // боковые подсказки
   const hintsLoading = ref(false);
   const hintsError = ref('');
+  const hintsPane = ref<HTMLElement | null>(null);
   const loadedHintRequestKeys = ref<Set<string>>(new Set());
   const hintsInitialLoading = computed(
     () => hintsLoading.value && !currentHintDetails.value
@@ -1055,6 +1058,10 @@
     }
   }
 
+  function scrollHintsToTop(behavior: ScrollBehavior = 'smooth') {
+    hintsPane.value?.scrollTo({ top: 0, behavior });
+  }
+
   async function generateHintsForCurrentTurn(force = false) {
     const turn = currentTurn.value;
     if (!turn || hintsLoading.value) return;
@@ -1087,6 +1094,8 @@
       loadedHintRequestKeys.value = new Set(loadedHintRequestKeys.value).add(
         requestKey
       );
+      await nextTick();
+      scrollHintsToTop('auto');
     } catch (err) {
       hintsError.value = extractApiError(err);
     } finally {
@@ -1107,6 +1116,7 @@
     () => currentHintsRequestKey.value,
     () => {
       if (hintsOpen.value) {
+        scrollHintsToTop('auto');
         void generateHintsForCurrentTurn();
       }
     }
@@ -1394,6 +1404,7 @@
                       learningTermContext('interview_message', message.meta)
                     "
                     manual-selection
+                    :highlight-terms="message.role !== 'user'"
                   />
                 </p>
                 <button
@@ -1512,7 +1523,7 @@
               </button>
             </header>
 
-            <div class="hints-pane">
+            <div ref="hintsPane" class="hints-pane">
               <template v-if="hintsInitialLoading">
                 <p class="sr-only">
                   {{ t('interview.session.hintsPanel.loading') }}
@@ -1773,7 +1784,7 @@
                     :src="getInterviewerFacePhotoSrc(opt.id)"
                     :alt="t(opt.modeLabel)"
                     @error="onThumbError(opt.id)"
-                  >
+                  />
                   <em v-else class="picker-initials">{{
                     group.key === 'male' ? 'М' : 'Ж'
                   }}</em>
@@ -1837,7 +1848,7 @@
 
   .session-compact-title {
     color: var(--text-primary);
-    font-size: clamp(24px, 2.6vw, 34px);
+    font-size: clamp(20px, 2vw, 28px);
     font-weight: 900;
     line-height: 1.08;
   }
@@ -1907,7 +1918,7 @@
   .chat-head h2 {
     margin: 0;
     color: var(--text-primary);
-    font-size: clamp(20px, 2vw, 28px);
+    font-size: clamp(17px, 1.6vw, 22px);
     line-height: 1.2;
   }
 
@@ -2419,7 +2430,7 @@
     grid-area: question;
     min-width: 0;
     margin: 0;
-    font-size: clamp(15px, 1.4vw, 18px);
+    font-size: clamp(14px, 1.15vw, 16px);
     font-weight: 600;
     line-height: 1.35;
     overflow-wrap: anywhere;
@@ -2999,6 +3010,7 @@
     .call {
       flex-direction: column;
       min-height: 0;
+      overflow: auto;
     }
     .call-stage {
       flex-basis: auto;
@@ -3203,7 +3215,7 @@
     object-fit: cover;
   }
   .picker-initials {
-    font-size: 26px;
+    font-size: 22px;
     font-weight: 900;
     font-style: normal;
     color: var(--text-primary);

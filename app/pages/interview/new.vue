@@ -1295,7 +1295,7 @@
 
   h2 {
     color: var(--text-primary);
-    font-size: clamp(22px, 2.2vw, 30px);
+    font-size: clamp(18px, 1.8vw, 24px);
     line-height: 1.08;
   }
 
@@ -2216,7 +2216,7 @@
 
   .interview-start-content h2 {
     color: var(--text-primary);
-    font-size: clamp(26px, 3vw, 42px);
+    font-size: clamp(22px, 2.4vw, 32px);
     line-height: 1.05;
   }
 

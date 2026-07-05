@@ -1,3 +1,8 @@
+import { z } from 'zod';
+import {
+  ExplainLearningTermResponseDto,
+  LearningTermCandidateDto,
+} from '@/shared/dto';
 import type {
   ExplainLearningTermRequest,
   ExplainLearningTermResponse,
@@ -8,8 +13,11 @@ import type {
   LearningTermContext,
 } from '@/shared/dto';
 
-const CACHE_VERSION = 'learning-terms-v1';
+// v2: ключи кэша больше не включают контекст — термины зависят от текста,
+// а не от того, на каком экране он показан.
+const CACHE_VERSION = 'learning-terms-v2';
 const MAX_SOURCE_TEXT_LENGTH = 2_000;
+const StoredTermsDto = z.array(LearningTermCandidateDto);
 const extractMemoryCache = new Map<string, LearningTermCandidate[]>();
 const explanationMemoryCache = new Map<string, ExplainLearningTermResponse>();
 let sharedBatcher: ReturnType<typeof createLearningTermsBatcher> | null = null;
@@ -21,6 +29,7 @@ type ExtractRequest = (
 interface BatcherEntry {
   item: ExtractLearningTermsItemRequest;
   resolve: (value: LearningTermCandidate[]) => void;
+  reject: (reason: unknown) => void;
 }
 
 export function learningTermContextKey(context: LearningTermContext): string {
@@ -74,17 +83,19 @@ export function createLearningTermsBatcher(params: {
       for (const entry of entries) {
         entry.resolve(termsById.get(entry.item.id) ?? []);
       }
-    } catch {
+    } catch (err) {
+      // Ошибка не равна «терминов нет»: пробрасываем её вызывающему коду,
+      // чтобы пустой результат не осел в кэше навсегда.
       for (const entry of entries) {
-        entry.resolve([]);
+        entry.reject(err);
       }
     }
   }
 
   return {
     enqueue(item: ExtractLearningTermsItemRequest) {
-      return new Promise<LearningTermCandidate[]>((resolve) => {
-        queue.push({ item, resolve });
+      return new Promise<LearningTermCandidate[]>((resolve, reject) => {
+        queue.push({ item, resolve, reject });
         schedule();
       });
     },
@@ -120,7 +131,7 @@ export function useLearningTerms() {
     const text = normalizeSourceText(params.text);
     if (text.length < 2) return [];
 
-    const key = extractCacheKey(text, params.context);
+    const key = extractCacheKey(text);
     const cached = extractMemoryCache.get(key) ?? readStoredTerms(key);
     if (cached) {
       extractMemoryCache.set(key, cached);
@@ -189,13 +200,8 @@ function normalizeExplainInput(
   };
 }
 
-function extractCacheKey(text: string, context: LearningTermContext): string {
-  return [
-    CACHE_VERSION,
-    'extract',
-    learningTermTextHash(text),
-    learningTermTextHash(learningTermContextKey(context)),
-  ].join(':');
+function extractCacheKey(text: string): string {
+  return [CACHE_VERSION, 'extract', learningTermTextHash(text)].join(':');
 }
 
 function explanationCacheKey(input: ExplainLearningTermRequest): string {
@@ -204,49 +210,17 @@ function explanationCacheKey(input: ExplainLearningTermRequest): string {
     'explain',
     learningTermTextHash(input.term),
     learningTermTextHash(input.text),
-    learningTermTextHash(learningTermContextKey(input.context)),
   ].join(':');
 }
 
 function readStoredTerms(key: string): LearningTermCandidate[] | null {
-  const value = readStoredValue(key);
-  if (!Array.isArray(value)) return null;
-  return value
-    .map((item) => {
-      if (!item || typeof item !== 'object') return null;
-      const raw = item as { phrase?: unknown; shortDefinition?: unknown };
-      if (
-        typeof raw.phrase !== 'string' ||
-        typeof raw.shortDefinition !== 'string'
-      ) {
-        return null;
-      }
-      return {
-        phrase: raw.phrase,
-        shortDefinition: raw.shortDefinition,
-      };
-    })
-    .filter((item): item is LearningTermCandidate => Boolean(item));
+  const parsed = StoredTermsDto.safeParse(readStoredValue(key));
+  return parsed.success ? parsed.data : null;
 }
 
 function readStoredExplanation(key: string): ExplainLearningTermResponse | null {
-  const value = readStoredValue(key);
-  if (!value || typeof value !== 'object') return null;
-  const raw = value as Partial<ExplainLearningTermResponse>;
-  if (
-    typeof raw.term !== 'string' ||
-    typeof raw.title !== 'string' ||
-    typeof raw.shortDefinition !== 'string' ||
-    typeof raw.explanation !== 'string'
-  ) {
-    return null;
-  }
-  return {
-    term: raw.term,
-    title: raw.title,
-    shortDefinition: raw.shortDefinition,
-    explanation: raw.explanation,
-  };
+  const parsed = ExplainLearningTermResponseDto.safeParse(readStoredValue(key));
+  return parsed.success ? parsed.data : null;
 }
 
 function readStoredValue(key: string): unknown {

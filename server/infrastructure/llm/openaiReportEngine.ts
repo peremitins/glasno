@@ -16,6 +16,121 @@ export function extractReportJson(response: any): Record<string, any> {
   return parseJsonObject(extractResponsesText(response));
 }
 
+// JSON Schema для structured outputs (strict). Гарантирует форму ответа на
+// стороне OpenAI: до этого модель «угадывала» структуру по текстовому промпту
+// и периодически возвращала recommendations массивом или теряла поля — отчёт
+// падал на Zod-валидации. question/answer модель НЕ возвращает: сервер сам
+// подставляет их из транскрипта по turnId (см. attachQuestionsToAnalysis) —
+// меньше выходных токенов и нет риска искажения исходных формулировок.
+const CRITERIA_JSON_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    structure: { type: 'integer', minimum: 0, maximum: 100 },
+    specificity: { type: 'integer', minimum: 0, maximum: 100 },
+    relevance: { type: 'integer', minimum: 0, maximum: 100 },
+    confidence: { type: 'integer', minimum: 0, maximum: 100 },
+    riskPhrases: { type: 'integer', minimum: 0, maximum: 100 },
+    brevity: { type: 'integer', minimum: 0, maximum: 100 },
+  },
+  required: [
+    'structure',
+    'specificity',
+    'relevance',
+    'confidence',
+    'riskPhrases',
+    'brevity',
+  ],
+} as const;
+
+export const REPORT_JSON_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    overallScore: { type: 'integer', minimum: 0, maximum: 100 },
+    verdict: { type: 'string' },
+    summary: { type: 'string' },
+    criteria: CRITERIA_JSON_SCHEMA,
+    recommendations: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        topFixes: {
+          type: 'array',
+          items: { type: 'string' },
+          minItems: 1,
+          maxItems: 5,
+        },
+      },
+      required: ['topFixes'],
+    },
+    questionAnalysis: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          turnId: { type: 'string' },
+          kind: { type: 'string', enum: ['main', 'clarification'] },
+          criteria: CRITERIA_JSON_SCHEMA,
+          whatWorked: { type: 'string' },
+          whatWeak: { type: 'string' },
+          modelAnswer: { type: 'string' },
+          strongerAnswerStar: { type: 'string' },
+          nextPractice: { type: 'string' },
+        },
+        required: [
+          'turnId',
+          'kind',
+          'criteria',
+          'whatWorked',
+          'whatWeak',
+          'modelAnswer',
+          'strongerAnswerStar',
+          'nextPractice',
+        ],
+      },
+    },
+  },
+  required: [
+    'overallScore',
+    'verdict',
+    'summary',
+    'criteria',
+    'recommendations',
+    'questionAnalysis',
+  ],
+} as const;
+
+// Модель возвращает разбор без текстов вопросов/ответов — подставляем их из
+// транскрипта по turnId, чтобы в отчёте были исходные формулировки из БД.
+export function attachQuestionsToAnalysis(
+  parsed: Record<string, unknown>,
+  turns: AnalyzeReportParams['turns']
+): Record<string, unknown> {
+  if (!Array.isArray(parsed.questionAnalysis)) return parsed;
+
+  const turnById = new Map(turns.map((turn) => [turn.id, turn]));
+  return {
+    ...parsed,
+    questionAnalysis: parsed.questionAnalysis.map((item: unknown) => {
+      const record =
+        item && typeof item === 'object'
+          ? (item as Record<string, unknown>)
+          : {};
+      const turn =
+        typeof record.turnId === 'string'
+          ? turnById.get(record.turnId)
+          : undefined;
+      return {
+        ...record,
+        question: turn?.question ?? '',
+        answer: turn?.answerTranscript ?? '',
+      };
+    }),
+  };
+}
+
 export class OpenAiReportEngine implements ReportEngine {
   constructor(
     private readonly options: {
@@ -42,7 +157,17 @@ export class OpenAiReportEngine implements ReportEngine {
         project: this.options.project,
         body: {
           model: this.options.model,
-          max_output_tokens: 5000,
+          // 5000 не хватало: при 6+ вопросах с развёрнутыми modelAnswer вывод
+          // обрезался ровно на лимите и JSON не парсился.
+          max_output_tokens: 16_000,
+          text: {
+            format: {
+              type: 'json_schema',
+              name: 'interview_report',
+              strict: true,
+              schema: REPORT_JSON_SCHEMA,
+            },
+          },
           input: [
             {
               role: 'developer',
@@ -80,7 +205,10 @@ export class OpenAiReportEngine implements ReportEngine {
         });
       }
 
-      const parsed = extractReportJson(response);
+      const parsed = attachQuestionsToAnalysis(
+        extractReportJson(response),
+        params.turns
+      );
       return ReportAnalysisDto.parse({
         ...parsed,
         model: this.options.model,
@@ -108,9 +236,8 @@ export function buildInstruction(): string {
     'Не используй многоточия, квадратные скобки, незавершённые списки и служебные заглушки.',
     'whatWorked всегда должен быть непустым. Если сильных сторон нет, используй ровно фразу: Сильных элементов в ответе не выявлено.',
     'strongerAnswerStar должен быть законченным: 2–4 предложения или четыре понятные части Ситуация, Задача, Действия, Результат, без многоточий.',
-    'Верни строго JSON-объект без markdown.',
-    'Корневые поля: overallScore, verdict, summary, criteria, recommendations, questionAnalysis.',
-    'Фрагменты схемы для каждого вопроса: "kind":"main", "kind":"clarification", "criteria":{"structure":80,"specificity":70,"relevance":90,"confidence":78,"riskPhrases":84,"brevity":88}, "whatWorked":"Сильных элементов в ответе не выявлено.", "whatWeak":"Конкретная слабая сторона ответа", "modelAnswer":"Законченный сильный ответ", "strongerAnswerStar":"Законченная STAR-рекомендация", "nextPractice":"Короткое упражнение".',
+    'Каждый элемент questionAnalysis содержит kind "main" или "clarification" — тот же, что у вопроса в транскрипте.',
+    'recommendations.topFixes — от 1 до 5 самых важных правок, каждая одним конкретным действием.',
   ].join('\n');
 }
 

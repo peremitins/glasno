@@ -63,6 +63,13 @@ describe('openai learning terms engine helpers', () => {
     expect(terms[0]?.shortDefinition).not.toMatch(/…$/);
   });
 
+  it('requests minimal reasoning effort so GPT-5 nano returns text within the token budget', () => {
+    // Без этого reasoning-модель тратит весь max_output_tokens на размышления
+    // и возвращает пустой ответ (status=incomplete) — на проде массовые 502.
+    expect(source).toContain("reasoning: { effort: 'minimal' }");
+    expect(source).toContain("model.startsWith('gpt-5')");
+  });
+
   it('does not use local semantic allow or deny lists', () => {
     expect(source).not.toContain('HIGH_SIGNAL_RUSSIAN_PATTERNS');
     expect(source).not.toContain('LOW_SIGNAL_RUSSIAN_PATTERNS');
@@ -207,6 +214,34 @@ describe('openai learning terms engine helpers', () => {
       {
         phrase: 'Vue',
         shortDefinition: 'Фреймворк для интерфейсов.',
+      },
+    ]);
+  });
+
+  it('drops phrases longer than the DTO limit so the batch response stays valid', () => {
+    const longPhrase = 'очень длинная фраза кандидата '.repeat(5).trim();
+    expect(longPhrase.length).toBeGreaterThan(120);
+
+    expect(
+      normalizeLearningTermsForText(
+        `Вопрос содержит ${longPhrase} целиком, а ещё CORS.`,
+        {
+          terms: [
+            {
+              phrase: longPhrase,
+              shortDefinition: 'Слишком длинный кандидат — отбрасываем.',
+            },
+            {
+              phrase: 'CORS',
+              shortDefinition: 'CORS — правила доступа между доменами.',
+            },
+          ],
+        }
+      )
+    ).toEqual([
+      {
+        phrase: 'CORS',
+        shortDefinition: 'CORS — правила доступа между доменами.',
       },
     ]);
   });
