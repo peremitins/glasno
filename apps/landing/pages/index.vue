@@ -40,7 +40,7 @@
 
   .hero__title {
     margin: 0;
-    font-size: clamp(32px, 6vw, 56px);
+    font-size: clamp(26px, 4vw, 38px);
     line-height: 1.1;
     font-weight: 700;
   }
@@ -48,7 +48,7 @@
   .hero__subtitle {
     margin: 0;
     max-width: 480px;
-    font-size: 16px;
+    font-size: 14px;
     line-height: 1.6;
     color: var(--landing-muted);
   }

@@ -1,6 +1,7 @@
 interface RuntimeOpenAiConfig {
   openaiApiKey?: unknown;
   openaiModel?: unknown;
+  openaiLearningModel?: unknown;
 }
 
 type EnvMap = Record<string, string | undefined>;
@@ -20,7 +21,15 @@ export function resolveOpenAiConfig(
     normalizeSecret(env.OPENAI_MODEL) ||
     'gpt-5.4-nano'; // была 'gpt-4o-mini' (заменено 2026-07)
 
-  return { apiKey, model };
+  // Подсказки-термины — массовые и простые вызовы: у них своя, самая дешёвая
+  // модель, чтобы смена основной модели интервью их не удорожала.
+  const learningModel =
+    normalizeSecret(runtimeConfig.openaiLearningModel) ||
+    normalizeSecret(env.NUXT_OPENAI_LEARNING_MODEL) ||
+    normalizeSecret(env.OPENAI_LEARNING_MODEL) ||
+    'gpt-5-nano';
+
+  return { apiKey, model, learningModel };
 }
 
 function normalizeSecret(value: unknown): string {

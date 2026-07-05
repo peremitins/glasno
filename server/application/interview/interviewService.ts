@@ -16,6 +16,7 @@ import type {
   UpdateInterviewerRequest,
 } from '@/shared/dto';
 import { apiError } from '@/server/utils/errors';
+import { assertOwnedInterviewSession } from './sessionOwnership';
 import type { HhClient } from '@/server/interface/hh';
 import type { InterviewEngine } from '@/server/interface/interviewEngine';
 import type {
@@ -715,15 +716,7 @@ export class InterviewService {
     userId?: string | null
   ): Promise<InterviewSessionRecord> {
     const session = await this.deps.repository.findSessionById(sessionId);
-    if (!session) {
-      throw apiError('E_NOT_FOUND', 'Интервью не найдено');
-    }
-    const ownedByAnonymousSession = session.anonymousSessionId === anonymousSessionId;
-    const ownedByUser = Boolean(userId && session.userId === userId);
-    if (!ownedByAnonymousSession && !ownedByUser) {
-      throw apiError('E_FORBIDDEN', 'Нет доступа к этому интервью');
-    }
-    return session;
+    return assertOwnedInterviewSession(session, { anonymousSessionId, userId });
   }
 }
 

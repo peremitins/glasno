@@ -24,10 +24,38 @@ import { compactGeneratedText } from './textNormalization';
 
 const MAX_EXTRACTED_TERMS = 3;
 
+// Совпадает с ограничением LearningTermCandidateDto.phrase: более длинная
+// фраза уронит валидацию ответа хендлером — такие кандидаты отбрасываем.
+const MAX_PHRASE_LENGTH = 120;
+
+function compactContextForPrompt(context: {
+  kind: string;
+  label?: string;
+}): { kind: string; label?: string } {
+  return {
+    kind: context.kind,
+    ...(context.label ? { label: context.label } : {}),
+  };
+}
+
+// GPT-5-серия — reasoning-модели: без effort=minimal весь бюджет
+// max_output_tokens уходит в reasoning-токены, ответ приходит со
+// status=incomplete и пустым текстом (в проде это выглядело как массовые 502).
+// Модели вне GPT-5-серии (например, gpt-4.1-nano) параметр reasoning не
+// принимают — им его не отправляем.
+function supportsReasoningEffort(model: string): boolean {
+  return model.startsWith('gpt-5');
+}
+
 function findPhraseInText(text: string, phrase: string): string | null {
   const needle = phrase.trim();
   if (!needle) return null;
-  const index = text.toLocaleLowerCase().indexOf(needle.toLocaleLowerCase());
+  const lowerText = text.toLocaleLowerCase();
+  // При смене регистра длина строки может измениться (например, «İ» → «i̇»),
+  // тогда индексы сдвигаются относительно оригинала — ищем без сворачивания.
+  const useLower = lowerText.length === text.length;
+  const haystack = useLower ? lowerText : text;
+  const index = haystack.indexOf(useLower ? needle.toLocaleLowerCase() : needle);
   if (index < 0) return null;
   return text.slice(index, index + needle.length);
 }
@@ -53,7 +81,7 @@ export function normalizeLearningTermsForText(
     };
     const phraseCandidate = typeof term.phrase === 'string' ? term.phrase : '';
     const phrase = findPhraseInText(text, phraseCandidate);
-    if (!phrase) continue;
+    if (!phrase || phrase.length > MAX_PHRASE_LENGTH) continue;
 
     const key = phrase.toLocaleLowerCase();
     if (seen.has(key)) continue;
@@ -118,7 +146,9 @@ export class OpenAiLearningTermsEngine implements LearningTermsEngine {
         items: input.items.map((item) => ({
           id: item.id,
           text: item.text,
-          context: item.context,
+          // Модели полезны только тип экрана и подпись; UUID сессий — шум
+          // в токенах, который к тому же дробил бы кэш при их смене.
+          context: compactContextForPrompt(item.context),
         })),
       }),
       maxOutputTokens: Math.min(1800, 280 + input.items.length * 220),
@@ -153,7 +183,7 @@ export class OpenAiLearningTermsEngine implements LearningTermsEngine {
         term: input.term,
         text: input.text,
         shortDefinition: input.shortDefinition || '',
-        context: input.context,
+        context: compactContextForPrompt(input.context),
       }),
       maxOutputTokens: 700,
       kind: 'learning_term_explain',
@@ -193,6 +223,9 @@ export class OpenAiLearningTermsEngine implements LearningTermsEngine {
         body: {
           model: this.options.model,
           max_output_tokens: params.maxOutputTokens,
+          ...(supportsReasoningEffort(this.options.model)
+            ? { reasoning: { effort: 'minimal' } }
+            : {}),
           input: [
             {
               role: 'developer',

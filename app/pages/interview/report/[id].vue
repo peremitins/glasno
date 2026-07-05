@@ -673,7 +673,7 @@
     display: block;
     color: var(--accent-2);
     font-family: var(--font-mono);
-    font-size: 56px;
+    font-size: 36px;
     line-height: 1;
   }
 
@@ -1005,7 +1005,7 @@
   .question-answer-block h3 {
     margin: 0;
     color: var(--text-primary);
-    font-size: clamp(15px, 1.55vw, 17px);
+    font-size: clamp(14px, 1.25vw, 16px);
     line-height: 1.35;
   }
 
@@ -1083,7 +1083,7 @@
   .score-pill strong {
     color: var(--score-color);
     font-family: var(--font-mono);
-    font-size: 18px;
+    font-size: 16px;
     line-height: 1;
   }
 

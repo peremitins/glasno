@@ -1,17 +1,13 @@
 <script setup lang="ts">
 import { Dropdown as VDropdown } from 'floating-vue';
 import { Cross2Icon } from '@radix-icons/vue';
-import { computed, ref, watch } from 'vue';
+import { computed, ref, useId, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type {
   ExplainLearningTermResponse,
   LearningTermCandidate,
   LearningTermContext,
 } from '@/shared/dto';
-import {
-  learningTermContextKey,
-  learningTermTextHash,
-} from '@/app/composables/useLearningTerms';
 
 const props = withDefaults(
   defineProps<{
@@ -64,24 +60,23 @@ const explanation = ref<ExplainLearningTermResponse | null>(null);
 const explanationLoading = ref(false);
 const explanationError = ref('');
 
-const termKey = computed(() =>
-  [
-    'term',
-    learningTermTextHash(displayLabel.value),
-    learningTermTextHash(props.sourceText || displayLabel.value),
-    learningTermTextHash(learningTermContextKey(props.context)),
-  ].join(':')
-);
+// Ключ уникален для инстанса: одна и та же фраза, встретившаяся в тексте
+// дважды, не должна открывать оба попапа одновременно.
+const termKey = `term:${useId()}`;
 
 const isShown = computed({
-  get: () => activeTermKey.value === termKey.value,
+  get: () => activeTermKey.value === termKey,
   set: (shown: boolean) => {
-    setActiveTermKey(shown ? termKey.value : null);
+    setActiveTermKey(shown ? termKey : null);
   },
 });
 
 function closePopover() {
-  setActiveTermKey(null);
+  // @hide прилетает и когда ключ уже занял другой термин или выделение —
+  // сбрасываем состояние только если оно всё ещё наше.
+  if (activeTermKey.value === termKey) {
+    setActiveTermKey(null);
+  }
 }
 
 watch(isShown, (shown) => {
@@ -188,11 +183,13 @@ async function loadExplanation() {
     v-tooltip="{
       content: description,
       theme: 'learning-term-tooltip',
-      triggers: ['hover', 'focus', 'touch'],
+      triggers: ['hover', 'focus', 'click', 'touch'],
       placement: 'top',
     }"
     class="term-tooltip"
     :title="description"
+    tabindex="0"
+    @click.stop
   >
     <span class="term-tooltip__label">
       <template
