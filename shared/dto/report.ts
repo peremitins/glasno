@@ -3,13 +3,16 @@ import { InterviewTurnKindDto } from './interview';
 
 export const ReportStatusDto = z.enum(['queued', 'processing', 'done', 'failed']);
 
+// Три холистических критерия оценки ответа. Содержание («суть» + «структура»)
+// весит больше подачи — это соответствует данным о предсказательной ценности
+// структурированных интервью.
 export const ReportCriteriaDto = z.object({
+  // Ответил ли по существу вопроса, с конкретикой и измеримым результатом.
+  substance: z.number().int().min(0).max(100),
+  // Логика изложения: ситуация → задача → действие → результат, без воды.
   structure: z.number().int().min(0).max(100),
-  specificity: z.number().int().min(0).max(100),
-  relevance: z.number().int().min(0).max(100),
-  confidence: z.number().int().min(0).max(100),
-  riskPhrases: z.number().int().min(0).max(100),
-  brevity: z.number().int().min(0).max(100),
+  // Подача: уверенность формулировок, без риск-фраз и слов-паразитов.
+  delivery: z.number().int().min(0).max(100),
 });
 
 export const ReportRecommendationsDto = z.object({
@@ -21,7 +24,9 @@ export const ReportQuestionAnalysisDto = z.object({
   kind: InterviewTurnKindDto.default('main'),
   question: z.string(),
   answer: z.string(),
-  criteria: ReportCriteriaDto.nullable().default(null),
+  // .catch(null): устаревшие отчёты с прежним набором критериев не должны
+  // ронять чтение — просто не показываем по ним оценки.
+  criteria: ReportCriteriaDto.nullable().default(null).catch(null),
   whatWorked: z.string(),
   whatWeak: z.string(),
   // Возможный сильный ответ на этот вопрос (по STAR, с конкретикой).
@@ -48,7 +53,7 @@ export const InterviewReportDto = z.object({
   overallScore: z.number().int().min(0).max(100).nullable(),
   verdict: z.string().nullable(),
   summary: z.string().nullable(),
-  criteria: ReportCriteriaDto.nullable(),
+  criteria: ReportCriteriaDto.nullable().catch(null),
   recommendations: ReportRecommendationsDto.nullable(),
   questionAnalysis: z.array(ReportQuestionAnalysisDto).nullable(),
   errorMessage: z.string().nullable(),

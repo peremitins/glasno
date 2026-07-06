@@ -14,12 +14,14 @@ describe('interview report question matrix UI', () => {
     expect(source).toContain('averageScore');
     expect(source).not.toContain('shortLabel');
     expect(source).toContain('question-row__summary');
-    expect(source).toContain('question-score-strip');
+    expect(source).toContain('score-average');
+    expect(source).not.toContain('question-score-strip');
     expect(source).toContain('question-row__details');
     expect(source).toContain('question-score-grid');
-    expect(source).toContain('criteria-breakdown');
-    expect(source).toContain('chartOptions');
-    expect(source).toContain('responsive:');
+    expect(source).toContain('criteria-bars');
+    expect(source).toContain('criteria-bar__fill');
+    expect(source).not.toContain('chartOptions');
+    expect(source).not.toContain('type="radar"');
     expect(source).toContain('question-answer-block');
     expect(source).toContain('question-kind');
     expect(source).toContain('report.questionMatrix.title');
@@ -48,22 +50,52 @@ describe('interview report question matrix UI', () => {
     expect(summaryBlock).toContain('@click="toggleQuestion(row.item.turnId)"');
     expect(summaryBlock).toContain('{{ row.item.question }}');
     expect(summaryBlock).toContain('question-summary-text');
-    expect(summaryBlock).toContain('question-score-strip');
-    expect(summaryBlock).toContain('score-mini__value');
-    expect(summaryBlock).toContain('sr-only');
+    // Свёрнуто показываем только средний балл, без дублирования критериев.
+    expect(summaryBlock).toContain('score-average');
+    expect(summaryBlock).toContain('report.questionMatrix.average');
+    expect(summaryBlock).not.toContain('question-score-strip');
+    expect(summaryBlock).not.toContain('score-mini');
+    expect(summaryBlock).not.toContain('score-pill');
     expect(summaryBlock).not.toContain('score.shortLabel');
     expect(summaryBlock).not.toContain('question-toggle-label');
     expect(summaryBlock).not.toContain('TextWithInterviewTerms');
   });
 
-  it('keeps mobile summary and criteria chart readable', () => {
-    expect(source).toContain('.criteria-chart-shell');
-    expect(source).toContain('.criteria-breakdown');
-    expect(source).toContain('.criteria-breakdown__bar');
-    expect(source).toContain('grid-template-columns: repeat(6, minmax(0, 1fr))');
+  it('keeps criteria as three responsive bars with tooltips instead of a radar chart', () => {
+    expect(source).toContain('.criteria-bars');
+    expect(source).toContain('.criteria-bar__fill');
+    expect(source).toContain('.criteria-bar__hint');
+    expect(source).not.toContain('criteria-chart-shell');
+    expect(source).not.toContain('apexcharts');
+    // Три критерия, а не шесть.
+    expect(source).not.toContain('repeat(6, minmax(0, 1fr))');
     expect(source).toContain('@media (max-width: 520px)');
-    expect(source).toContain('.question-score-strip {');
-    expect(source).not.toContain('.question-score-strip {\n      grid-template-columns: 1fr;');
-    expect(source).not.toContain('.question-row__summary:hover,\n  .question-row__summary:focus-visible');
+    expect(source).not.toContain('.question-score-strip {');
+  });
+
+  it('shows per-question criteria as full-width bars below the answer', () => {
+    // Критерии идут после блока «вопрос+ответ», а не рядом с ним.
+    const answerBlockIdx = source.indexOf('class="question-answer-block"');
+    const detailGridIdx = source.indexOf('question-score-grid--detail');
+    expect(answerBlockIdx).toBeGreaterThan(-1);
+    expect(detailGridIdx).toBeGreaterThan(answerBlockIdx);
+
+    // Тело развёрнутого вопроса больше не делится пополам.
+    expect(source).toContain('grid-template-columns: minmax(0, 1fr);');
+    // Бары критериев переносятся сами при нехватке места.
+    expect(source).toContain(
+      'grid-template-columns: repeat(auto-fit, minmax(160px, 1fr))'
+    );
+  });
+
+  it('exposes a hint tooltip describing each criterion', () => {
+    expect(source).toContain("v-tooltip");
+    expect(source).toContain('report.criteria.hintAria');
+    expect(source).toContain('QuestionMarkCircledIcon');
+    expect(messages.report.criteria.substance).toBe('Суть ответа');
+    expect(messages.report.criteria.structure).toBe('Структура');
+    expect(messages.report.criteria.delivery).toBe('Подача');
+    expect(messages.report.criteria.substanceHint).toBeTruthy();
+    expect(messages.report.criteria.deliveryHint).toBeTruthy();
   });
 });

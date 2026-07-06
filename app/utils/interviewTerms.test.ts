@@ -19,80 +19,17 @@ describe('interview term highlighter', () => {
     ]);
   });
 
-  it('splits dynamic multi-word terms without losing surrounding text', () => {
-    expect(
-      splitTextByInterviewTerms('Что такое область видимости в JavaScript?', [
-        {
-          phrase: 'область видимости',
-          shortDefinition: 'Область видимости — часть кода, где доступно имя.',
-        },
-      ])
-    ).toEqual([
-      { kind: 'text', value: 'Что такое ' },
-      {
-        kind: 'term',
-        value: 'область видимости',
-        term: {
-          phrase: 'область видимости',
-          shortDefinition: 'Область видимости — часть кода, где доступно имя.',
-        },
-      },
-      { kind: 'text', value: ' в JavaScript?' },
-    ]);
-  });
-
-  it('prefers longer dynamic terms and avoids overlapping highlights', () => {
-    expect(
-      splitTextByInterviewTerms('CORS policy зависит от CORS.', [
-        {
-          phrase: 'CORS',
-          shortDefinition: 'CORS — правила доступа между доменами.',
-        },
-        {
-          phrase: 'CORS policy',
-          shortDefinition: 'CORS policy — набор CORS-правил для ресурса.',
-        },
-      ])
-    ).toEqual([
-      {
-        kind: 'term',
-        value: 'CORS policy',
-        term: {
-          phrase: 'CORS policy',
-          shortDefinition: 'CORS policy — набор CORS-правил для ресурса.',
-        },
-      },
-      { kind: 'text', value: ' зависит от ' },
-      {
-        kind: 'term',
-        value: 'CORS',
-        term: {
-          phrase: 'CORS',
-          shortDefinition: 'CORS — правила доступа между доменами.',
-        },
-      },
-      { kind: 'text', value: '.' },
-    ]);
-  });
-
   it('attaches leading punctuation to the previous displayed term', () => {
-    const term = {
-      phrase: 'рендеринга/состояния',
-      shortDefinition: 'Связка рендеринга и состояния.',
-    };
-
     expect(
       prepareInterviewTextDisplaySegments(
-        splitTextByInterviewTerms('изменение рендеринга/состояния), затем', [
-          term,
-        ])
+        splitTextByInterviewTerms('Отвечайте по STAR), затем')
       )
     ).toEqual([
-      { kind: 'text', value: 'изменение ' },
+      { kind: 'text', value: 'Отвечайте по ' },
       {
         kind: 'term',
-        value: 'рендеринга/состояния',
-        term,
+        value: 'STAR',
+        term: 'star',
         attachedPunctuation: '),',
       },
       { kind: 'text', value: ' затем' },

@@ -1,13 +1,7 @@
 <script setup lang="ts">
-  import {
-    computed,
-    defineAsyncComponent,
-    onBeforeUnmount,
-    ref,
-    watch,
-  } from 'vue';
+  import { computed, onBeforeUnmount, ref, watch } from 'vue';
   import { useI18n } from 'vue-i18n';
-  import type { ApexOptions } from 'apexcharts';
+  import { QuestionMarkCircledIcon } from '@radix-icons/vue';
   import type {
     InterviewReportResponse,
     LearningTermContext,
@@ -22,29 +16,19 @@
   const { t } = useI18n();
   const route = useRoute();
   const api = useAPI();
-  const CRITERIA_KEYS = [
-    'structure',
-    'specificity',
-    'relevance',
-    'confidence',
-    'riskPhrases',
-    'brevity',
-  ] as const;
+  const CRITERIA_KEYS = ['substance', 'structure', 'delivery'] as const;
 
   type CriteriaKey = (typeof CRITERIA_KEYS)[number];
   interface CriteriaScoreRow {
     key: CriteriaKey;
     label: string;
+    hint: string;
     value: number | null;
   }
 
   interface CriteriaScoredRow extends CriteriaScoreRow {
     value: number;
   }
-
-  const ApexChart = defineAsyncComponent(() =>
-    import('vue3-apexcharts').then((module) => module.default)
-  );
 
   const reportId = computed(() => String(route.params.id || ''));
 
@@ -114,12 +98,17 @@
     return t(`report.criteria.${key}`);
   }
 
+  function criteriaHint(key: CriteriaKey): string {
+    return t(`report.criteria.${key}Hint`);
+  }
+
   function getCriteriaScoreRows(
     criteria?: ReportCriteria | null
   ): CriteriaScoreRow[] {
     return CRITERIA_KEYS.map((key) => ({
       key,
       label: criteriaLabel(key),
+      hint: criteriaHint(key),
       value: criteria ? criteria[key] : null,
     }));
   }
@@ -157,83 +146,6 @@
     })
   );
 
-  const chartOptions = computed<ApexOptions>(() => ({
-    chart: {
-      type: 'radar' as const,
-      toolbar: { show: false },
-    },
-    labels: criteriaRows.value.map((row) => row.label),
-    colors: ['var(--accent)'],
-    plotOptions: {
-      radar: {
-        polygons: {
-          strokeColors: 'var(--glass-border)',
-          connectorColors: 'var(--glass-border)',
-          fill: {
-            colors: [
-              'transparent',
-              'color-mix(in srgb, var(--surface-soft) 55%, transparent)',
-            ],
-          },
-        },
-      },
-    },
-    markers: {
-      size: 3,
-      colors: ['var(--accent-2)'],
-      strokeColors: 'var(--accent)',
-      strokeWidth: 2,
-    },
-    xaxis: {
-      labels: {
-        style: {
-          colors: criteriaRows.value.map(() => 'var(--text-secondary)'),
-          fontSize: '12px',
-          fontFamily: 'var(--font-mono)',
-          fontWeight: 800,
-        },
-      },
-    },
-    yaxis: {
-      min: 0,
-      max: 100,
-      tickAmount: 5,
-    },
-    dataLabels: {
-      enabled: true,
-      background: {
-        enabled: true,
-        borderRadius: 6,
-        borderWidth: 1,
-        borderColor: 'var(--glass-border)',
-        foreColor: 'var(--text-primary)',
-      },
-      style: {
-        fontSize: '11px',
-        fontWeight: 900,
-        colors: ['var(--text-primary)'],
-      },
-    },
-    responsive: [
-      {
-        breakpoint: 520,
-        options: {
-          chart: { height: 236 },
-          dataLabels: { enabled: false },
-          xaxis: { labels: { show: false } },
-          yaxis: { show: false },
-        },
-      },
-    ],
-  }));
-
-  const chartSeries = computed(() => [
-    {
-      name: t('report.score'),
-      data: criteriaRows.value.map((row) => row.value),
-    },
-  ]);
-
   const pdfUrl = computed(() =>
     report.value?.id ? `/api/interview/reports/${report.value.id}/pdf` : '#'
   );
@@ -242,10 +154,6 @@
     return typeof value === 'number'
       ? String(value)
       : t('report.questionMatrix.noScore');
-  }
-
-  function formatCompactScore(value: number | null): string {
-    return typeof value === 'number' ? String(value) : '-';
   }
 
   function scoreColorToken(value: number | null): string {
@@ -394,35 +302,50 @@
         <section class="grid">
           <div class="panel chart-panel glass-frame">
             <h2>{{ t('report.criteria.title') }}</h2>
-            <div class="criteria-chart-shell">
-              <ClientOnly>
-                <ApexChart
-                  v-if="criteriaRows.length"
-                  type="radar"
-                  height="100%"
-                  :options="chartOptions"
-                  :series="chartSeries"
-                />
-              </ClientOnly>
-            </div>
             <div
               v-if="criteriaRows.length"
-              class="criteria-breakdown"
+              class="criteria-bars"
               role="list"
               :aria-label="t('report.criteria.title')"
             >
               <div
                 v-for="criterion in criteriaRows"
                 :key="criterion.key"
-                class="criteria-breakdown__item"
+                class="criteria-bar"
                 :style="scorePillStyle(criterion.value)"
                 role="listitem"
               >
-                <span>{{ criterion.label }}</span>
-                <strong>{{ formatScore(criterion.value) }}</strong>
-                <i class="criteria-breakdown__bar" aria-hidden="true">
-                  <span />
-                </i>
+                <div class="criteria-bar__head">
+                  <span class="criteria-bar__label">
+                    <span class="criteria-bar__name">{{
+                      criterion.label
+                    }}</span>
+                    <button
+                      v-tooltip="{
+                        content: criterion.hint,
+                        theme: 'learning-term-tooltip',
+                        triggers: ['hover', 'focus', 'touch'],
+                        placement: 'top',
+                      }"
+                      type="button"
+                      class="criteria-bar__hint"
+                      :aria-label="
+                        t('report.criteria.hintAria', {
+                          criterion: criterion.label,
+                        })
+                      "
+                      @click.prevent
+                    >
+                      <QuestionMarkCircledIcon aria-hidden="true" />
+                    </button>
+                  </span>
+                  <strong class="criteria-bar__score">
+                    {{ formatScore(criterion.value) }}
+                  </strong>
+                </div>
+                <div class="criteria-bar__track" aria-hidden="true">
+                  <span class="criteria-bar__fill" />
+                </div>
               </div>
             </div>
           </div>
@@ -471,173 +394,153 @@
                 type="button"
                 :aria-expanded="isQuestionOpen(row.item.turnId)"
                 :aria-controls="`report-question-${row.item.turnId}`"
-                :aria-label="
-                  `${
-                    isQuestionOpen(row.item.turnId)
-                      ? t('report.questionMatrix.collapse')
-                      : t('report.questionMatrix.expand')
-                  }: ${row.item.question}`
-                "
+                :aria-label="`${
+                  isQuestionOpen(row.item.turnId)
+                    ? t('report.questionMatrix.collapse')
+                    : t('report.questionMatrix.expand')
+                }: ${row.item.question}`"
                 @click="toggleQuestion(row.item.turnId)"
               >
-                <span class="question-summary-main">
+                <span class="question-summary-head">
                   <span class="question-row__meta">
                     <span class="question-index">{{ row.displayNumber }}</span>
                     <span class="question-kind">{{ row.kindLabel }}</span>
                   </span>
-                  <span class="question-summary-text">
-                    {{ row.item.question }}
+                  <span class="question-summary-aside">
+                    <span
+                      class="score-average"
+                      :style="scorePillStyle(row.averageScore)"
+                    >
+                      <span>{{ t('report.questionMatrix.average') }}</span>
+                      <strong>{{ formatScore(row.averageScore) }}</strong>
+                    </span>
+                    <span
+                      class="question-toggle-icon"
+                      :class="{
+                        'question-toggle-icon--open': isQuestionOpen(
+                          row.item.turnId
+                        ),
+                      }"
+                      aria-hidden="true"
+                    />
                   </span>
                 </span>
-
-                <span class="question-summary-score">
-                  <span
-                    class="score-average"
-                    :style="scorePillStyle(row.averageScore)"
-                  >
-                    <span>{{ t('report.questionMatrix.average') }}</span>
-                    <strong>{{ formatScore(row.averageScore) }}</strong>
-                  </span>
-                  <span
-                    class="question-score-strip"
-                    role="list"
-                    :aria-label="
-                      t('report.questionMatrix.scoreListAria', {
-                        number: row.number,
-                      })
-                    "
-                  >
-                    <span
-                      v-for="score in row.criteria"
-                      :key="score.key"
-                      class="score-mini"
-                      :class="{ 'score-mini--empty': score.value === null }"
-                      :style="scorePillStyle(score.value)"
-                      role="listitem"
-                      :aria-label="scoreAria(score.label, score.value)"
-                    >
-                      <span class="sr-only">{{ score.label }}</span>
-                      <strong class="score-mini__value">
-                        {{ formatCompactScore(score.value) }}
-                      </strong>
-                    </span>
-                  </span>
-                  <span
-                    class="question-toggle-icon"
-                    :class="{
-                      'question-toggle-icon--open': isQuestionOpen(
-                        row.item.turnId
-                      ),
-                    }"
-                    aria-hidden="true"
-                  />
+                <span
+                  v-if="!isQuestionOpen(row.item.turnId)"
+                  class="question-summary-text"
+                >
+                  {{ row.item.question }}
                 </span>
               </button>
 
-              <div
-                v-if="isQuestionOpen(row.item.turnId)"
-                :id="`report-question-${row.item.turnId}`"
-                class="question-row__details"
-              >
-                <div class="question-row__body">
-                  <div class="question-answer-block">
-                    <h3>
-                      <TextWithInterviewTerms
-                        :text="row.item.question"
-                        :context="reportTermContext('Вопрос')"
-                        manual-selection
-                      />
-                    </h3>
-                    <div class="answer-panel">
-                      <span>{{ t('report.answer') }}</span>
-                      <p>
+              <Transition name="q-expand">
+                <div
+                  v-if="isQuestionOpen(row.item.turnId)"
+                  :id="`report-question-${row.item.turnId}`"
+                  class="question-row__reveal"
+                >
+                  <div class="question-row__details">
+                    <div class="question-row__body">
+                      <div class="question-answer-block">
+                        <h3>
+                          <TextWithInterviewTerms
+                            :text="row.item.question"
+                            :context="reportTermContext('Вопрос')"
+                            manual-selection
+                          />
+                        </h3>
+                        <div class="answer-panel">
+                          <span>{{ t('report.answer') }}</span>
+                          <p>
+                            <TextWithInterviewTerms
+                              :text="row.item.answer"
+                              :context="reportTermContext('Ответ')"
+                              manual-selection
+                            />
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div
+                      class="question-score-grid question-score-grid--detail"
+                      role="list"
+                      :aria-label="
+                        t('report.questionMatrix.scoreListAria', {
+                          number: row.number,
+                        })
+                      "
+                    >
+                      <div
+                        v-for="score in row.criteria"
+                        :key="score.key"
+                        class="score-pill"
+                        :class="{ 'score-pill--empty': score.value === null }"
+                        :style="scorePillStyle(score.value)"
+                        role="listitem"
+                        :aria-label="scoreAria(score.label, score.value)"
+                      >
+                        <span>{{ score.label }}</span>
+                        <strong>{{ formatScore(score.value) }}</strong>
+                      </div>
+                    </div>
+
+                    <div class="question-insight-grid">
+                      <p class="insight-block">
+                        <strong>{{ t('report.whatWorked') }}</strong>
                         <TextWithInterviewTerms
-                          :text="row.item.answer"
-                          :context="reportTermContext('Ответ')"
+                          :text="row.item.whatWorked"
+                          :context="reportTermContext('Что получилось')"
+                          manual-selection
+                        />
+                      </p>
+                      <p class="insight-block">
+                        <strong>{{ t('report.whatWeak') }}</strong>
+                        <TextWithInterviewTerms
+                          :text="row.item.whatWeak"
+                          :context="reportTermContext('Что ослабило ответ')"
                           manual-selection
                         />
                       </p>
                     </div>
-                  </div>
 
-                  <div
-                    class="question-score-grid question-score-grid--detail"
-                    role="list"
-                    :aria-label="
-                      t('report.questionMatrix.scoreListAria', {
-                        number: row.number,
-                      })
-                    "
-                  >
-                    <div
-                      v-for="score in row.criteria"
-                      :key="score.key"
-                      class="score-pill"
-                      :class="{ 'score-pill--empty': score.value === null }"
-                      :style="scorePillStyle(score.value)"
-                      role="listitem"
-                      :aria-label="scoreAria(score.label, score.value)"
-                    >
-                      <span>{{ score.label }}</span>
-                      <strong>{{ formatScore(score.value) }}</strong>
+                    <div v-if="row.item.modelAnswer" class="model-answer">
+                      <span class="model-answer__label">{{
+                        t('report.modelAnswer')
+                      }}</span>
+                      <p>
+                        <TextWithInterviewTerms
+                          :text="row.item.modelAnswer"
+                          :context="reportTermContext('Сильный ответ')"
+                          manual-selection
+                        />
+                      </p>
                     </div>
+                    <p class="practice-line">
+                      <strong>
+                        <TextWithInterviewTerms
+                          :text="t('report.strongerStar')"
+                          :context="reportTermContext('STAR')"
+                          manual-selection
+                        />:
+                      </strong>
+                      <TextWithInterviewTerms
+                        :text="row.item.strongerAnswerStar"
+                        :context="reportTermContext('STAR-рекомендация')"
+                        manual-selection
+                      />
+                    </p>
+                    <p class="practice-line">
+                      <strong>{{ t('report.nextPractice') }}:</strong>
+                      <TextWithInterviewTerms
+                        :text="row.item.nextPractice"
+                        :context="reportTermContext('Следующая тренировка')"
+                        manual-selection
+                      />
+                    </p>
                   </div>
                 </div>
-
-                <div class="question-insight-grid">
-                  <p class="insight-block">
-                    <strong>{{ t('report.whatWorked') }}</strong>
-                    <TextWithInterviewTerms
-                      :text="row.item.whatWorked"
-                      :context="reportTermContext('Что получилось')"
-                      manual-selection
-                    />
-                  </p>
-                  <p class="insight-block">
-                    <strong>{{ t('report.whatWeak') }}</strong>
-                    <TextWithInterviewTerms
-                      :text="row.item.whatWeak"
-                      :context="reportTermContext('Что ослабило ответ')"
-                      manual-selection
-                    />
-                  </p>
-                </div>
-
-                <div v-if="row.item.modelAnswer" class="model-answer">
-                  <span class="model-answer__label">{{
-                    t('report.modelAnswer')
-                  }}</span>
-                  <p>
-                    <TextWithInterviewTerms
-                      :text="row.item.modelAnswer"
-                      :context="reportTermContext('Сильный ответ')"
-                      manual-selection
-                    />
-                  </p>
-                </div>
-                <p class="practice-line">
-                  <strong>
-                    <TextWithInterviewTerms
-                      :text="t('report.strongerStar')"
-                      :context="reportTermContext('STAR')"
-                      manual-selection
-                    />:
-                  </strong>
-                  <TextWithInterviewTerms
-                    :text="row.item.strongerAnswerStar"
-                    :context="reportTermContext('STAR-рекомендация')"
-                    manual-selection
-                  />
-                </p>
-                <p class="practice-line">
-                  <strong>{{ t('report.nextPractice') }}:</strong>
-                  <TextWithInterviewTerms
-                    :text="row.item.nextPractice"
-                    :context="reportTermContext('Следующая тренировка')"
-                    manual-selection
-                  />
-                </p>
-              </div>
+              </Transition>
             </article>
           </div>
         </section>
@@ -654,7 +557,7 @@
   }
 
   .panel {
-    padding: clamp(18px, 2.2vw, 26px);
+    padding: clamp(8px, 2.2vw, 26px);
   }
 
   .panel h2 {
@@ -695,71 +598,111 @@
   .chart-panel {
     display: grid;
     gap: 12px;
+    align-content: start;
     min-width: 0;
   }
 
-  .criteria-chart-shell {
-    width: 100%;
-    height: clamp(270px, 32vw, 320px);
-    min-width: 0;
-  }
-
-  .criteria-chart-shell :deep(.vue-apexcharts),
-  .criteria-chart-shell :deep(.apexcharts-canvas),
-  .criteria-chart-shell :deep(svg) {
-    width: 100% !important;
-    max-width: 100%;
-  }
-
-  .criteria-breakdown {
+  .criteria-bars {
     display: grid;
-    gap: 8px;
+    gap: clamp(12px, 2.4vw, 18px);
   }
 
-  .criteria-breakdown__item {
+  .criteria-bar {
     --score-color: var(--text-muted);
     --score-value: 0;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 6px 10px;
-    align-items: center;
+    gap: 10px;
+    min-width: 0;
     border: 1px solid
-      color-mix(in srgb, var(--score-color) 34%, var(--glass-border));
-    border-radius: var(--radius-sm);
-    background: color-mix(in srgb, var(--score-fill) 48%, transparent);
-    padding: 8px 10px;
+      color-mix(in srgb, var(--score-color) 30%, var(--glass-border));
+    border-radius: var(--radius-md, 16px);
+    background: color-mix(in srgb, var(--score-fill) 32%, transparent);
+    padding: clamp(12px, 2.4vw, 18px);
   }
 
-  .criteria-breakdown__item span {
+  .criteria-bar__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
     min-width: 0;
-    color: var(--text-secondary);
-    font-size: 12px;
+  }
+
+  .criteria-bar__label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .criteria-bar__name {
+    min-width: 0;
+    color: var(--text-primary);
+    font-size: clamp(14px, 1.6vw, 16px);
     font-weight: 800;
     line-height: 1.2;
+    overflow-wrap: anywhere;
   }
 
-  .criteria-breakdown__item strong {
+  .criteria-bar__hint {
+    display: inline-grid;
+    place-items: center;
+    flex-shrink: 0;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: help;
+    transition: color 0.15s ease;
+  }
+
+  .criteria-bar__hint:hover,
+  .criteria-bar__hint:focus-visible {
+    color: var(--accent-2);
+    outline: none;
+  }
+
+  .criteria-bar__hint:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--accent-2) 62%, transparent);
+    outline-offset: 2px;
+  }
+
+  .criteria-bar__hint svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  .criteria-bar__score {
+    flex-shrink: 0;
     color: var(--score-color);
     font-family: var(--font-mono);
-    font-size: 15px;
+    font-size: clamp(20px, 3vw, 26px);
+    font-weight: 900;
     line-height: 1;
+    font-variant-numeric: tabular-nums;
   }
 
-  .criteria-breakdown__bar {
-    display: block;
-    grid-column: 1 / -1;
-    height: 4px;
+  .criteria-bar__track {
+    height: 10px;
     overflow: hidden;
     border-radius: 999px;
     background: color-mix(in srgb, var(--glass-border) 70%, transparent);
   }
 
-  .criteria-breakdown__bar span {
+  .criteria-bar__fill {
     display: block;
     width: calc(var(--score-value) * 1%);
     height: 100%;
     border-radius: inherit;
-    background: var(--score-color);
+    background: linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--score-color) 72%, transparent),
+      var(--score-color)
+    );
+    transition: width 0.5s ease;
   }
 
   .fixes {
@@ -843,10 +786,9 @@
   }
 
   .question-row__summary {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(360px, 0.88fr);
-    gap: 16px;
-    align-items: center;
+    display: flex;
+    flex-direction: column;
+    gap: clamp(12px, 1.7vw, 16px);
     width: 100%;
     border: 0;
     background: transparent;
@@ -862,9 +804,11 @@
     box-shadow: inset 0 0 0 2px var(--focus-ring);
   }
 
-  .question-summary-main {
-    display: grid;
-    gap: 8px;
+  .question-summary-head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    justify-content: space-between;
     min-width: 0;
   }
 
@@ -873,6 +817,14 @@
     align-items: center;
     justify-content: start;
     gap: 10px;
+    min-width: 0;
+  }
+
+  .question-summary-aside {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
   }
 
   .question-index {
@@ -896,77 +848,43 @@
     display: -webkit-box;
     overflow: hidden;
     color: var(--text-primary);
-    font-size: clamp(15px, 1.45vw, 17px);
-    font-weight: 800;
+    font-size: clamp(14px, 1.25vw, 16px);
     line-height: 1.28;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
   }
 
-  .question-summary-score {
-    display: grid;
-    grid-template-columns: minmax(92px, 0.28fr) minmax(0, 1fr) auto;
-    gap: 8px;
-    align-items: center;
-    min-width: 0;
-  }
-
   .score-average {
     --score-color: var(--text-muted);
-    display: grid;
-    gap: 2px;
-    min-width: 0;
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
     border: 1px solid
       color-mix(in srgb, var(--score-color) 44%, var(--glass-border));
-    border-radius: var(--radius-sm);
+    border-radius: 999px;
     background: color-mix(in srgb, var(--score-fill) 68%, var(--surface-soft));
-    padding: 7px 9px;
+    padding: 4px 10px;
+    white-space: nowrap;
   }
 
   .score-average span {
     color: var(--text-muted);
-    font-size: 10px;
+    font-size: 8px;
     font-weight: 800;
+    letter-spacing: 0.04em;
     line-height: 1;
+    text-transform: uppercase;
+
+    @media (max-width: 370px) {
+      display: none;
+    }
   }
 
   .score-average strong {
     color: var(--score-color);
     font-family: var(--font-mono);
-    font-size: 17px;
+    font-size: 14px;
     line-height: 1;
-  }
-
-  .question-score-strip {
-    display: grid;
-    grid-template-columns: repeat(6, minmax(0, 1fr));
-    gap: 4px;
-    min-width: 0;
-  }
-
-  .score-mini {
-    --score-color: var(--text-muted);
-    display: grid;
-    place-items: center;
-    min-width: 0;
-    min-height: 32px;
-    border: 1px solid
-      color-mix(in srgb, var(--score-color) 38%, var(--glass-border));
-    border-radius: 8px;
-    background: color-mix(in srgb, var(--score-fill) 58%, var(--surface-soft));
-    padding: 4px;
-  }
-
-  .score-mini__value {
-    color: var(--score-color);
-    font-family: var(--font-mono);
-    font-size: 12px;
-    font-weight: 900;
-    line-height: 1;
-  }
-
-  .score-mini--empty {
-    opacity: 0.68;
   }
 
   .question-toggle-icon {
@@ -982,16 +900,37 @@
     transform: rotate(225deg);
   }
 
+  .question-row__reveal {
+    display: grid;
+    grid-template-rows: 1fr;
+  }
+
+  .question-row__reveal > * {
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .q-expand-enter-active,
+  .q-expand-leave-active {
+    transition: grid-template-rows 0.28s ease, opacity 0.28s ease;
+  }
+
+  .q-expand-enter-from,
+  .q-expand-leave-to {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+
   .question-row__details {
     display: grid;
     gap: 14px;
-    border-top: 1px solid var(--glass-border);
-    padding: 14px clamp(12px, 1.7vw, 16px) clamp(14px, 1.8vw, 18px);
+    /* border-top: 1px solid var(--glass-border); */
+    padding: 0px clamp(12px, 1.7vw, 16px) clamp(14px, 1.8vw, 18px);
   }
 
   .question-row__body {
     display: grid;
-    grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.9fr);
+    grid-template-columns: minmax(0, 1fr);
     gap: 16px;
     align-items: start;
   }
@@ -1006,7 +945,7 @@
     margin: 0;
     color: var(--text-primary);
     font-size: clamp(14px, 1.25vw, 16px);
-    line-height: 1.35;
+    line-height: 1.28;
   }
 
   .answer-panel {
@@ -1036,7 +975,7 @@
 
   .question-score-grid {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
     gap: 8px;
   }
 
@@ -1165,11 +1104,16 @@
     font-weight: 700;
   }
 
+  @media (prefers-reduced-motion: reduce) {
+    .q-expand-enter-active,
+    .q-expand-leave-active {
+      transition: none;
+    }
+  }
+
   @media (max-width: 820px) {
     .hero,
     .grid,
-    .question-row__summary,
-    .question-summary-score,
     .question-row__body,
     .question-insight-grid {
       grid-template-columns: 1fr;
@@ -1185,15 +1129,8 @@
   }
 
   @media (max-width: 520px) {
-    .criteria-chart-shell {
-      height: 236px;
-      margin-inline: -6px;
-    }
     .question-score-grid {
       grid-template-columns: 1fr;
-    }
-    .question-score-strip {
-      grid-template-columns: repeat(6, minmax(0, 1fr));
     }
     .score-legend {
       width: 100%;

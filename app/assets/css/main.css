@@ -440,7 +440,7 @@ a {
   position: relative;
   overflow: hidden;
   border: 1px solid var(--glass-border);
-  border-radius: var(--radius-lg);
+  border-radius: clamp(12px, 1.6vw, var(--radius-lg));
   background: linear-gradient(
       135deg,
       color-mix(in srgb, var(--accent) 9%, transparent),
@@ -450,6 +450,7 @@ a {
   box-shadow: var(--shadow-panel);
   backdrop-filter: blur(20px) saturate(175%);
   -webkit-backdrop-filter: blur(20px) saturate(175%);
+
 }
 
 .glass-frame::before {
@@ -498,7 +499,7 @@ a {
 }
 
 .glass-panel {
-  padding: clamp(18px, 2.2vw, 26px);
+  padding: clamp(8px, 2.2vw, 26px);
 }
 
 .glass-card {

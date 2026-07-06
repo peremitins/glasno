@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Cross2Icon, MagicWandIcon } from '@radix-icons/vue';
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import InterviewTerm from './InterviewTerm.vue';
 import {
   learningTermContextKey,
@@ -17,7 +17,6 @@ import {
 } from '@/app/utils/learningTermSelection';
 import type {
   ExplainLearningTermResponse,
-  LearningTermCandidate,
   LearningTermContext,
 } from '@/shared/dto';
 
@@ -25,24 +24,15 @@ const props = withDefaults(
   defineProps<{
     text: string;
     context?: LearningTermContext;
-    interactive?: boolean;
     manualSelection?: boolean;
-    // Автоподсветка терминов (и её LLM-извлечение). Выключаем для текстов,
-    // которые пользователь написал сам, — там подсказки не нужны и только
-    // тратят вызовы; ручное «Объяснить» по выделению продолжает работать.
-    highlightTerms?: boolean;
   }>(),
   {
     context: () => ({ kind: 'generic' }),
-    interactive: true,
     manualSelection: false,
-    highlightTerms: true,
   }
 );
 
-const dynamicTerms = ref<LearningTermCandidate[]>([]);
-const { activeTermKey, extractTermsForText, explainTerm, setActiveTermKey } =
-  useLearningTerms();
+const { activeTermKey, explainTerm, setActiveTermKey } = useLearningTerms();
 
 type FloatingPosition = {
   left: number;
@@ -63,18 +53,9 @@ const manualExplanation = ref<ExplainLearningTermResponse | null>(null);
 const manualExplanationLoading = ref(false);
 const manualExplanationError = ref('');
 
-let loadTimer: number | null = null;
-let stopWatch: (() => void) | null = null;
-let loadVersion = 0;
 let explainVersion = 0;
-let visibilityObserver: IntersectionObserver | null = null;
-const hasBeenVisible = ref(false);
 
-const segments = computed(() =>
-  props.highlightTerms
-    ? splitTextByInterviewTerms(props.text, dynamicTerms.value)
-    : [{ kind: 'text' as const, value: props.text }]
-);
+const segments = computed(() => splitTextByInterviewTerms(props.text));
 const displaySegments = computed(() =>
   prepareInterviewTextDisplaySegments(segments.value)
 );
@@ -101,42 +82,6 @@ const manualPopoverStyle = computed(() =>
       }
     : {}
 );
-
-function clearLoadTimer() {
-  if (!loadTimer) return;
-  window.clearTimeout(loadTimer);
-  loadTimer = null;
-}
-
-function scheduleTermLoad() {
-  if (typeof window === 'undefined' || !props.highlightTerms) return;
-  clearLoadTimer();
-  const version = ++loadVersion;
-  loadTimer = window.setTimeout(async () => {
-    const text = props.text;
-    const context = props.context;
-    try {
-      const terms = await extractTermsForText({ text, context });
-      if (version === loadVersion) {
-        dynamicTerms.value = terms;
-      }
-    } catch {
-      if (version === loadVersion) {
-        dynamicTerms.value = filterTermsForText(dynamicTerms.value, text);
-      }
-    }
-  }, 700);
-}
-
-function filterTermsForText(
-  terms: LearningTermCandidate[],
-  text: string
-): LearningTermCandidate[] {
-  const source = text.toLocaleLowerCase();
-  return terms.filter((term) =>
-    source.includes(term.phrase.trim().toLocaleLowerCase())
-  );
-}
 
 function handleManualSelectionRequest(event: Event) {
   if (!props.manualSelection || typeof window === 'undefined') return;
@@ -330,42 +275,14 @@ function isManualSelectionUiTarget(target: EventTarget | null): boolean {
   );
 }
 
-// Экстракция терминов стоит LLM-вызова: запускаем её только после того, как
-// блок реально показался на экране — списки и офскрин-контент не тратят квоту.
-function setupVisibilityObserver() {
-  const root = manualSelectionRoot.value;
-  if (typeof IntersectionObserver === 'undefined' || !root) {
-    hasBeenVisible.value = true;
-    return;
+// При смене текста или контекста закрываем открытое ручное объяснение:
+// старый ответ не должен оставаться привязанным к новому фрагменту.
+watch(
+  () => [props.text, JSON.stringify(props.context)] as const,
+  () => {
+    closeManualSelection();
   }
-  visibilityObserver = new IntersectionObserver(
-    (observed) => {
-      if (!observed.some((entry) => entry.isIntersecting)) return;
-      hasBeenVisible.value = true;
-      visibilityObserver?.disconnect();
-      visibilityObserver = null;
-    },
-    { rootMargin: '200px' }
-  );
-  visibilityObserver.observe(root);
-}
-
-onMounted(() => {
-  setupVisibilityObserver();
-  stopWatch = watch(
-    () => [props.text, JSON.stringify(props.context)] as const,
-    () => {
-      dynamicTerms.value = filterTermsForText(dynamicTerms.value, props.text);
-      closeManualSelection();
-      if (hasBeenVisible.value) scheduleTermLoad();
-    },
-    { immediate: true }
-  );
-});
-
-watch(hasBeenVisible, (visible) => {
-  if (visible) scheduleTermLoad();
-});
+);
 
 watch(activeTermKey, (key) => {
   if (manualSelectionMode.value && key !== manualSelectionKey.value) {
@@ -374,11 +291,7 @@ watch(activeTermKey, (key) => {
 });
 
 onBeforeUnmount(() => {
-  stopWatch?.();
-  clearLoadTimer();
   removeManualSelectionListeners();
-  visibilityObserver?.disconnect();
-  visibilityObserver = null;
 });
 </script>
 
@@ -399,10 +312,6 @@ onBeforeUnmount(() => {
         v-if="segment.kind === 'term'"
         :term="segment.term"
         :label="segment.value"
-        :source-text="text"
-        :context="context"
-        :interactive="interactive"
-        :explainable="segment.term !== 'star'"
         :attached-punctuation="segment.attachedPunctuation"
       />
       <template v-else>{{ segment.value }}</template>

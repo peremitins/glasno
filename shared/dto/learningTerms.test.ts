@@ -1,41 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import {
   ExplainLearningTermRequestDto,
-  ExtractLearningTermsRequestDto,
   LearningTermContextDto,
 } from './learningTerms';
+import * as learningTermsDto from './learningTerms';
+
+const removedRequestDto = ['Extract', 'Learning', 'Terms', 'RequestDto'].join('');
+const removedResponseDto = ['Extract', 'Learning', 'Terms', 'ResponseDto'].join('');
+const removedCandidateDto = ['Learning', 'Term', 'CandidateDto'].join('');
 
 describe('learning terms DTO', () => {
-  it('accepts a bounded batch of text snippets with context', () => {
-    const parsed = ExtractLearningTermsRequestDto.parse({
-      items: [
-        {
-          id: 'question-current',
-          text: 'Расскажите, что такое область видимости в JavaScript.',
-          context: {
-            kind: 'interview_question',
-            interviewSessionId: 'session_1',
-            turnId: 'turn_1',
-            label: 'Текущий вопрос',
-          },
-        },
-      ],
-    });
-
-    expect(parsed.items[0]?.context.kind).toBe('interview_question');
-    expect(parsed.items[0]?.text).toContain('область видимости');
-  });
-
-  it('limits extraction batches to eight snippets', () => {
-    expect(() =>
-      ExtractLearningTermsRequestDto.parse({
-        items: Array.from({ length: 9 }, (_, index) => ({
-          id: `item_${index}`,
-          text: `Текст с термином ${index}`,
-          context: { kind: 'generic' },
-        })),
-      })
-    ).toThrow();
+  it('does not expose background extraction DTOs', () => {
+    expect(removedRequestDto in learningTermsDto).toBe(false);
+    expect(removedResponseDto in learningTermsDto).toBe(false);
+    expect(removedCandidateDto in learningTermsDto).toBe(false);
   });
 
   it('validates explain requests for a concrete highlighted term', () => {

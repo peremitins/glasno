@@ -7,7 +7,6 @@ export type OpenAiResponsesPurpose =
   | 'interview_converse'
   | 'interview_converse_stream'
   | 'learning_term_explain'
-  | 'learning_terms_extract'
   | 'ocr'
   | 'question_file_extract'
   | 'question_generate'

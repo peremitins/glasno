@@ -1,10 +1,15 @@
-import { describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { describe, expect, it } from 'vitest';
 import type { LearningTermContext } from '@/shared/dto';
 import {
-  createLearningTermsBatcher,
   learningTermContextKey,
   learningTermTextHash,
 } from './useLearningTerms';
+
+const source = readFileSync('app/composables/useLearningTerms.ts', 'utf8');
+const removedBatcherName = ['create', 'Learning', 'Terms', 'Batcher'].join('');
+const removedExtractFunction = ['extract', 'Terms', 'For', 'Text'].join('');
+const removedExtractEndpoint = ['/api/learning/terms', 'extract'].join('/');
 
 describe('useLearningTerms helpers', () => {
   it('builds stable context keys independent of object property order', () => {
@@ -29,71 +34,9 @@ describe('useLearningTerms helpers', () => {
     expect(learningTermTextHash('CORS')).not.toBe(learningTermTextHash('cors'));
   });
 
-  it('batches queued extraction requests and preserves item responses', async () => {
-    vi.useFakeTimers();
-    const requestExtract = vi.fn().mockResolvedValue({
-      items: [
-        {
-          id: 'one',
-          terms: [
-            {
-              phrase: 'CORS',
-              shortDefinition: 'CORS — правила доступа между доменами.',
-            },
-          ],
-        },
-        { id: 'two', terms: [] },
-      ],
-    });
-    const batcher = createLearningTermsBatcher({
-      debounceMs: 20,
-      requestExtract,
-    });
-
-    const first = batcher.enqueue({
-      id: 'one',
-      text: 'Что такое CORS?',
-      context: { kind: 'interview_question' },
-    });
-    const second = batcher.enqueue({
-      id: 'two',
-      text: 'Обычный вопрос без терминов.',
-      context: { kind: 'interview_question' },
-    });
-
-    await vi.advanceTimersByTimeAsync(20);
-
-    await expect(first).resolves.toEqual([
-      {
-        phrase: 'CORS',
-        shortDefinition: 'CORS — правила доступа между доменами.',
-      },
-    ]);
-    await expect(second).resolves.toEqual([]);
-    expect(requestExtract).toHaveBeenCalledTimes(1);
-    expect(requestExtract.mock.calls[0]?.[0].items).toHaveLength(2);
-    vi.useRealTimers();
-  });
-
-  it('rejects queued entries on request failure instead of resolving empty terms', async () => {
-    vi.useFakeTimers();
-    const requestExtract = vi.fn().mockRejectedValue(new Error('network down'));
-    const batcher = createLearningTermsBatcher({
-      debounceMs: 20,
-      requestExtract,
-    });
-
-    const pending = batcher.enqueue({
-      id: 'one',
-      text: 'Что такое CORS?',
-      context: { kind: 'interview_question' },
-    });
-    // Ошибка сети не должна превращаться в «терминов нет» — иначе пустой
-    // результат навсегда осядет в кэше вызывающего кода.
-    const expectation = expect(pending).rejects.toThrow('network down');
-    await vi.advanceTimersByTimeAsync(20);
-
-    await expectation;
-    vi.useRealTimers();
+  it('does not expose background extraction helpers', () => {
+    expect(source).not.toContain(removedBatcherName);
+    expect(source).not.toContain(removedExtractFunction);
+    expect(source).not.toContain(removedExtractEndpoint);
   });
 });

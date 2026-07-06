@@ -1,5 +1,3 @@
-import type { LearningTermCandidate } from '@/shared/dto';
-
 export type InterviewTextSegment =
   | {
       kind: 'text';
@@ -9,11 +7,6 @@ export type InterviewTextSegment =
       kind: 'term';
       value: string;
       term: 'star';
-    }
-  | {
-      kind: 'term';
-      value: string;
-      term: LearningTermCandidate;
     };
 
 export type InterviewTextDisplaySegment =
@@ -37,16 +30,13 @@ const LEADING_PUNCTUATION_PATTERN = /^([,.;:!?)}\]»”]+)/u;
 interface TermMatch {
   index: number;
   end: number;
-  term: 'star' | LearningTermCandidate;
+  term: 'star';
 }
 
-export function splitTextByInterviewTerms(
-  text: string,
-  dynamicTerms: LearningTermCandidate[] = []
-): InterviewTextSegment[] {
+export function splitTextByInterviewTerms(text: string): InterviewTextSegment[] {
   if (!text) return [];
 
-  const matches = selectTermMatches(text, dynamicTerms);
+  const matches = selectTermMatches(text);
   if (!matches.length) return [{ kind: 'text', value: text }];
 
   const segments: InterviewTextSegment[] = [];
@@ -111,20 +101,8 @@ function isDisplayTextSegment(
   return segment?.kind === 'text';
 }
 
-function selectTermMatches(
-  text: string,
-  dynamicTerms: LearningTermCandidate[]
-): TermMatch[] {
+function selectTermMatches(text: string): TermMatch[] {
   const candidates: TermMatch[] = [];
-  const seenDynamicTerms = new Set<string>();
-
-  for (const term of dynamicTerms) {
-    const phrase = term.phrase.trim();
-    const key = phrase.toLocaleLowerCase();
-    if (!phrase || seenDynamicTerms.has(key)) continue;
-    seenDynamicTerms.add(key);
-    candidates.push(...findPhraseMatches(text, phrase, term));
-  }
 
   for (const match of text.matchAll(TERM_PATTERN)) {
     const index = match.index ?? 0;
@@ -157,41 +135,4 @@ function selectTermMatches(
   }
 
   return selected.sort((left, right) => left.index - right.index);
-}
-
-function findPhraseMatches(
-  text: string,
-  phrase: string,
-  term: LearningTermCandidate
-): TermMatch[] {
-  const matches: TermMatch[] = [];
-  const lowerText = text.toLocaleLowerCase();
-  // При смене регистра длина строки может измениться (например, «İ» → «i̇»),
-  // тогда индексы сдвигаются относительно оригинала — ищем без сворачивания.
-  const useLower = lowerText.length === text.length;
-  const haystack = useLower ? lowerText : text;
-  const needle = useLower ? phrase.toLocaleLowerCase() : phrase;
-  let cursor = 0;
-
-  while (cursor < text.length) {
-    const index = haystack.indexOf(needle, cursor);
-    if (index < 0) break;
-    const end = index + phrase.length;
-    if (hasWordBoundary(text, index, end)) {
-      matches.push({ index, end, term });
-    }
-    cursor = Math.max(index + 1, end);
-  }
-
-  return matches;
-}
-
-function hasWordBoundary(text: string, index: number, end: number): boolean {
-  const before = index > 0 ? text.charAt(index - 1) : '';
-  const after = end < text.length ? text.charAt(end) : '';
-  return !isWordChar(before) && !isWordChar(after);
-}
-
-function isWordChar(value: string): boolean {
-  return Boolean(value && /[\p{L}\p{N}_]/u.test(value));
 }

@@ -11,6 +11,9 @@ const dashboardPage = readFileSync('app/pages/index.vue', 'utf8');
 const historyPage = readFileSync('app/pages/history.vue', 'utf8');
 const pricingPage = readFileSync('app/pages/pricing.vue', 'utf8');
 const layout = readFileSync('app/layouts/default.vue', 'utf8');
+const removedHighlightProp = ['highlight', 'Terms'].join('');
+const removedExtractFunction = ['extract', 'Terms', 'For', 'Text'].join('');
+const removedExtractEndpoint = ['/api/learning/terms', 'extract'].join('/');
 
 describe('manual learning term selection UI', () => {
   it('keeps manual selection opt-in inside TextWithInterviewTerms', () => {
@@ -25,16 +28,16 @@ describe('manual learning term selection UI', () => {
     expect(component).not.toContain('@contextmenu');
   });
 
-  it('keeps manual selection for user replies but disables auto-highlight there', () => {
-    // Ответы пользователя не подсвечиваем и не гоняем через LLM-извлечение:
-    // человек знает, что написал. «Объяснить» по выделению остаётся.
-    expect(component).toContain('highlightTerms?: boolean');
-    expect(component).toContain('highlightTerms: true');
-    expect(component).toContain("|| !props.highlightTerms) return");
-    expect(component).toContain('props.highlightTerms\n    ? splitTextByInterviewTerms');
-    expect(interviewPage).toContain(
-      `:highlight-terms="message.role !== 'user'"`
-    );
+  it('keeps manual selection without background term extraction', () => {
+    expect(component).toContain('manualSelection');
+    expect(component).toContain('explainManualSelection');
+    expect(component).toContain('splitTextByInterviewTerms(props.text)');
+    expect(component).not.toContain(removedHighlightProp);
+    expect(component).not.toContain(removedExtractFunction);
+    expect(component).not.toContain('dynamicTerms');
+    expect(component).not.toContain('IntersectionObserver');
+    expect(component).not.toContain(removedExtractEndpoint);
+    expect(interviewPage).not.toContain('highlight-terms');
   });
 
   it('enables manual selection only in active interview text surfaces', () => {

@@ -1,9 +1,6 @@
 import type {
   ExplainLearningTermRequest,
   ExplainLearningTermResponse,
-  ExtractLearningTermsRequest,
-  ExtractLearningTermsResponse,
-  LearningTermCandidate,
 } from '@/shared/dto';
 import type {
   LearningTermsEngine,
@@ -22,12 +19,6 @@ import {
 } from './openaiResponsesClient';
 import { compactGeneratedText } from './textNormalization';
 
-const MAX_EXTRACTED_TERMS = 3;
-
-// Совпадает с ограничением LearningTermCandidateDto.phrase: более длинная
-// фраза уронит валидацию ответа хендлером — такие кандидаты отбрасываем.
-const MAX_PHRASE_LENGTH = 120;
-
 function compactContextForPrompt(context: {
   kind: string;
   label?: string;
@@ -45,58 +36,6 @@ function compactContextForPrompt(context: {
 // принимают — им его не отправляем.
 function supportsReasoningEffort(model: string): boolean {
   return model.startsWith('gpt-5');
-}
-
-function findPhraseInText(text: string, phrase: string): string | null {
-  const needle = phrase.trim();
-  if (!needle) return null;
-  const lowerText = text.toLocaleLowerCase();
-  // При смене регистра длина строки может измениться (например, «İ» → «i̇»),
-  // тогда индексы сдвигаются относительно оригинала — ищем без сворачивания.
-  const useLower = lowerText.length === text.length;
-  const haystack = useLower ? lowerText : text;
-  const index = haystack.indexOf(useLower ? needle.toLocaleLowerCase() : needle);
-  if (index < 0) return null;
-  return text.slice(index, index + needle.length);
-}
-
-export function normalizeLearningTermsForText(
-  text: string,
-  value: unknown
-): LearningTermCandidate[] {
-  const raw =
-    value && typeof value === 'object'
-      ? (value as { terms?: unknown })
-      : { terms: value };
-  const source = Array.isArray(raw.terms) ? raw.terms : [];
-  const result: LearningTermCandidate[] = [];
-  const seen = new Set<string>();
-
-  for (const item of source) {
-    if (!item || typeof item !== 'object') continue;
-    const term = item as {
-      phrase?: unknown;
-      shortDefinition?: unknown;
-      definition?: unknown;
-    };
-    const phraseCandidate = typeof term.phrase === 'string' ? term.phrase : '';
-    const phrase = findPhraseInText(text, phraseCandidate);
-    if (!phrase || phrase.length > MAX_PHRASE_LENGTH) continue;
-
-    const key = phrase.toLocaleLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-
-    const shortDefinition = compactGeneratedText(
-      term.shortDefinition ?? term.definition,
-      `${phrase} — понятие из текущего текста.`,
-      180
-    );
-    result.push({ phrase, shortDefinition });
-    if (result.length >= MAX_EXTRACTED_TERMS) break;
-  }
-
-  return result;
 }
 
 export function normalizeLearningTermExplanation(
@@ -135,43 +74,6 @@ export class OpenAiLearningTermsEngine implements LearningTermsEngine {
       recordUsage?: (input: RecordAiUsageInput) => void;
     }
   ) {}
-
-  async extractTerms(
-    input: ExtractLearningTermsRequest,
-    usageContext?: LearningTermsEngineUsageContext
-  ): Promise<ExtractLearningTermsResponse> {
-    const raw = await this.requestJson({
-      instruction: buildExtractInstruction(),
-      userText: JSON.stringify({
-        items: input.items.map((item) => ({
-          id: item.id,
-          text: item.text,
-          // Модели полезны только тип экрана и подпись; UUID сессий — шум
-          // в токенах, который к тому же дробил бы кэш при их смене.
-          context: compactContextForPrompt(item.context),
-        })),
-      }),
-      maxOutputTokens: Math.min(1800, 280 + input.items.length * 220),
-      kind: 'learning_terms_extract',
-      context: usageContextFromExtract(input, usageContext),
-    });
-
-    const rawItems = Array.isArray(raw.items) ? raw.items : [];
-    return {
-      items: input.items.map((item) => {
-        const rawItem = rawItems.find(
-          (candidate) =>
-            candidate &&
-            typeof candidate === 'object' &&
-            (candidate as { id?: unknown }).id === item.id
-        );
-        return {
-          id: item.id,
-          terms: normalizeLearningTermsForText(item.text, rawItem),
-        };
-      }),
-    };
-  }
 
   async explainTerm(
     input: ExplainLearningTermRequest,
@@ -267,19 +169,6 @@ function getOpenAiResponseId(response: unknown): string | null {
   return typeof id === 'string' ? id : null;
 }
 
-function buildExtractInstruction(): string {
-  return [
-    'Ты помощник в тренажёре собеседований. Найди в каждом фрагменте 0–3 понятия или словосочетания, которые кандидату может быть полезно быстро уточнить.',
-    'Часто лучший ответ — пустой список. Если отдельная справка по фразе не добавит пользователю ясности, верни terms: [].',
-    'Выделяй только фразы, которые есть в тексте дословно. Не добавляй темы из головы и не переформулируй найденные фразы.',
-    'Оцени сложность относительно контекста вопроса, уровня ожидаемой роли и предметной области. Выбирай только специальные понятия, для понимания которых нужно знание конкретной технологии, метрики, стандарта, методологии, протокола, юридического/безопасностного или инженерного концепта.',
-    'Не выбирай общеупотребимые слова, бытовые или деловые формулировки, а также широкие названия инструментов сами по себе, если их смысл очевиден без отдельной справки.',
-    'Если сомневаешься между подсветить и не подсветить, не подсвечивай.',
-    'Для каждого термина дай короткое определение до 180 символов на русском.',
-    'Верни строго JSON без markdown: {"items":[{"id":"...","terms":[{"phrase":"точная фраза из текста","shortDefinition":"..."}]}]}',
-  ].join('\n');
-}
-
 function buildExplainInstruction(): string {
   return [
     'Ты объясняешь термин пользователю тренажёра собеседований.',
@@ -287,18 +176,6 @@ function buildExplainInstruction(): string {
     'Не пиши готовый ответ кандидата на весь вопрос и не добавляй выдуманный опыт кандидата.',
     'Верни строго JSON без markdown: {"title":"...","shortDefinition":"...","explanation":"2–5 предложений"}',
   ].join('\n');
-}
-
-function usageContextFromExtract(
-  input: ExtractLearningTermsRequest,
-  usageContext?: LearningTermsEngineUsageContext
-) {
-  const item = input.items.find((candidate) => candidate.context.interviewSessionId);
-  return {
-    userId: usageContext?.userId ?? null,
-    anonymousSessionId: usageContext?.anonymousSessionId ?? null,
-    interviewSessionId: item?.context.interviewSessionId ?? null,
-  };
 }
 
 function usageContextFromExplain(

@@ -120,7 +120,6 @@
             <TextWithInterviewTerms
               :text="item.question"
               :context="questionBankTermContext('Вопрос из базы')"
-              :interactive="false"
             />
           </h2>
           <p>{{ item.role || t('questions.all') }}</p>

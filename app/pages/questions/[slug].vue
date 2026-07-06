@@ -100,7 +100,6 @@
             <TextWithInterviewTerms
               :text="item.question"
               :context="questionBankTermContext('Похожий вопрос')"
-              :interactive="false"
             />
           </NuxtLink>
         </div>
@@ -125,7 +124,7 @@
   .panel {
     display: grid;
     gap: 10px;
-    padding: clamp(18px, 2.2vw, 26px);
+    padding: clamp(8px, 2.2vw, 26px);
   }
 
   .panel h2 {
