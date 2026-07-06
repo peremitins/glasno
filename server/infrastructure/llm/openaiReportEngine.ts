@@ -26,21 +26,11 @@ const CRITERIA_JSON_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   properties: {
+    substance: { type: 'integer', minimum: 0, maximum: 100 },
     structure: { type: 'integer', minimum: 0, maximum: 100 },
-    specificity: { type: 'integer', minimum: 0, maximum: 100 },
-    relevance: { type: 'integer', minimum: 0, maximum: 100 },
-    confidence: { type: 'integer', minimum: 0, maximum: 100 },
-    riskPhrases: { type: 'integer', minimum: 0, maximum: 100 },
-    brevity: { type: 'integer', minimum: 0, maximum: 100 },
+    delivery: { type: 'integer', minimum: 0, maximum: 100 },
   },
-  required: [
-    'structure',
-    'specificity',
-    'relevance',
-    'confidence',
-    'riskPhrases',
-    'brevity',
-  ],
+  required: ['substance', 'structure', 'delivery'],
 } as const;
 
 export const REPORT_JSON_SCHEMA = {
@@ -225,10 +215,13 @@ export class OpenAiReportEngine implements ReportEngine {
 export function buildInstruction(): string {
   return [
     'Ты карьерный коуч и интервьюер. Разбери завершённое собеседование на русском языке.',
-    'Оцени критерии от 0 до 100: structure, specificity, relevance, confidence, riskPhrases, brevity.',
-    'riskPhrases — высокий балл означает, что риск-фраз мало.',
+    'Оцени три критерия от 0 до 100:',
+    'substance (Суть ответа) — ответил ли кандидат по существу заданного вопроса, релевантно роли, с конкретикой, личным вкладом и измеримым результатом вместо общих слов.',
+    'structure (Структура) — логика изложения: понятны ситуация, задача, действия и результат; ответ связный, без воды и повторов.',
+    'delivery (Подача) — уверенность и ясность формулировок, лаконичность, отсутствие риск-фраз, оговорок и слов-паразитов.',
+    'Содержание (substance и structure) важнее подачи: не завышай delivery, если ответ пустой или не по делу.',
     'Для каждого основного и уточняющего вопроса из транскрипта верни отдельный элемент questionAnalysis. Сохраняй исходные turnId и kind.',
-    'Для каждого questionAnalysis обязательно проставь criteria по тем же шести критериям от 0 до 100.',
+    'Для каждого questionAnalysis обязательно проставь criteria по тем же трём критериям от 0 до 100.',
     'Если ответ не предоставлен или он несодержательный, поставь по этому вопросу все criteria в 0 и прямо укажи, что вопрос пропущен.',
     'Для каждого вопроса обязательно дай modelAnswer — сильный возможный вариант ответа, 3–6 предложений, по структуре STAR (ситуация, задача, действие, результат), от первого лица.',
     'Не выдумывай факты, цифры, названия компаний, сроки, метрики и результаты. Используй только данные из вакансии, резюме и ответа кандидата; если фактов не хватает, прямо напиши, какую реальную деталь кандидату нужно добавить.',

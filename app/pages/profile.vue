@@ -17,6 +17,8 @@
   const auth = useAuthStore();
   const api = useAPI();
   const { font, fontOptions, setFont } = useDesignPreferences();
+  const termsOfServiceUrl = 'https://glasno.app/legal/terms-of-service-ru.html';
+  const privacyPolicyUrl = 'https://glasno.app/legal/privacy-policy-ru.html';
 
   const step = ref<'email' | 'code'>('email');
   const devCode = ref('');
@@ -251,24 +253,34 @@
         </div>
 
         <div class="settings-list">
-          <button class="settings-row" type="button" disabled>
+          <a
+            class="settings-row"
+            :href="termsOfServiceUrl"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
             <span class="settings-row__icon" aria-hidden="true">
               <FileTextIcon />
             </span>
             <span class="settings-row__content">
               <span>{{ t('profile.documents.terms') }}</span>
-              <small>{{ t('common.soon') }}</small>
+              <small>{{ t('profile.documents.open') }}</small>
             </span>
-          </button>
-          <button class="settings-row" type="button" disabled>
+          </a>
+          <a
+            class="settings-row"
+            :href="privacyPolicyUrl"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
             <span class="settings-row__icon" aria-hidden="true">
               <FileTextIcon />
             </span>
             <span class="settings-row__content">
               <span>{{ t('profile.documents.privacy') }}</span>
-              <small>{{ t('common.soon') }}</small>
+              <small>{{ t('profile.documents.open') }}</small>
             </span>
-          </button>
+          </a>
         </div>
       </section>
 
@@ -326,7 +338,7 @@
           autocomplete="email"
           :disabled="step === 'code' || auth.isSubmitting"
           required
-        >
+        />
       </div>
 
       <div v-if="step === 'code'" class="field">
@@ -342,7 +354,7 @@
           maxlength="6"
           :disabled="auth.isSubmitting"
           required
-        >
+        />
       </div>
 
       <p v-if="devCode" class="notice glass-card">
@@ -478,7 +490,7 @@
   .profile-card,
   .auth-panel {
     min-width: 0;
-    padding: clamp(18px, 2.2vw, 26px);
+    padding: clamp(8px, 2.2vw, 26px);
   }
 
   .profile-card {
@@ -652,6 +664,16 @@
     font: inherit;
     padding: 10px 14px 10px 10px;
     text-align: left;
+    text-decoration: none;
+    transition: border-color var(--motion-fast) var(--ease-out),
+      background var(--motion-fast) var(--ease-out),
+      transform var(--motion-fast) var(--ease-out);
+  }
+
+  .settings-row[href]:hover {
+    border-color: var(--glass-border-strong);
+    background: var(--surface-raised);
+    transform: translateY(-1px);
   }
 
   .settings-row:disabled {

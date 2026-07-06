@@ -1,10 +1,6 @@
 import type {
   ExplainLearningTermRequest,
   ExplainLearningTermResponse,
-  ExtractLearningTermsItemRequest,
-  ExtractLearningTermsRequest,
-  ExtractLearningTermsResponse,
-  LearningTermCandidate,
   LearningTermContext,
 } from '@/shared/dto';
 import type { LearningTermsEngine } from '@/server/interface/learningTermsEngine';
@@ -24,7 +20,7 @@ type LearningTermsReportLookup = {
   } | null>;
 };
 
-export type LearningTermsQuotaKind = 'extract' | 'explain';
+export type LearningTermsQuotaKind = 'explain';
 
 // Квота считает только реальные LLM-вызовы: попадания в кэш бесплатны.
 export interface LearningTermsQuota {
@@ -37,8 +33,6 @@ export interface LearningTermsQuota {
 }
 
 export interface LearningTermsCache {
-  getExtract(text: string): Promise<LearningTermCandidate[] | null>;
-  setExtract(text: string, terms: LearningTermCandidate[]): Promise<void>;
   getExplanation(
     term: string,
     text: string
@@ -92,72 +86,6 @@ export class LearningTermsService {
       quota?: LearningTermsQuota;
     }
   ) {}
-
-  async extractTerms(params: {
-    anonymousSessionId: string;
-    userId?: string | null;
-    input: ExtractLearningTermsRequest;
-  }): Promise<ExtractLearningTermsResponse> {
-    const userId = params.userId ?? null;
-    await this.verifyContexts({
-      anonymousSessionId: params.anonymousSessionId,
-      userId,
-      contexts: params.input.items.map((item) => item.context),
-    });
-
-    const termsById = new Map<string, LearningTermCandidate[]>();
-    const misses: ExtractLearningTermsItemRequest[] = [];
-
-    if (this.deps.cache) {
-      const cache = this.deps.cache;
-      await Promise.all(
-        params.input.items.map(async (item) => {
-          const cached = await cache.getExtract(item.text);
-          if (cached) {
-            termsById.set(item.id, cached);
-          }
-        })
-      );
-    }
-    for (const item of params.input.items) {
-      if (!termsById.has(item.id)) misses.push(item);
-    }
-
-    if (misses.length) {
-      await this.deps.quota?.consume({
-        kind: 'extract',
-        amount: misses.length,
-        userId,
-        anonymousSessionId: params.anonymousSessionId,
-      });
-
-      const response = await this.deps.engine.extractTerms(
-        { items: misses },
-        {
-          anonymousSessionId: params.anonymousSessionId,
-          userId,
-        }
-      );
-
-      const missById = new Map(misses.map((item) => [item.id, item]));
-      await Promise.all(
-        response.items.map(async (item) => {
-          termsById.set(item.id, item.terms);
-          const source = missById.get(item.id);
-          if (source && this.deps.cache) {
-            await this.deps.cache.setExtract(source.text, item.terms);
-          }
-        })
-      );
-    }
-
-    return {
-      items: params.input.items.map((item) => ({
-        id: item.id,
-        terms: termsById.get(item.id) ?? [],
-      })),
-    };
-  }
 
   async explainTerm(params: {
     anonymousSessionId: string;

@@ -124,12 +124,9 @@ export function formatReportPdfText(value: string): string {
 
 export function reportPdfCriteriaLabel(key: string): string {
   const labels: Record<string, string> = {
+    substance: 'Суть ответа',
     structure: 'Структура',
-    specificity: 'Конкретика',
-    relevance: 'Релевантность',
-    confidence: 'Уверенность',
-    riskPhrases: 'Риск-фразы',
-    brevity: 'Краткость и ясность',
+    delivery: 'Подача',
   };
   return labels[key] || key;
 }

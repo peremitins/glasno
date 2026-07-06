@@ -1,8 +1,6 @@
 import type {
   ExplainLearningTermRequest,
   ExplainLearningTermResponse,
-  ExtractLearningTermsRequest,
-  ExtractLearningTermsResponse,
 } from '@/shared/dto';
 
 export type LearningTermsEngineUsageContext = {
@@ -11,10 +9,6 @@ export type LearningTermsEngineUsageContext = {
 };
 
 export interface LearningTermsEngine {
-  extractTerms(
-    input: ExtractLearningTermsRequest,
-    usageContext?: LearningTermsEngineUsageContext
-  ): Promise<ExtractLearningTermsResponse>;
   explainTerm(
     input: ExplainLearningTermRequest,
     usageContext?: LearningTermsEngineUsageContext

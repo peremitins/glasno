@@ -136,12 +136,9 @@ describe('ReportService', () => {
       status: 'done',
       overallScore: 42,
       criteria: {
+        substance: 40,
         structure: 20,
-        specificity: 30,
-        relevance: 40,
-        confidence: 35,
-        riskPhrases: 50,
-        brevity: 60,
+        delivery: 35,
       },
       recommendations: { topFixes: ['Добавить конкретику'] },
       questionAnalysis: [
@@ -197,12 +194,9 @@ describe('ReportService', () => {
         verdict: 'Хорошая база, нужно добавить цифры.',
         summary: 'Ответы релевантные, но местами общие.',
         criteria: {
+          substance: 90,
           structure: 80,
-          specificity: 70,
-          relevance: 90,
-          confidence: 78,
-          riskPhrases: 84,
-          brevity: 88,
+          delivery: 78,
         },
         recommendations: {
           topFixes: [
@@ -254,12 +248,9 @@ describe('ReportService', () => {
         verdict: 'LLM не должен оценивать пустое интервью.',
         summary: 'Пустые ответы нельзя считать реальными.',
         criteria: {
+          substance: 70,
           structure: 70,
-          specificity: 70,
-          relevance: 70,
-          confidence: 70,
-          riskPhrases: 100,
-          brevity: 70,
+          delivery: 70,
         },
         recommendations: { topFixes: ['Не используется'] },
         questionAnalysis: [],
@@ -288,12 +279,9 @@ describe('ReportService', () => {
       status: 'done',
       overallScore: 0,
       criteria: {
+        substance: 0,
         structure: 0,
-        specificity: 0,
-        relevance: 0,
-        confidence: 0,
-        riskPhrases: 0,
-        brevity: 0,
+        delivery: 0,
       },
     });
     expect(report.verdict).toContain('не состоялось');
@@ -301,12 +289,9 @@ describe('ReportService', () => {
     expect(report.questionAnalysis?.[0]).toMatchObject({
       kind: 'main',
       criteria: {
+        substance: 0,
         structure: 0,
-        specificity: 0,
-        relevance: 0,
-        confidence: 0,
-        riskPhrases: 0,
-        brevity: 0,
+        delivery: 0,
       },
     });
     expect(engine.analyze).not.toHaveBeenCalled();
@@ -353,12 +338,9 @@ describe('ReportService', () => {
       question: 'Какой был измеримый результат?',
       answer: 'Ответ не предоставлен.',
       criteria: {
+        substance: 0,
         structure: 0,
-        specificity: 0,
-        relevance: 0,
-        confidence: 0,
-        riskPhrases: 0,
-        brevity: 0,
+        delivery: 0,
       },
     });
     expect(engine.analyze).not.toHaveBeenCalled();
@@ -372,12 +354,9 @@ describe('ReportService', () => {
         verdict: 'Один сильный ответ.',
         summary: 'Ответ хороший, но интервью почти не пройдено.',
         criteria: {
+          substance: 100,
           structure: 80,
-          specificity: 70,
-          relevance: 100,
-          confidence: 90,
-          riskPhrases: 100,
-          brevity: 80,
+          delivery: 90,
         },
         recommendations: { topFixes: ['Добавить ответы на остальные вопросы'] },
         questionAnalysis: [
@@ -416,12 +395,9 @@ describe('ReportService', () => {
 
     expect(report.overallScore).toBe(9);
     expect(report.criteria).toMatchObject({
+      substance: 10,
       structure: 8,
-      specificity: 7,
-      relevance: 10,
-      confidence: 9,
-      riskPhrases: 10,
-      brevity: 8,
+      delivery: 9,
     });
     expect(report.verdict).toContain('1 из 10');
     expect(engine.analyze).toHaveBeenCalledWith(
@@ -451,12 +427,9 @@ describe('ReportService', () => {
         verdict: 'Ответ сохранён из realtime диалога.',
         summary: 'Есть пример, нужно больше метрик.',
         criteria: {
+          substance: 82,
           structure: 70,
-          specificity: 72,
-          relevance: 82,
-          confidence: 76,
-          riskPhrases: 80,
-          brevity: 78,
+          delivery: 76,
         },
         recommendations: { topFixes: ['Добавить цифры'] },
         questionAnalysis: [],

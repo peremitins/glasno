@@ -36,68 +36,20 @@ function createReportRepository() {
 }
 
 describe('LearningTermsService', () => {
-  it('extracts terms for generic session-scoped text without ownership lookup', async () => {
-    const engine = {
-      extractTerms: vi.fn().mockResolvedValue({
-        items: [{ id: 'item_1', terms: [] }],
-      }),
-      explainTerm: vi.fn(),
-    };
-    const service = new LearningTermsService({
-      interviewRepository: createRepository(),
-      reportRepository: createReportRepository(),
-      engine,
-    });
-
-    await expect(
-      service.extractTerms({
-        anonymousSessionId: 'anon_1',
-        input: {
-          items: [
-            {
-              id: 'item_1',
-              text: 'Обычный текст',
-              context: { kind: 'dashboard' },
-            },
-          ],
-        },
-      })
-    ).resolves.toEqual({ items: [{ id: 'item_1', terms: [] }] });
-    expect(engine.extractTerms).toHaveBeenCalledOnce();
-  });
-
-  it('rejects extraction for an interview session owned by another visitor', async () => {
+  it('does not expose background extraction on the service', () => {
     const service = new LearningTermsService({
       interviewRepository: createRepository(),
       reportRepository: createReportRepository(),
       engine: {
-        extractTerms: vi.fn(),
         explainTerm: vi.fn(),
       },
     });
 
-    await expect(
-      service.extractTerms({
-        anonymousSessionId: 'anon_2',
-        input: {
-          items: [
-            {
-              id: 'item_1',
-              text: 'Что такое CORS?',
-              context: {
-                kind: 'interview_question',
-                interviewSessionId: 'owned_session',
-              },
-            },
-          ],
-        },
-      })
-    ).rejects.toMatchObject({ data: { code: 'E_FORBIDDEN' } });
+    expect('extractTerms' in service).toBe(false);
   });
 
   it('allows report context after checking the report session owner', async () => {
     const engine = {
-      extractTerms: vi.fn(),
       explainTerm: vi.fn().mockResolvedValue({
         term: 'CORS',
         title: 'CORS',
@@ -125,12 +77,14 @@ describe('LearningTermsService', () => {
     expect(engine.explainTerm).toHaveBeenCalledOnce();
   });
 
-  it('serves extract results from cache without engine call or quota consumption', async () => {
-    const cachedTerms = [
-      { phrase: 'CORS', shortDefinition: 'CORS — правила доступа между доменами.' },
-    ];
+  it('serves explanations from cache without engine call or quota consumption', async () => {
+    const cachedExplanation = {
+      term: 'CORS',
+      title: 'CORS',
+      shortDefinition: 'CORS — правила доступа между доменами.',
+      explanation: 'CORS ограничивает чтение ответов между доменами.',
+    };
     const engine = {
-      extractTerms: vi.fn(),
       explainTerm: vi.fn(),
     };
     const quota = { consume: vi.fn() };
@@ -140,82 +94,71 @@ describe('LearningTermsService', () => {
       engine,
       quota,
       cache: {
-        getExtract: vi.fn().mockResolvedValue(cachedTerms),
-        setExtract: vi.fn(),
-        getExplanation: vi.fn().mockResolvedValue(null),
+        getExplanation: vi.fn().mockResolvedValue(cachedExplanation),
         setExplanation: vi.fn(),
       },
     });
 
     await expect(
-      service.extractTerms({
+      service.explainTerm({
         anonymousSessionId: 'anon_1',
         input: {
-          items: [
-            { id: 'item_1', text: 'Что такое CORS?', context: { kind: 'dashboard' } },
-          ],
+          term: 'CORS',
+          text: 'Что такое CORS?',
+          context: { kind: 'dashboard' },
         },
       })
-    ).resolves.toEqual({ items: [{ id: 'item_1', terms: cachedTerms }] });
-    expect(engine.extractTerms).not.toHaveBeenCalled();
+    ).resolves.toEqual(cachedExplanation);
+    expect(engine.explainTerm).not.toHaveBeenCalled();
     expect(quota.consume).not.toHaveBeenCalled();
   });
 
-  it('consumes quota only for cache misses and stores fresh results', async () => {
-    const cachedTerms = [
-      { phrase: 'CORS', shortDefinition: 'CORS — правила доступа между доменами.' },
-    ];
+  it('consumes quota for explanation cache misses and stores fresh results', async () => {
+    const response = {
+      term: 'CORS',
+      title: 'CORS',
+      shortDefinition: 'CORS — правила доступа между доменами.',
+      explanation: 'CORS ограничивает чтение ответов между доменами.',
+    };
     const engine = {
-      extractTerms: vi.fn().mockResolvedValue({
-        items: [{ id: 'item_miss', terms: [] }],
-      }),
-      explainTerm: vi.fn(),
+      explainTerm: vi.fn().mockResolvedValue(response),
     };
     const quota = { consume: vi.fn().mockResolvedValue(undefined) };
-    const setExtract = vi.fn();
+    const setExplanation = vi.fn();
     const service = new LearningTermsService({
       interviewRepository: createRepository(),
       reportRepository: createReportRepository(),
       engine,
       quota,
       cache: {
-        getExtract: vi
-          .fn()
-          .mockImplementation(async (text: string) =>
-            text.includes('CORS') ? cachedTerms : null
-          ),
-        setExtract,
         getExplanation: vi.fn().mockResolvedValue(null),
-        setExplanation: vi.fn(),
+        setExplanation,
       },
     });
 
     await expect(
-      service.extractTerms({
+      service.explainTerm({
         anonymousSessionId: 'anon_1',
         input: {
-          items: [
-            { id: 'item_hit', text: 'Что такое CORS?', context: { kind: 'dashboard' } },
-            { id: 'item_miss', text: 'Обычный текст', context: { kind: 'dashboard' } },
-          ],
+          term: 'CORS',
+          text: 'Что такое CORS?',
+          context: { kind: 'dashboard' },
         },
       })
-    ).resolves.toEqual({
-      items: [
-        { id: 'item_hit', terms: cachedTerms },
-        { id: 'item_miss', terms: [] },
-      ],
-    });
+    ).resolves.toEqual(response);
     expect(quota.consume).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: 'extract', amount: 1 })
+      expect.objectContaining({ kind: 'explain', amount: 1 })
     );
-    expect(engine.extractTerms.mock.calls[0]?.[0].items).toHaveLength(1);
-    expect(setExtract).toHaveBeenCalledWith('Обычный текст', []);
+    expect(engine.explainTerm).toHaveBeenCalledOnce();
+    expect(setExplanation).toHaveBeenCalledWith(
+      'CORS',
+      'Что такое CORS?',
+      response
+    );
   });
 
   it('propagates quota errors without calling the engine', async () => {
     const engine = {
-      extractTerms: vi.fn(),
       explainTerm: vi.fn(),
     };
     const service = new LearningTermsService({
@@ -246,7 +189,6 @@ describe('LearningTermsService', () => {
 
   it('sends a windowed context to the engine for long explain texts', async () => {
     const engine = {
-      extractTerms: vi.fn(),
       explainTerm: vi.fn().mockResolvedValue({
         term: 'CORS',
         title: 'CORS',

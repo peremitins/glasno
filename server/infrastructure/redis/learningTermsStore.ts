@@ -1,11 +1,8 @@
 import { createHash } from 'node:crypto';
 import type { Redis } from 'ioredis';
-import { z } from 'zod';
 import {
   ExplainLearningTermResponseDto,
-  LearningTermCandidateDto,
   type ExplainLearningTermResponse,
-  type LearningTermCandidate,
 } from '@/shared/dto';
 import type {
   LearningTermsCache,
@@ -18,8 +15,6 @@ const CACHE_TTL_SECONDS = 7 * 24 * 60 * 60;
 const QUOTA_TTL_SECONDS = 25 * 60 * 60;
 const MEMORY_CACHE_MAX_ENTRIES = 500;
 
-const CachedTermsDto = z.array(LearningTermCandidateDto);
-
 function textHash(value: string): string {
   const normalized = value.trim().replace(/\s+/g, ' ').toLocaleLowerCase();
   return createHash('sha256').update(normalized).digest('hex').slice(0, 24);
@@ -29,9 +24,7 @@ function utcDayStamp(now: Date = new Date()): string {
   return now.toISOString().slice(0, 10);
 }
 
-// --- Кэш результатов extract/explain -------------------------------------
-// Тексты дашборда, базы вопросов и отчётов одинаковы у многих пользователей —
-// без кэша каждый пользователь оплачивал бы их извлечение заново.
+// --- Кэш результатов explain ---------------------------------------------
 
 interface MemoryCacheEntry {
   value: string;
@@ -102,22 +95,6 @@ export function createLearningTermsCache(params: {
   }
 
   return {
-    async getExtract(text: string): Promise<LearningTermCandidate[] | null> {
-      const raw = await readRaw(`${prefix}:extract:${textHash(text)}`);
-      if (!raw) return null;
-      try {
-        const parsed = CachedTermsDto.safeParse(JSON.parse(raw));
-        return parsed.success ? parsed.data : null;
-      } catch {
-        return null;
-      }
-    },
-    async setExtract(text: string, terms: LearningTermCandidate[]) {
-      await writeRaw(
-        `${prefix}:extract:${textHash(text)}`,
-        JSON.stringify(terms)
-      );
-    },
     async getExplanation(
       term: string,
       text: string
@@ -152,7 +129,6 @@ export function createLearningTermsCache(params: {
 // LLM-прокси (~180 req/min на IP пропускает глобальный rate-limit).
 
 interface QuotaLimits {
-  extract: number;
   explain: number;
 }
 
@@ -164,12 +140,10 @@ function readLimit(envName: string, fallback: number): number {
 function resolveLimits(isAuthenticated: boolean): QuotaLimits {
   if (isAuthenticated) {
     return {
-      extract: readLimit('NUXT_LEARNING_TERMS_EXTRACT_DAILY_LIMIT_USER', 1000),
       explain: readLimit('NUXT_LEARNING_TERMS_EXPLAIN_DAILY_LIMIT_USER', 200),
     };
   }
   return {
-    extract: readLimit('NUXT_LEARNING_TERMS_EXTRACT_DAILY_LIMIT_ANON', 300),
     explain: readLimit('NUXT_LEARNING_TERMS_EXPLAIN_DAILY_LIMIT_ANON', 30),
   };
 }

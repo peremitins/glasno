@@ -133,7 +133,6 @@
               <TextWithInterviewTerms
                 :text="item.title"
                 :context="historyTermContext(item, 'Название интервью')"
-                :interactive="false"
               />
             </h2>
             <p>
@@ -142,7 +141,6 @@
                   item.subtitle || item.role || t('interview.session.subtitle')
                 "
                 :context="historyTermContext(item, 'Описание интервью')"
-                :interactive="false"
               />
             </p>
           </div>
@@ -263,7 +261,7 @@
   }
 
   .panel {
-    padding: clamp(18px, 2.2vw, 26px);
+    padding: clamp(8px, 2.2vw, 26px);
   }
 
   .list {

@@ -61,12 +61,9 @@ describe('openai report engine helpers', () => {
 
   it('attaches question and answer texts from turns so the DTO validates', () => {
     const criteria = {
+      substance: 10,
       structure: 10,
-      specificity: 10,
-      relevance: 10,
-      confidence: 10,
-      riskPhrases: 10,
-      brevity: 10,
+      delivery: 10,
     };
     const parsed = {
       overallScore: 40,

@@ -1,7 +1,9 @@
 <script setup lang="ts">
   import {
+    type ComponentPublicInstance,
     computed,
     nextTick,
+    onBeforeUpdate,
     onBeforeUnmount,
     onMounted,
     ref,
@@ -187,8 +189,8 @@
   }
 
   // Без turnId: он менялся каждым ходом, из-за чего контекст всех видимых
-  // сообщений «обновлялся», перезапуская извлечение терминов и закрывая
-  // открытые попапы. Для владения и кэша достаточно interviewSessionId.
+  // сообщений «обновлялся» и закрывал открытые объяснения. Для владения
+  // и кэша ручного explain достаточно interviewSessionId.
   function learningTermContext(
     kind: LearningTermContext['kind'],
     label?: string
@@ -1019,6 +1021,7 @@
   const hintsLoading = ref(false);
   const hintsError = ref('');
   const hintsPane = ref<HTMLElement | null>(null);
+  const hintDetailsPanels = ref<HTMLElement[]>([]);
   const loadedHintRequestKeys = ref<Set<string>>(new Set());
   const hintsInitialLoading = computed(
     () => hintsLoading.value && !currentHintDetails.value
@@ -1060,6 +1063,20 @@
 
   function scrollHintsToTop(behavior: ScrollBehavior = 'smooth') {
     hintsPane.value?.scrollTo({ top: 0, behavior });
+    for (const panel of hintDetailsPanels.value) {
+      panel.scrollTo({ top: 0, behavior });
+    }
+  }
+
+  onBeforeUpdate(() => {
+    hintDetailsPanels.value = [];
+  });
+
+  function setHintDetailsPanelRef(
+    element: Element | ComponentPublicInstance | null
+  ) {
+    if (!(element instanceof HTMLElement)) return;
+    hintDetailsPanels.value.push(element);
   }
 
   async function generateHintsForCurrentTurn(force = false) {
@@ -1404,7 +1421,6 @@
                       learningTermContext('interview_message', message.meta)
                     "
                     manual-selection
-                    :highlight-terms="message.role !== 'user'"
                   />
                 </p>
                 <button
@@ -1541,6 +1557,7 @@
 
                 <details
                   v-if="currentHintPack || currentHintDetails"
+                  :ref="setHintDetailsPanelRef"
                   class="hint-disclosure hint-disclosure--primary"
                   open
                 >
@@ -1657,6 +1674,7 @@
 
                 <details
                   v-if="currentHintDetails?.sampleAnswer"
+                  :ref="setHintDetailsPanelRef"
                   class="hint-disclosure"
                   open
                 >
@@ -1854,7 +1872,7 @@
   }
 
   .panel {
-    padding: clamp(18px, 2.2vw, 26px);
+    padding: clamp(8px, 2.2vw, 26px);
   }
 
   .stage-shell {
@@ -2211,7 +2229,7 @@
     position: relative;
     overflow: hidden;
     border: 1px solid var(--glass-border);
-    border-radius: var(--radius-lg, 18px);
+    border-radius: clamp(12px, 1.6vw, var(--radius-lg));
     background: var(--surface-solid);
     min-height: 0;
   }
@@ -2481,7 +2499,7 @@
     gap: 8px;
     padding: 10px 12px;
     /* border: 1px solid rgba(82, 93, 142, 0.16);
-    border-radius: var(--radius-lg, 18px);
+    border-radius: clamp(12px, 1.6vw, var(--rad ius-lg));
     background: rgba(248, 250, 255, 0.96);
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9),
       0 10px 34px rgba(23, 31, 56, 0.08); */

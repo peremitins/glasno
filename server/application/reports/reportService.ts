@@ -217,12 +217,9 @@ function extractUserDialogueAnswer(metadata: unknown): string {
 }
 
 const ZERO_CRITERIA: ReportCriteria = {
+  substance: 0,
   structure: 0,
-  specificity: 0,
-  relevance: 0,
-  confidence: 0,
-  riskPhrases: 0,
-  brevity: 0,
+  delivery: 0,
 };
 
 const LOW_EFFORT_REPORT_ANSWER =
@@ -349,12 +346,9 @@ function scaleCriteria(
   ratio: number
 ): ReportCriteria {
   return {
+    substance: scaleScore(criteria.substance, ratio),
     structure: scaleScore(criteria.structure, ratio),
-    specificity: scaleScore(criteria.specificity, ratio),
-    relevance: scaleScore(criteria.relevance, ratio),
-    confidence: scaleScore(criteria.confidence, ratio),
-    riskPhrases: scaleScore(criteria.riskPhrases, ratio),
-    brevity: scaleScore(criteria.brevity, ratio),
+    delivery: scaleScore(criteria.delivery, ratio),
   };
 }
 

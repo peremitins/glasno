@@ -193,7 +193,6 @@
                   <TextWithInterviewTerms
                     :text="scenario.subtitle"
                     :context="dashboardTermContext('Быстрый сценарий')"
-                    :interactive="false"
                   />
                 </small>
               </span>

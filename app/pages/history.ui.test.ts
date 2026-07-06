@@ -26,6 +26,6 @@ describe('interview history interactions', () => {
   it('renders history text with tooltip-only learning terms inside clickable rows', () => {
     expect(source).toContain('TextWithInterviewTerms');
     expect(source).toContain("kind: 'history'");
-    expect(source).toContain(':interactive="false"');
+    expect(source).not.toContain(':interactive=');
   });
 });

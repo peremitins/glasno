@@ -15,25 +15,25 @@ const textWithTermsComponent = readFileSync(
   'app/components/design/TextWithInterviewTerms.vue',
   'utf8'
 );
+const removedCandidateType = ['Learning', 'Term', 'Candidate'].join('');
+const removedExtractFunction = ['extract', 'Terms', 'For', 'Text'].join('');
 
 describe('interview terminology UI', () => {
   it('uses a tooltip-enabled term component without changing text metrics', () => {
     expect(termComponent).toContain('v-tooltip');
     expect(termComponent).toContain(':title=');
-    expect(termComponent).toContain('VDropdown');
-    expect(termComponent).toContain('explainable?: boolean');
-    expect(termComponent).toContain('const canExplain = computed');
-    expect(termComponent).toContain("props.term !== 'star'");
-    expect(termComponent).toContain('v-if="canExplain"');
-    expect(termComponent).toContain('class="term-popper"');
-    expect(termComponent).toContain(':auto-hide="true"');
-    expect(termComponent).toContain('@auto-hide');
-    expect(termComponent).toContain('@close-directive');
-    expect(termComponent).toContain('Cross2Icon');
-    expect(termComponent).toContain('Закрыть объяснение');
+    expect(termComponent).not.toContain('VDropdown');
+    expect(termComponent).not.toContain('explainable?: boolean');
+    expect(termComponent).not.toContain('const canExplain = computed');
+    expect(termComponent).not.toContain('class="term-popper"');
+    expect(termComponent).not.toContain(':auto-hide="true"');
+    expect(termComponent).not.toContain('Cross2Icon');
+    expect(termComponent).not.toContain('Закрыть объяснение');
+    expect(termComponent).not.toContain('explainTerm');
+    expect(termComponent).not.toContain('shortDefinition');
     expect(termComponent).toContain("theme: 'learning-term-tooltip'");
     expect(termComponent).toContain("placement: 'top'");
-    expect(termComponent).toContain('type="button"');
+    expect(termComponent).not.toContain('type="button"');
     expect(termComponent).not.toContain('term-tooltip__mark');
     expect(termComponent).not.toContain('display: inline-flex');
     expect(termComponent).not.toContain('font-weight: 900');
@@ -45,21 +45,18 @@ describe('interview terminology UI', () => {
     expect(termComponent).toContain('term-tooltip');
   });
 
-  it('keeps static STAR as tooltip-only while dynamic terms remain explainable', () => {
-    expect(termComponent).toContain('watch(isShown, (shown) => {');
-    expect(termComponent).toContain('if (!canExplain.value) return');
-    expect(termComponent).toContain('if (!canExplain.value || explanation.value');
-    expect(textWithTermsComponent).toContain(
-      `:explainable="segment.term !== 'star'"`
-    );
-    expect(textWithTermsComponent).toContain(':interactive="interactive"');
+  it('keeps static STAR as the only automatic inline term', () => {
+    expect(termComponent).toContain("term: 'star'");
+    expect(termComponent).toContain('common.terms.star.description');
+    expect(textWithTermsComponent).toContain('splitTextByInterviewTerms(props.text)');
+    expect(textWithTermsComponent).not.toContain(':explainable=');
+    expect(textWithTermsComponent).not.toContain(':interactive="interactive"');
+    expect(textWithTermsComponent).not.toContain(removedCandidateType);
   });
 
   it('configures Floating Vue custom themes and keeps long inline terms left-aligned', () => {
     expect(floatingVuePlugin).toContain("'learning-term-tooltip'");
     expect(floatingVuePlugin).toContain("$extend: 'tooltip'");
-    expect(floatingVuePlugin).toContain("'learning-term'");
-    expect(floatingVuePlugin).toContain("$extend: 'dropdown'");
     expect(termComponent).toContain('text-align: left');
     expect(termComponent).toContain('white-space: normal');
     expect(termComponent).toContain('displayLabelParts');
@@ -69,12 +66,16 @@ describe('interview terminology UI', () => {
     expect(termComponent).toContain('overflow-wrap: anywhere');
     expect(textWithTermsComponent).toContain('prepareInterviewTextDisplaySegments');
     expect(textWithTermsComponent).toContain(':attached-punctuation=');
+    expect(floatingVuePlugin).not.toContain("'learning-term'");
+    expect(floatingVuePlugin).not.toContain("$extend: 'dropdown'");
   });
 
-  it('keeps dynamic terms stable while background extraction refreshes', () => {
-    expect(textWithTermsComponent).toContain('filterTermsForText');
-    expect(textWithTermsComponent).not.toContain('dynamicTerms.value = []');
-    expect(textWithTermsComponent).toContain('}, 700)');
+  it('does not run background extraction for hover definitions', () => {
+    expect(textWithTermsComponent).not.toContain('filterTermsForText');
+    expect(textWithTermsComponent).not.toContain('scheduleTermLoad');
+    expect(textWithTermsComponent).not.toContain(removedExtractFunction);
+    expect(textWithTermsComponent).not.toContain('IntersectionObserver');
+    expect(textWithTermsComponent).not.toContain('}, 700)');
   });
 
   it('wraps dynamic report and dashboard text with term-aware rendering', () => {
@@ -85,6 +86,6 @@ describe('interview terminology UI', () => {
     expect(reportPage).toContain("kind: 'report'");
     expect(reportPage).toContain(':context=');
     expect(dashboardPage).toContain("kind: 'dashboard'");
-    expect(dashboardPage).toContain(':interactive="false"');
+    expect(dashboardPage).not.toContain(':interactive=');
   });
 });

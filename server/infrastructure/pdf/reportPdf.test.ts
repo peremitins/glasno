@@ -9,7 +9,8 @@ import {
 
 describe('report pdf labels', () => {
   it('uses reader-friendly report wording', () => {
-    expect(reportPdfCriteriaLabel('brevity')).toBe('Краткость и ясность');
+    expect(reportPdfCriteriaLabel('substance')).toBe('Суть ответа');
+    expect(reportPdfCriteriaLabel('delivery')).toBe('Подача');
     expect(REPORT_PDF_MODEL_ANSWER_LABEL).toBe('Вариант сильного ответа');
     expect(REPORT_PDF_STAR_LABEL).toContain(
       'STAR: ситуация, задача, действие, результат'
@@ -26,12 +27,9 @@ describe('report pdf labels', () => {
       verdict: 'Хороший ответ.',
       summary: 'Есть база для усиления.',
       criteria: {
+        substance: 90,
         structure: 80,
-        specificity: 70,
-        relevance: 90,
-        confidence: 78,
-        riskPhrases: 84,
-        brevity: 88,
+        delivery: 78,
       },
       recommendations: { topFixes: ['Добавить цифры'] },
       questionAnalysis: [
@@ -41,12 +39,9 @@ describe('report pdf labels', () => {
           question: 'Какой был результат?',
           answer: 'Конверсия выросла до 18%.',
           criteria: {
+            substance: 92,
             structure: 74,
-            specificity: 86,
-            relevance: 92,
-            confidence: 80,
-            riskPhrases: 90,
-            brevity: 78,
+            delivery: 80,
           },
           whatWorked: 'Есть результат.',
           whatWeak: 'Не указан период.',
@@ -65,7 +60,7 @@ describe('report pdf labels', () => {
     try {
       const result = await parser.getText();
       expect(result.text).toContain('Оценки по вопросу');
-      expect(result.text).toContain('Конкретика: 86/100');
+      expect(result.text).toContain('Суть ответа: 92/100');
     } finally {
       await parser.destroy();
     }
