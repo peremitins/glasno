@@ -323,7 +323,10 @@
 
       <div v-if="billingInfo" class="status-billing">
         <p class="panel-label">{{ t('pricing.billingLabel') }}</p>
-        <p v-if="billingInfo.autoRenew && billingInfo.nextChargeAt" class="status-line">
+        <p
+          v-if="billingInfo.autoRenew && billingInfo.nextChargeAt"
+          class="status-line"
+        >
           {{
             t('pricing.nextCharge', {
               amount: formatPrice(billingInfo.nextChargeAmountRub ?? 0),
@@ -340,7 +343,10 @@
               : t('pricing.autoRenewNone')
           }}
         </p>
-        <p v-if="billingInfo.lastChargeError" class="status-line status-line--error">
+        <p
+          v-if="billingInfo.lastChargeError"
+          class="status-line status-line--error"
+        >
           {{ t('pricing.chargeError') }}
         </p>
         <p v-if="paymentMethodLabel" class="status-line status-line--card">
@@ -369,7 +375,9 @@
             {{ t('pricing.disableAutoRenew') }}
           </button>
           <button
-            v-else-if="billingInfo.paymentMethod && status?.hasActiveSubscription"
+            v-else-if="
+              billingInfo.paymentMethod && status?.hasActiveSubscription
+            "
             type="button"
             class="secondary-action secondary-action--compact"
             :disabled="cardActionPending"
@@ -581,7 +589,7 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: clamp(16px, 2.4vw, 32px);
     align-items: start;
-    padding: clamp(18px, 2.2vw, 26px);
+    padding: clamp(8px, 2.2vw, 26px);
   }
 
   .status-main,
@@ -599,7 +607,7 @@
   }
 
   .status-main h2 {
-    font-size: 22px;
+    font-size: 18px;
     color: var(--text-primary);
   }
 
@@ -693,12 +701,12 @@
   }
 
   .plan-header h2 {
-    font-size: 20px;
+    font-size: 18px;
     color: var(--text-primary);
   }
 
   .plan-header h3 {
-    font-size: 17px;
+    font-size: 15px;
     color: var(--text-primary);
   }
 
@@ -717,7 +725,7 @@
   .price strong {
     color: var(--text-primary);
     font-family: var(--font-mono);
-    font-size: 28px;
+    font-size: 24px;
     line-height: 1;
   }
 

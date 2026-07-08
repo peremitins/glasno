@@ -44,6 +44,7 @@
     resolveProfessionSelection,
   } from '@/app/utils/interviewSource';
   import { buildResumePreviewBlocks } from '@/app/utils/resumePreview';
+  import { sanitizeProviderErrorMessage } from '@/app/utils/providerErrorMessage';
 
   type SourceMode = 'hh_url' | 'manual';
   type InterviewLevel = CreateInterviewSessionRequest['level'];
@@ -497,17 +498,19 @@
   }
 
   function extractApiError(error: unknown): string {
+    const fallback = t('interview.common.unknownError');
     if (error && typeof error === 'object' && 'data' in error) {
       const data = (
         error as { data?: { error?: { code?: string; message?: string } } }
       ).data;
       errorCode.value = data?.error?.code || '';
-      return data?.error?.message || t('interview.common.unknownError');
+      return sanitizeProviderErrorMessage(data?.error?.message, fallback);
     }
     errorCode.value = '';
-    return error instanceof Error
-      ? error.message
-      : t('interview.common.unknownError');
+    return sanitizeProviderErrorMessage(
+      error instanceof Error ? error.message : '',
+      fallback
+    );
   }
 
   async function onResumeFileChange(event: Event) {
@@ -686,7 +689,7 @@
                 class="text-control"
                 type="url"
                 placeholder="https://company.ru/careers/product-manager"
-              >
+              />
             </div>
           </div>
 
@@ -788,7 +791,7 @@
                 class="text-control"
                 type="text"
                 :placeholder="t('interview.new.placeholders.specialization')"
-              >
+              />
             </div>
 
             <div class="field">
@@ -834,7 +837,7 @@
                   accept=".pdf,.txt,.md,.png,.jpg,.jpeg,text/plain,text/markdown,application/pdf,image/png,image/jpeg"
                   :disabled="isExtractingResume"
                   @change="onResumeFileChange"
-                >
+                />
                 <label
                   class="file-drop file-drop--compact button-loader-host"
                   for="resume-file"
@@ -943,8 +946,8 @@
               class="skip-option"
               :class="{ 'skip-option--active': form.skipCandidateContext }"
             >
-              <input v-model="form.skipCandidateContext" type="checkbox" >
-              <span class="toggle-switch" aria-hidden="true"/>
+              <input v-model="form.skipCandidateContext" type="checkbox" />
+              <span class="toggle-switch" aria-hidden="true" />
               <span class="toggle-copy">
                 <strong>{{ t('interview.new.candidate.skip') }}</strong>
                 <small>{{ t('interview.new.candidate.skipHint') }}</small>
@@ -997,7 +1000,7 @@
                 accept=".pdf,.txt,.md,.csv,.xls,.xlsx,.png,.jpg,.jpeg,text/plain,text/markdown,text/csv,application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,image/png,image/jpeg"
                 :disabled="isExtractingQuestionsFile"
                 @change="onCustomQuestionsFileChange"
-              >
+              />
               <label
                 class="file-drop file-drop--compact button-loader-host"
                 for="custom-questions-file"
@@ -1041,8 +1044,8 @@
           </div>
 
           <label class="toggle-option">
-            <input v-model="customOnlyEnabled" type="checkbox" >
-            <span class="toggle-switch" aria-hidden="true"/>
+            <input v-model="customOnlyEnabled" type="checkbox" />
+            <span class="toggle-switch" aria-hidden="true" />
             <span class="toggle-copy">
               <strong>{{ t('interview.new.customQuestions.onlyMine') }}</strong>
               <small>{{
@@ -1050,15 +1053,6 @@
               }}</small>
             </span>
           </label>
-
-          <div class="question-mode-note">
-            <strong>{{
-              t('interview.new.customQuestions.defaultMode')
-            }}</strong>
-            <span>{{
-              t('interview.new.customQuestions.defaultModeHint')
-            }}</span>
-          </div>
         </div>
       </div>
     </section>
@@ -1202,9 +1196,9 @@
         aria-live="polite"
       >
         <div class="interview-start-visual" aria-hidden="true">
-          <span class="interview-start-ring"/>
-          <span class="interview-start-ring interview-start-ring--slow"/>
-          <span class="interview-start-core"/>
+          <span class="interview-start-ring" />
+          <span class="interview-start-ring interview-start-ring--slow" />
+          <span class="interview-start-core" />
         </div>
 
         <div class="interview-start-content">
@@ -1220,9 +1214,12 @@
             <li
               v-for="(step, index) in preparationSteps"
               :key="step"
-              :class="{ 'interview-start-steps__item--active': index === preparationStepIndex }"
+              :class="{
+                'interview-start-steps__item--active':
+                  index === preparationStepIndex,
+              }"
             >
-              <span/>
+              <span />
               {{ t(step) }}
             </li>
           </ol>
@@ -1259,7 +1256,7 @@
   .context-panel,
   .settings-panel,
   .custom-questions-panel {
-    padding: clamp(18px, 2.2vw, 26px);
+    padding: clamp(8px, 2.2vw, 26px);
   }
 
   .panel-head {
@@ -1292,7 +1289,7 @@
 
   h2 {
     color: var(--text-primary);
-    font-size: clamp(22px, 2.2vw, 30px);
+    font-size: clamp(18px, 1.8vw, 24px);
     line-height: 1.08;
   }
 
@@ -2162,8 +2159,7 @@
     height: 10px;
     border-radius: inherit;
     background: var(--accent-2);
-    box-shadow: 0 0 18px
-      color-mix(in srgb, var(--accent-2) 72%, transparent);
+    box-shadow: 0 0 18px color-mix(in srgb, var(--accent-2) 72%, transparent);
   }
 
   .interview-start-ring::before {
@@ -2213,7 +2209,7 @@
 
   .interview-start-content h2 {
     color: var(--text-primary);
-    font-size: clamp(26px, 3vw, 42px);
+    font-size: clamp(22px, 2.4vw, 32px);
     line-height: 1.05;
   }
 
@@ -2262,7 +2258,12 @@
     inset: 0;
     transform: translateX(-100%);
     border-radius: inherit;
-    background: linear-gradient(90deg, transparent, var(--accent-2), transparent);
+    background: linear-gradient(
+      90deg,
+      transparent,
+      var(--accent-2),
+      transparent
+    );
     animation: interview-start-step 1.6s var(--ease-out) infinite;
   }
 

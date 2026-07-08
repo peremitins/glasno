@@ -12,6 +12,7 @@ import {
 import { useMicPermissionGate } from './useMicPermissionGate';
 import { useAudioPermissionGate } from './useAudioPermissionGate';
 import { useRealtimeVoiceUiStore } from '@/app/stores/realtimeVoiceUi';
+import { sanitizeProviderErrorMessage } from '@/app/utils/providerErrorMessage';
 
 // Управление активной realtime-сессией «снаружи» (со страницы интервью):
 // отправка клиентских событий OpenAI и мгновенная отмена ответа ассистента.
@@ -396,13 +397,15 @@ export function useRealtimeVoiceSession(options: {
 }
 
 function extractApiError(error: unknown): string {
+  const fallback = 'Не удалось запустить голосовой режим';
   if (error && typeof error === 'object' && 'data' in error) {
     const data = (error as { data?: { error?: { message?: string } } }).data;
-    return data?.error?.message || 'Не удалось запустить голосовой режим';
+    return sanitizeProviderErrorMessage(data?.error?.message, fallback);
   }
-  return error instanceof Error
-    ? error.message
-    : 'Не удалось запустить голосовой режим';
+  return sanitizeProviderErrorMessage(
+    error instanceof Error ? error.message : '',
+    fallback
+  );
 }
 
 function stringValue(value: unknown): string {

@@ -20,4 +20,15 @@ describe('default layout sidebar', () => {
     expect(source).not.toContain('Анна');
     expect(source).not.toContain('aria-hidden="true">A</span>');
   });
+
+  it('uses a dedicated borderless rail treatment when collapsed', () => {
+    expect(source).toContain('grid-template-columns: 72px minmax(0, 1fr)');
+    expect(source).toContain(
+      '.layout-shell--collapsed .sidebar.glass-frame::before'
+    );
+    expect(source).toContain('border-width: 0');
+    expect(source).toContain('border-color: transparent');
+    expect(source).toContain('width: 48px');
+    expect(source).toContain('height: 48px');
+  });
 });

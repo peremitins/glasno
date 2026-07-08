@@ -4,9 +4,11 @@
   import { useI18n } from 'vue-i18n';
   import GlassSkeletonStack from '@/app/components/design/GlassSkeletonStack.vue';
   import ButtonLoader from '@/app/components/design/ButtonLoader.vue';
+  import TextWithInterviewTerms from '@/app/components/design/TextWithInterviewTerms.vue';
   import type {
     DeleteInterviewSessionResponse,
     InterviewHistoryResponse,
+    LearningTermContext,
   } from '@/shared/dto';
 
   type HistoryItem = InterviewHistoryResponse['items'][number];
@@ -68,6 +70,17 @@
     return base;
   }
 
+  function historyTermContext(
+    item: HistoryItem,
+    label: string
+  ): LearningTermContext {
+    return {
+      kind: 'history',
+      interviewSessionId: item.id,
+      label,
+    };
+  }
+
   async function openHistoryItem(item: HistoryItem) {
     await router.push(historyItemPath(item));
   }
@@ -116,11 +129,19 @@
         >
           <div class="main">
             <span class="status">{{ t(`common.status.${item.status}`) }}</span>
-            <h2>{{ item.title }}</h2>
+            <h2>
+              <TextWithInterviewTerms
+                :text="item.title"
+                :context="historyTermContext(item, 'Название интервью')"
+              />
+            </h2>
             <p>
-              {{
-                item.subtitle || item.role || t('interview.session.subtitle')
-              }}
+              <TextWithInterviewTerms
+                :text="
+                  item.subtitle || item.role || t('interview.session.subtitle')
+                "
+                :context="historyTermContext(item, 'Описание интервью')"
+              />
             </p>
           </div>
           <div class="meta">
@@ -240,7 +261,7 @@
   }
 
   .panel {
-    padding: clamp(18px, 2.2vw, 26px);
+    padding: clamp(8px, 2.2vw, 26px);
   }
 
   .list {

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ReportService } from './reportService';
+import { ReportService, toReportDto } from './reportService';
 
 function createInterviewRepository(
   sessionOverrides: Record<string, unknown>,
@@ -109,6 +109,68 @@ function createReportRepository() {
 }
 
 describe('ReportService', () => {
+  it('sanitizes provider names in stored report errors', () => {
+    const dto = toReportDto({
+      id: 'report_1',
+      sessionId: 'session_1',
+      status: 'failed',
+      overallScore: null,
+      criteria: null,
+      recommendations: null,
+      questionAnalysis: null,
+      verdict: null,
+      summary: null,
+      errorMessage: 'OpenAI не смог сформировать отчёт',
+      model: null,
+      createdAt: new Date('2026-06-28T10:10:00.000Z'),
+      updatedAt: new Date('2026-06-28T10:10:00.000Z'),
+    } as any);
+
+    expect(dto.errorMessage).toBe('Не удалось сформировать отчёт. Попробуйте ещё раз.');
+  });
+
+  it('sanitizes empty report insight text and broken STAR placeholders', () => {
+    const dto = toReportDto({
+      id: 'report_1',
+      sessionId: 'session_1',
+      status: 'done',
+      overallScore: 42,
+      criteria: {
+        substance: 40,
+        structure: 20,
+        delivery: 35,
+      },
+      recommendations: { topFixes: ['Добавить конкретику'] },
+      questionAnalysis: [
+        {
+          turnId: 'turn_1',
+          kind: 'main',
+          question: 'Расскажите про проект?',
+          answer: 'Не знаю.',
+          criteria: null,
+          whatWorked: '   ',
+          whatWeak: '',
+          modelAnswer: '',
+          strongerAnswerStar: 'S/T/A/R: ...',
+          nextPractice: 'Подготовить пример.',
+        },
+      ],
+      verdict: 'Нужно усилить ответ.',
+      summary: 'Ответ слишком короткий.',
+      errorMessage: null,
+      model: 'gpt-test',
+      createdAt: new Date('2026-06-28T10:10:00.000Z'),
+      updatedAt: new Date('2026-06-28T10:10:00.000Z'),
+    } as any);
+
+    expect(dto.questionAnalysis?.[0]).toMatchObject({
+      whatWorked: 'Сильных элементов в ответе не выявлено.',
+      whatWeak: 'Критичных слабых мест не выявлено.',
+      strongerAnswerStar:
+        'Опишите контекст ситуации, цель, свои действия и измеримый результат реальными фактами из опыта.',
+    });
+  });
+
   it('does not generate a report for unfinished sessions', async () => {
     const service = new ReportService({
       interviewRepository: createInterviewRepository({ status: 'running' }) as any,
@@ -132,12 +194,9 @@ describe('ReportService', () => {
         verdict: 'Хорошая база, нужно добавить цифры.',
         summary: 'Ответы релевантные, но местами общие.',
         criteria: {
+          substance: 90,
           structure: 80,
-          specificity: 70,
-          relevance: 90,
-          confidence: 78,
-          riskPhrases: 84,
-          brevity: 88,
+          delivery: 78,
         },
         recommendations: {
           topFixes: [
@@ -189,12 +248,9 @@ describe('ReportService', () => {
         verdict: 'LLM не должен оценивать пустое интервью.',
         summary: 'Пустые ответы нельзя считать реальными.',
         criteria: {
+          substance: 70,
           structure: 70,
-          specificity: 70,
-          relevance: 70,
-          confidence: 70,
-          riskPhrases: 100,
-          brevity: 70,
+          delivery: 70,
         },
         recommendations: { topFixes: ['Не используется'] },
         questionAnalysis: [],
@@ -223,16 +279,70 @@ describe('ReportService', () => {
       status: 'done',
       overallScore: 0,
       criteria: {
+        substance: 0,
         structure: 0,
-        specificity: 0,
-        relevance: 0,
-        confidence: 0,
-        riskPhrases: 0,
-        brevity: 0,
+        delivery: 0,
       },
     });
     expect(report.verdict).toContain('не состоялось');
     expect(report.questionAnalysis).toHaveLength(3);
+    expect(report.questionAnalysis?.[0]).toMatchObject({
+      kind: 'main',
+      criteria: {
+        substance: 0,
+        structure: 0,
+        delivery: 0,
+      },
+    });
+    expect(engine.analyze).not.toHaveBeenCalled();
+  });
+
+  it('keeps skipped clarification questions in the zero-answer report', async () => {
+    const reportRepository = createReportRepository();
+    const engine = {
+      analyze: vi.fn(),
+    };
+    const service = new ReportService({
+      interviewRepository: createInterviewRepository(
+        { questionCount: 1 },
+        [
+          {
+            id: 'turn_main',
+            kind: 'main',
+            question: 'Расскажите о сильном B2B-кейсе?',
+            answerTranscript: '—',
+          },
+          {
+            id: 'turn_clarification',
+            index: 1,
+            kind: 'clarification',
+            question: 'Какой был измеримый результат?',
+            answerTranscript: '—',
+            followUpForTurnId: 'turn_main',
+          },
+        ]
+      ) as any,
+      reportRepository: reportRepository as any,
+      engine,
+    });
+
+    const report = await service.ensureReport({
+      anonymousSessionId: 'anon_1',
+      sessionId: 'session_1',
+    });
+
+    expect(report.questionAnalysis).toHaveLength(2);
+    expect(report.questionAnalysis?.[1]).toMatchObject({
+      turnId: 'turn_clarification',
+      kind: 'clarification',
+      question: 'Какой был измеримый результат?',
+      answer: 'Ответ не предоставлен.',
+      criteria: {
+        substance: 0,
+        structure: 0,
+        delivery: 0,
+      },
+    });
     expect(engine.analyze).not.toHaveBeenCalled();
   });
 
@@ -244,12 +354,9 @@ describe('ReportService', () => {
         verdict: 'Один сильный ответ.',
         summary: 'Ответ хороший, но интервью почти не пройдено.',
         criteria: {
+          substance: 100,
           structure: 80,
-          specificity: 70,
-          relevance: 100,
-          confidence: 90,
-          riskPhrases: 100,
-          brevity: 80,
+          delivery: 90,
         },
         recommendations: { topFixes: ['Добавить ответы на остальные вопросы'] },
         questionAnalysis: [
@@ -288,12 +395,9 @@ describe('ReportService', () => {
 
     expect(report.overallScore).toBe(9);
     expect(report.criteria).toMatchObject({
+      substance: 10,
       structure: 8,
-      specificity: 7,
-      relevance: 10,
-      confidence: 9,
-      riskPhrases: 10,
-      brevity: 8,
+      delivery: 9,
     });
     expect(report.verdict).toContain('1 из 10');
     expect(engine.analyze).toHaveBeenCalledWith(
@@ -323,12 +427,9 @@ describe('ReportService', () => {
         verdict: 'Ответ сохранён из realtime диалога.',
         summary: 'Есть пример, нужно больше метрик.',
         criteria: {
+          substance: 82,
           structure: 70,
-          specificity: 72,
-          relevance: 82,
-          confidence: 76,
-          riskPhrases: 80,
-          brevity: 78,
+          delivery: 76,
         },
         recommendations: { topFixes: ['Добавить цифры'] },
         questionAnalysis: [],

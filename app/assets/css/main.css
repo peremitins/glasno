@@ -36,6 +36,8 @@
   --accent: #7c5cff;
   --accent-2: #48d7ff;
   --danger: #ff6b7a;
+  --warning: #f2c85b;
+  --success: #54d68a;
   --on-accent: #ffffff;
   --avatar-bg: linear-gradient(135deg, #f5d0fe, #7dd3fc);
   --avatar-text: #101421;
@@ -135,6 +137,8 @@ html[data-theme='light'] {
   --text-secondary: rgba(31, 35, 62, 0.74);
   --text-muted: rgba(59, 65, 101, 0.58);
   --focus-ring: rgba(111, 83, 244, 0.46);
+  --warning: #b97713;
+  --success: #148a52;
   --button-bg: linear-gradient(135deg, #536eff 0%, #795cff 58%, #a85cff 100%);
   --button-bg-hover: linear-gradient(
     135deg,
@@ -369,7 +373,7 @@ a {
   margin: 0;
   color: var(--text-primary);
   font-family: var(--font-display);
-  font-size: clamp(34px, 5vw, 68px);
+  font-size: clamp(26px, 3vw, 38px);
   font-weight: 700;
   letter-spacing: 0;
   line-height: 0.96;
@@ -382,7 +386,7 @@ a {
   max-width: 68ch;
   margin: 0;
   color: var(--text-secondary);
-  font-size: clamp(16px, 1.7vw, 19px);
+  font-size: clamp(14px, 1.35vw, 16px);
   line-height: 1.55;
   overflow-wrap: anywhere;
   text-wrap: pretty;
@@ -415,7 +419,7 @@ a {
 
 .app-page-header .page-title {
   max-width: 980px;
-  font-size: clamp(30px, 4vw, 52px);
+  font-size: clamp(24px, 2.8vw, 36px);
 }
 
 .panel-label {
@@ -436,7 +440,7 @@ a {
   position: relative;
   overflow: hidden;
   border: 1px solid var(--glass-border);
-  border-radius: var(--radius-lg);
+  border-radius: clamp(12px, 1.6vw, var(--radius-lg));
   background: linear-gradient(
       135deg,
       color-mix(in srgb, var(--accent) 9%, transparent),
@@ -446,6 +450,7 @@ a {
   box-shadow: var(--shadow-panel);
   backdrop-filter: blur(20px) saturate(175%);
   -webkit-backdrop-filter: blur(20px) saturate(175%);
+
 }
 
 .glass-frame::before {
@@ -494,7 +499,7 @@ a {
 }
 
 .glass-panel {
-  padding: clamp(18px, 2.2vw, 26px);
+  padding: clamp(8px, 2.2vw, 26px);
 }
 
 .glass-card {

@@ -12,5 +12,15 @@ export default defineNuxtPlugin((nuxtApp) => {
     overflowPadding: 12,
   };
 
+  FloatingVue.options.themes['learning-term-tooltip'] = {
+    $extend: 'tooltip',
+    placement: 'top',
+    triggers: ['hover', 'focus', 'touch'],
+    preventOverflow: true,
+    shift: true,
+    shiftCrossAxis: true,
+    overflowPadding: 12,
+  };
+
   nuxtApp.vueApp.use(FloatingVue);
 });

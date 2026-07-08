@@ -1,7 +1,9 @@
 <script setup lang="ts">
   import {
+    type ComponentPublicInstance,
     computed,
     nextTick,
+    onBeforeUpdate,
     onBeforeUnmount,
     onMounted,
     ref,
@@ -14,6 +16,7 @@
     InterviewerFaceId,
     InterviewReportResponse,
     InterviewStateResponse,
+    LearningTermContext,
     QuestionHintPack,
   } from '@/shared/dto';
   import {
@@ -32,6 +35,7 @@
   import InterviewerCard from '@/app/components/interview/InterviewerCard.vue';
   import LocalCameraPreview from '@/app/components/interview/LocalCameraPreview.vue';
   import ReportGenerationPanel from '@/app/components/interview/ReportGenerationPanel.vue';
+  import { sanitizeProviderErrorMessage } from '@/app/utils/providerErrorMessage';
   import TextWithInterviewTerms from '@/app/components/design/TextWithInterviewTerms.vue';
   import AudioPermissionDeniedDialog from '@/app/components/audio/AudioPermissionDeniedDialog.vue';
   import CameraPermissionDeniedDialog from '@/app/components/camera/CameraPermissionDeniedDialog.vue';
@@ -42,7 +46,12 @@
     RealtimeInterviewChatAdapter,
     REALTIME_QUESTION_ANNOUNCEMENT_KIND,
   } from '@/app/services/realtime/realtimeInterviewChatAdapter';
+  import { RealtimeResponseScheduler } from '@/app/services/realtime/realtimeResponseScheduler';
   import type { RealtimeVoiceControl } from '@/app/composables/useRealtimeVoiceSession';
+  import {
+    useRealtimeVoiceSettings,
+    RESPONSE_PAUSE_OPTIONS_MS,
+  } from '@/app/composables/useRealtimeVoiceSettings';
   import { INTERVIEW_STREAM_MODE } from '@/app/constants/interview';
   import { getInterviewerFacePhotoSrc } from '@/app/utils/interviewerAssets';
   import {
@@ -113,6 +122,25 @@
   // Управление активной realtime-сессией (отмена ответа модели, отправка
   // событий) — выдаётся панелью RealtimeVoicePanel через onControl.
   const realtimeControl = ref<RealtimeVoiceControl | null>(null);
+  // Настраиваемая пауза «окна тишины» перед ответом интервьюера.
+  const { responsePauseMs, setResponsePauseMs } = useRealtimeVoiceSettings();
+  const responsePauseOptions = RESPONSE_PAUSE_OPTIONS_MS;
+  // Окно тишины: semantic_vad режет ход на естественных паузах, поэтому ответ
+  // интервьюера (response.create) откладываем на responsePauseMs и снимаем,
+  // если кандидат заговорил снова. Так пауза «подумать» не засчитывается за
+  // законченный ответ.
+  const responseScheduler = new RealtimeResponseScheduler({
+    getDelayMs: () => responsePauseMs.value,
+    onElapsed: () => {
+      realtimeControl.value?.sendEvent({ type: 'response.create' });
+    },
+  });
+  // Кандидат прямо сейчас произносит сегмент речи. Ведём по СЫРЫМ событиям VAD
+  // (speech_started/stopped), а не по UI-флагу userSpeaking: адаптер гасит
+  // userSpeaking ещё и на завершении транскрипции, из-за чего он ложно
+  // становится false, пока идёт уже следующий сегмент. Для решения «ставить ли
+  // окно тишины» нужен честный флаг, не зависящий от транскрипции.
+  let userSpeechActive = false;
   let realtimePersistQueue: Promise<void> = Promise.resolve();
   // Runtime-пузыри, уже поставленные в очередь на сохранение: защита от
   // повторного персиста одной и той же реплики (дубли в истории диалога).
@@ -182,6 +210,20 @@
     return `${turn.id}:${
       latestInterviewerQuestionForHints(turn) || turn.question
     }`;
+  }
+
+  // Без turnId: он менялся каждым ходом, из-за чего контекст всех видимых
+  // сообщений «обновлялся» и закрывал открытые объяснения. Для владения
+  // и кэша ручного explain достаточно interviewSessionId.
+  function learningTermContext(
+    kind: LearningTermContext['kind'],
+    label?: string
+  ): LearningTermContext {
+    return {
+      kind,
+      interviewSessionId: state.value?.session.id || sessionId.value,
+      ...(label ? { label } : {}),
+    };
   }
 
   function latestInterviewerQuestionForHints(
@@ -297,7 +339,10 @@
       if (status !== 'connected') {
         realtimeSpeaking.value = false;
         userSpeaking.value = false;
+        userSpeechActive = false;
         firstQuestionAnnounced.value = false;
+        // Соединение оборвалось/остановлено — отложенного ответа быть не должно.
+        responseScheduler.cancel();
         return;
       }
       // Соединение установлено: модель сама здоровается и озвучивает текущий
@@ -311,13 +356,15 @@
   );
 
   function extractApiError(error: unknown): string {
+    const fallback = t('interview.common.unknownError');
     if (error && typeof error === 'object' && 'data' in error) {
       const data = (error as { data?: { error?: { message?: string } } }).data;
-      return data?.error?.message || t('interview.common.unknownError');
+      return sanitizeProviderErrorMessage(data?.error?.message, fallback);
     }
-    return error instanceof Error
-      ? error.message
-      : t('interview.common.unknownError');
+    return sanitizeProviderErrorMessage(
+      error instanceof Error ? error.message : '',
+      fallback
+    );
   }
 
   function ensureRealtimeAdapter() {
@@ -359,10 +406,11 @@
         handleRealtimeAssistantTranscript(transcript, messageId);
       },
       onUserTranscriptFailed() {
-        // Текст реплики распознать не удалось, но аудио уже в контексте
-        // модели — явно просим интервьюера ответить, чтобы диалог не замер
-        // (авто-ответ VAD выключен, см. realtimeConfig).
-        realtimeControl.value?.sendEvent({ type: 'response.create' });
+        // Текст реплики распознать не удалось, но аудио уже в контексте модели.
+        // Ответ VAD выключен, поэтому запускаем его сами — но через то же окно
+        // тишины, чтобы не перебить кандидата на паузе. Если он молчит, не
+        // говорит — планировщик выждет паузу и попросит интервьюера ответить.
+        if (!userSpeechActive) responseScheduler.arm();
       },
       onAssistantSpeechStarted() {
         realtimeSpeaking.value = true;
@@ -382,6 +430,15 @@
 
   function handleRealtimeEvent(event: unknown) {
     if (!event || typeof event !== 'object') return;
+    const type = (event as { type?: unknown }).type;
+    // Кандидат заговорил (в т.ч. возобновил речь после паузы) — ход не окончен:
+    // снимаем отложенный ответ и держим окно тишины закрытым.
+    if (type === 'input_audio_buffer.speech_started') {
+      userSpeechActive = true;
+      responseScheduler.cancel();
+    } else if (type === 'input_audio_buffer.speech_stopped') {
+      userSpeechActive = false;
+    }
     ensureRealtimeAdapter().handleServerEvent(event as { type?: string });
   }
 
@@ -391,17 +448,20 @@
     // В realtime реплики кандидата уже попадают в чат через адаптер.
     // В поле ответа ничего НЕ пишем. По голосовой команде — переходим дальше.
     if (isNextQuestionVoiceCommand(normalized)) {
-      // Команда адресована приложению, а не интервьюеру. Авто-ответ VAD
-      // выключен, поэтому модель на команду голосом не реагирует вовсе;
-      // cancel — страховка, если она ещё договаривает прошлый ответ.
+      // Команда адресована приложению, а не интервьюеру. Реагируем сразу,
+      // минуя окно тишины: снимаем отложенный ответ и переключаем вопрос.
+      responseScheduler.cancel();
       realtimeControl.value?.cancelActiveResponses();
       void goToNextQuestion();
       return;
     }
     queueRealtimeDialogueMessage('user', normalized, messageId);
-    // Обычная реплика кандидата: явно запускаем ответ интервьюера — теперь
-    // это делаем мы (после анализа транскрипта), а не VAD автоматически.
-    realtimeControl.value?.sendEvent({ type: 'response.create' });
+    // Обычная реплика кандидата: не отвечаем сразу, а ставим окно тишины.
+    // Пауза «подумать» внутри ответа снимет таймер (speech_started выше);
+    // ответ уйдёт только если кандидат реально замолчал на responsePauseMs.
+    // Если в момент готовности транскрипта кандидат уже начал следующий
+    // сегмент — не ставим таймер, его поставит завершение того сегмента.
+    if (!userSpeechActive) responseScheduler.arm();
   }
 
   function handleRealtimeAssistantTranscript(
@@ -425,7 +485,9 @@
     const question = currentTurn.value?.question?.trim();
     if (!control || !voiceConnected.value || !question) return;
 
-    // На случай, если модель всё ещё договаривает что-то по старому вопросу.
+    // Снимаем отложенный ответ по прошлому вопросу и обрываем текущую озвучку —
+    // иначе на смене вопроса зазвучат два голоса.
+    responseScheduler.cancel();
     control.cancelActiveResponses();
 
     const contextText = options.firstQuestion
@@ -1000,6 +1062,8 @@
   const hintsOpen = ref(false); // боковые подсказки
   const hintsLoading = ref(false);
   const hintsError = ref('');
+  const hintsPane = ref<HTMLElement | null>(null);
+  const hintDetailsPanels = ref<HTMLElement[]>([]);
   const loadedHintRequestKeys = ref<Set<string>>(new Set());
   const hintsInitialLoading = computed(
     () => hintsLoading.value && !currentHintDetails.value
@@ -1039,6 +1103,24 @@
     }
   }
 
+  function scrollHintsToTop(behavior: ScrollBehavior = 'smooth') {
+    hintsPane.value?.scrollTo({ top: 0, behavior });
+    for (const panel of hintDetailsPanels.value) {
+      panel.scrollTo({ top: 0, behavior });
+    }
+  }
+
+  onBeforeUpdate(() => {
+    hintDetailsPanels.value = [];
+  });
+
+  function setHintDetailsPanelRef(
+    element: Element | ComponentPublicInstance | null
+  ) {
+    if (!(element instanceof HTMLElement)) return;
+    hintDetailsPanels.value.push(element);
+  }
+
   async function generateHintsForCurrentTurn(force = false) {
     const turn = currentTurn.value;
     if (!turn || hintsLoading.value) return;
@@ -1071,6 +1153,8 @@
       loadedHintRequestKeys.value = new Set(loadedHintRequestKeys.value).add(
         requestKey
       );
+      await nextTick();
+      scrollHintsToTop('auto');
     } catch (err) {
       hintsError.value = extractApiError(err);
     } finally {
@@ -1091,6 +1175,7 @@
     () => currentHintsRequestKey.value,
     () => {
       if (hintsOpen.value) {
+        scrollHintsToTop('auto');
         void generateHintsForCurrentTurn();
       }
     }
@@ -1116,6 +1201,7 @@
   onBeforeUnmount(() => {
     window.removeEventListener('keydown', onKeydown);
     stopSpeech();
+    responseScheduler.dispose();
   });
 </script>
 
@@ -1199,7 +1285,7 @@
                 role="status"
                 aria-live="polite"
               >
-                <span class="vtile-voice-dot" aria-hidden="true"/>
+                <span class="vtile-voice-dot" aria-hidden="true" />
                 {{
                   userSpeaking
                     ? t('interview.session.stage.speaking')
@@ -1218,7 +1304,13 @@
                   : t('interview.session.question')
               }}
             </span>
-            <p><TextWithInterviewTerms :text="currentTurn.question" /></p>
+            <p>
+              <TextWithInterviewTerms
+                :text="currentTurn.question"
+                :context="learningTermContext('interview_question')"
+                manual-selection
+              />
+            </p>
             <button
               v-if="isTtsEnabled"
               v-tooltip="t('voice.tts.listen')"
@@ -1335,7 +1427,7 @@
                 role="status"
                 aria-live="polite"
               >
-                <span class="chat-conn-dot" aria-hidden="true"/>
+                <span class="chat-conn-dot" aria-hidden="true" />
                 <span class="chat-conn-text">{{
                   voiceConnected
                     ? t('voice.realtime.connectedBadge')
@@ -1365,7 +1457,15 @@
                 :class="`chat-message--${message.role}`"
               >
                 <small v-if="message.meta">{{ message.meta }}</small>
-                <p><TextWithInterviewTerms :text="message.content" /></p>
+                <p>
+                  <TextWithInterviewTerms
+                    :text="message.content"
+                    :context="
+                      learningTermContext('interview_message', message.meta)
+                    "
+                    manual-selection
+                  />
+                </p>
                 <button
                   v-if="isTtsEnabled && message.role === 'assistant'"
                   v-tooltip="
@@ -1482,7 +1582,7 @@
               </button>
             </header>
 
-            <div class="hints-pane">
+            <div ref="hintsPane" class="hints-pane">
               <template v-if="hintsInitialLoading">
                 <p class="sr-only">
                   {{ t('interview.session.hintsPanel.loading') }}
@@ -1500,6 +1600,7 @@
 
                 <details
                   v-if="currentHintPack || currentHintDetails"
+                  :ref="setHintDetailsPanelRef"
                   class="hint-disclosure hint-disclosure--primary"
                   open
                 >
@@ -1518,6 +1619,8 @@
                     <h3 v-if="currentHintDetails?.focus">
                       <TextWithInterviewTerms
                         :text="currentHintDetails.focus"
+                        :context="learningTermContext('interview_hint')"
+                        manual-selection
                       />
                     </h3>
                     <p v-else class="hint-structure">
@@ -1526,6 +1629,8 @@
                           currentHintPack?.strongDirection ||
                           t('interview.session.noHints')
                         "
+                        :context="learningTermContext('interview_hint')"
+                        manual-selection
                       />
                     </p>
 
@@ -1537,7 +1642,11 @@
                         v-for="item in currentHintDetails.answerPlan"
                         :key="item"
                       >
-                        <TextWithInterviewTerms :text="item" />
+                        <TextWithInterviewTerms
+                          :text="item"
+                          :context="learningTermContext('interview_hint')"
+                          manual-selection
+                        />
                       </li>
                     </ul>
 
@@ -1550,7 +1659,11 @@
                           v-for="item in currentHintDetails.keyDefinitions"
                           :key="item"
                         >
-                          <TextWithInterviewTerms :text="item" />
+                          <TextWithInterviewTerms
+                            :text="item"
+                            :context="learningTermContext('interview_hint')"
+                            manual-selection
+                          />
                         </li>
                       </ul>
                     </template>
@@ -1562,11 +1675,17 @@
                       <p class="hint-structure">
                         <TextWithInterviewTerms
                           :text="currentHintPack.structure"
+                          :context="learningTermContext('interview_hint')"
+                          manual-selection
                         />
                       </p>
                       <ul class="hint-list">
                         <li v-for="item in currentHintPack.bullets" :key="item">
-                          <TextWithInterviewTerms :text="item" />
+                          <TextWithInterviewTerms
+                            :text="item"
+                            :context="learningTermContext('interview_hint')"
+                            manual-selection
+                          />
                         </li>
                       </ul>
                     </template>
@@ -1577,7 +1696,11 @@
                       </p>
                       <ul class="hint-list hint-list--avoid">
                         <li v-for="item in currentHintPack.avoid" :key="item">
-                          <TextWithInterviewTerms :text="item" />
+                          <TextWithInterviewTerms
+                            :text="item"
+                            :context="learningTermContext('interview_hint')"
+                            manual-selection
+                          />
                         </li>
                       </ul>
                     </template>
@@ -1587,11 +1710,14 @@
                 <p v-else class="hint-status">
                   <TextWithInterviewTerms
                     :text="t('interview.session.noHints')"
+                    :context="learningTermContext('interview_hint')"
+                    manual-selection
                   />
                 </p>
 
                 <details
                   v-if="currentHintDetails?.sampleAnswer"
+                  :ref="setHintDetailsPanelRef"
                   class="hint-disclosure"
                   open
                 >
@@ -1615,6 +1741,8 @@
                   >
                     <TextWithInterviewTerms
                       :text="currentHintDetails.sampleAnswer"
+                      :context="learningTermContext('interview_hint')"
+                      manual-selection
                     />
                   </p>
                 </details>
@@ -1639,10 +1767,19 @@
                   >
                     <span>{{ item.index }}</span>
                     <p>
-                      {{
-                        item.question ||
-                        t('interview.session.plannedGlasnoQuestion')
-                      }}
+                      <TextWithInterviewTerms
+                        :text="
+                          item.question ||
+                          t('interview.session.plannedGlasnoQuestion')
+                        "
+                        :context="
+                          learningTermContext(
+                            'interview_question',
+                            'План интервью'
+                          )
+                        "
+                        manual-selection
+                      />
                     </p>
                   </li>
                 </ol>
@@ -1708,7 +1845,7 @@
                     :src="getInterviewerFacePhotoSrc(opt.id)"
                     :alt="t(opt.modeLabel)"
                     @error="onThumbError(opt.id)"
-                  >
+                  />
                   <em v-else class="picker-initials">{{
                     group.key === 'male' ? 'М' : 'Ж'
                   }}</em>
@@ -1717,6 +1854,37 @@
               </span>
             </button>
           </div>
+        </div>
+
+        <!-- Пауза «окна тишины» перед ответом интервьюера в голосовом режиме. -->
+        <div class="picker-group">
+          <p class="picker-group-label">
+            {{ t('interview.session.interviewerPicker.responsePauseTitle') }}
+          </p>
+          <div
+            class="pause-row"
+            role="group"
+            :aria-label="t('interview.session.interviewerPicker.responsePauseTitle')"
+          >
+            <button
+              v-for="ms in responsePauseOptions"
+              :key="ms"
+              type="button"
+              class="pause-chip"
+              :class="{ 'pause-chip--active': responsePauseMs === ms }"
+              :aria-pressed="responsePauseMs === ms"
+              @click="setResponsePauseMs(ms)"
+            >
+              {{
+                t('interview.session.interviewerPicker.responsePauseSeconds', {
+                  seconds: (ms / 1000).toLocaleString('ru-RU'),
+                })
+              }}
+            </button>
+          </div>
+          <p class="pause-hint">
+            {{ t('interview.session.interviewerPicker.responsePauseHint') }}
+          </p>
         </div>
       </div>
     </div>
@@ -1772,13 +1940,13 @@
 
   .session-compact-title {
     color: var(--text-primary);
-    font-size: clamp(24px, 2.6vw, 34px);
+    font-size: clamp(20px, 2vw, 28px);
     font-weight: 900;
     line-height: 1.08;
   }
 
   .panel {
-    padding: clamp(18px, 2.2vw, 26px);
+    padding: clamp(8px, 2.2vw, 26px);
   }
 
   .stage-shell {
@@ -1842,7 +2010,7 @@
   .chat-head h2 {
     margin: 0;
     color: var(--text-primary);
-    font-size: clamp(20px, 2vw, 28px);
+    font-size: clamp(17px, 1.6vw, 22px);
     line-height: 1.2;
   }
 
@@ -2010,7 +2178,7 @@
     color: var(--text-muted);
   }
 
-  .plan-list span {
+  .plan-list li > span {
     display: grid;
     place-items: center;
     width: 24px;
@@ -2135,7 +2303,7 @@
     position: relative;
     overflow: hidden;
     border: 1px solid var(--glass-border);
-    border-radius: var(--radius-lg, 18px);
+    border-radius: clamp(12px, 1.6vw, var(--radius-lg));
     background: var(--surface-solid);
     min-height: 0;
   }
@@ -2336,7 +2504,7 @@
     grid-template-areas:
       'badge .'
       'question listen';
-    align-items: center;
+    align-items: start;
     column-gap: 14px;
     row-gap: 8px;
     min-width: 0;
@@ -2354,7 +2522,7 @@
     grid-area: question;
     min-width: 0;
     margin: 0;
-    font-size: clamp(15px, 1.4vw, 18px);
+    font-size: clamp(14px, 1.15vw, 16px);
     font-weight: 600;
     line-height: 1.35;
     overflow-wrap: anywhere;
@@ -2405,7 +2573,7 @@
     gap: 8px;
     padding: 10px 12px;
     /* border: 1px solid rgba(82, 93, 142, 0.16);
-    border-radius: var(--radius-lg, 18px);
+    border-radius: clamp(12px, 1.6vw, var(--rad ius-lg));
     background: rgba(248, 250, 255, 0.96);
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9),
       0 10px 34px rgba(23, 31, 56, 0.08); */
@@ -2543,6 +2711,7 @@
   .side-head--chat {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr) auto;
+    justify-items: end;
     gap: 8px;
   }
 
@@ -2761,12 +2930,20 @@
 
   .hint-status,
   .hint-structure,
-  .hint-sample,
   .hint-error p {
     margin: 0;
     color: var(--text-secondary);
     font-size: 13px;
     line-height: 1.5;
+    overflow-wrap: anywhere;
+  }
+
+  .hint-sample {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 13px;
+    line-height: 1.5;
+    white-space: normal;
     overflow-wrap: anywhere;
   }
 
@@ -2926,6 +3103,7 @@
     .call {
       flex-direction: column;
       min-height: 0;
+      overflow: auto;
     }
     .call-stage {
       flex-basis: auto;
@@ -3081,6 +3259,42 @@
     gap: 10px;
   }
 
+  .pause-row {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .pause-chip {
+    padding: 10px 0;
+    border: 1px solid var(--glass-border);
+    border-radius: 12px;
+    background: var(--surface-soft);
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 14px;
+    font-weight: 900;
+    cursor: pointer;
+    transition: border-color var(--motion-fast) var(--ease-out),
+      transform var(--motion-fast) var(--ease-out);
+  }
+  .pause-chip:hover {
+    border-color: var(--glass-border-strong);
+    transform: translateY(-1px);
+  }
+  .pause-chip--active {
+    border-color: var(--accent);
+    color: var(--accent-2);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 50%, transparent);
+  }
+
+  .pause-hint {
+    margin: 8px 0 0;
+    color: var(--text-muted);
+    font-size: 13px;
+    line-height: 1.4;
+  }
+
   .picker-card {
     display: grid;
     gap: 8px;
@@ -3130,7 +3344,7 @@
     object-fit: cover;
   }
   .picker-initials {
-    font-size: 26px;
+    font-size: 22px;
     font-weight: 900;
     font-style: normal;
     color: var(--text-primary);

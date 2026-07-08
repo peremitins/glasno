@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { extractReportJson } from './openaiReportEngine';
+import {
+  REPORT_JSON_SCHEMA,
+  attachQuestionsToAnalysis,
+  buildInstruction,
+  extractReportJson,
+} from './openaiReportEngine';
+import { ReportAnalysisDto, ReportCriteriaDto } from '@/shared/dto';
 
 describe('openai report engine helpers', () => {
   it('extracts report json from all Responses API content blocks', () => {
@@ -15,5 +21,85 @@ describe('openai report engine helpers', () => {
       overallScore: 75,
       verdict: 'Нормально',
     });
+  });
+
+  it('forbids invented facts without bracket placeholders or ellipsis', () => {
+    const instruction = buildInstruction();
+
+    expect(instruction).toContain('Не выдумывай факты');
+    expect(instruction).toContain('Сильных элементов в ответе не выявлено.');
+    expect(instruction).toContain('без многоточий');
+    expect(instruction).not.toContain('...');
+    expect(instruction).not.toContain('…');
+    expect(instruction).not.toMatch(/\[[^\]]+\]/);
+    expect(instruction).toContain('не должен создавать ложное впечатление');
+  });
+
+  it('requires a full scored structure for every main and clarification question', () => {
+    const instruction = buildInstruction();
+
+    expect(instruction).toContain('каждого основного и уточняющего вопроса');
+    expect(instruction).toContain('"main"');
+    expect(instruction).toContain('"clarification"');
+    expect(instruction).toContain('recommendations.topFixes');
+  });
+
+  it('keeps the structured-output schema in sync with the Zod DTO criteria', () => {
+    const schemaCriteriaKeys = Object.keys(
+      REPORT_JSON_SCHEMA.properties.criteria.properties
+    ).sort();
+    const dtoCriteriaKeys = Object.keys(ReportCriteriaDto.shape).sort();
+    expect(schemaCriteriaKeys).toEqual(dtoCriteriaKeys);
+
+    // Поля, которые модель обязана вернуть, — подмножество полей DTO
+    // (question/answer подставляет сервер).
+    const schemaItemKeys =
+      REPORT_JSON_SCHEMA.properties.questionAnalysis.items.required;
+    expect(schemaItemKeys).not.toContain('question');
+    expect(schemaItemKeys).not.toContain('answer');
+  });
+
+  it('attaches question and answer texts from turns so the DTO validates', () => {
+    const criteria = {
+      substance: 10,
+      structure: 10,
+      delivery: 10,
+    };
+    const parsed = {
+      overallScore: 40,
+      verdict: 'Есть над чем работать',
+      summary: 'Краткое резюме интервью.',
+      criteria,
+      recommendations: { topFixes: ['Отвечать на все вопросы'] },
+      questionAnalysis: [
+        {
+          turnId: 'turn_1',
+          kind: 'main',
+          criteria,
+          whatWorked: 'Сильных элементов в ответе не выявлено.',
+          whatWeak: 'Ответ отсутствует',
+          modelAnswer: 'Пример сильного ответа.',
+          strongerAnswerStar: 'Ситуация, задача, действия, результат.',
+          nextPractice: 'Потренировать ответ вслух.',
+        },
+      ],
+    };
+    const turns = [
+      {
+        id: 'turn_1',
+        question: 'Расскажите о себе.',
+        answerTranscript: 'Мой ответ.',
+      },
+    ] as never;
+
+    const attached = attachQuestionsToAnalysis(parsed, turns);
+    const analysis = attached.questionAnalysis as Array<Record<string, unknown>>;
+    expect(analysis[0]).toMatchObject({
+      question: 'Расскажите о себе.',
+      answer: 'Мой ответ.',
+    });
+    expect(() =>
+      ReportAnalysisDto.parse({ ...attached, model: 'test-model' })
+    ).not.toThrow();
   });
 });

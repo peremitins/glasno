@@ -225,7 +225,7 @@
   }
 
   .portrait span {
-    font-size: clamp(24px, 7vw, 40px);
+    font-size: clamp(20px, 5.4vw, 32px);
     font-weight: 900;
     letter-spacing: 0;
   }
@@ -322,7 +322,7 @@
 
   .meta h2 {
     overflow-wrap: anywhere;
-    font-size: clamp(17px, 2.6vw, 22px);
+    font-size: clamp(15px, 2vw, 18px);
     line-height: 1.1;
   }
 

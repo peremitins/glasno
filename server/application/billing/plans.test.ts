@@ -32,6 +32,7 @@ describe('billing plans', () => {
     expect(singlePrep.kind).toBe('one_time');
     expect(singlePrep.priceRub).toBe(399);
     expect(singlePrep.includedInterviews).toBe(1);
+    expect(singlePrep.realtimeVoiceMinutes).toBe(30);
     expect(singlePrep.periodDays).toBe(7);
     expect(singlePrep.isCheckoutEnabled).toBe(true);
   });

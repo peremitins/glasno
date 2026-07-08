@@ -22,4 +22,10 @@ describe('interview history interactions', () => {
     expect(source).toContain('pending.value && !data.value');
     expect(source).toContain('v-if="historyInitialPending"');
   });
+
+  it('renders history text with tooltip-only learning terms inside clickable rows', () => {
+    expect(source).toContain('TextWithInterviewTerms');
+    expect(source).toContain("kind: 'history'");
+    expect(source).not.toContain(':interactive=');
+  });
 });

@@ -34,7 +34,7 @@ export default defineApiHandler(async (event) => {
   const runtimeConfig = useRuntimeConfig(event);
   const { apiKey } = resolveOpenAiConfig(runtimeConfig);
   if (!apiKey) {
-    throw apiError('E_UPSTREAM', 'NUXT_OPENAI_API_KEY не задан');
+    throw apiError('E_UPSTREAM', 'Провайдер голосового режима не настроен');
   }
 
   const input = await readDto(event, RealtimeSessionRequestDto);
@@ -96,7 +96,7 @@ export default defineApiHandler(async (event) => {
       response?.client_secret?.value || response?.value || ''
     );
     if (!clientSecret) {
-      throw new Error('OpenAI response does not include client_secret.value');
+      throw new Error('Провайдер не вернул ключ голосовой сессии');
     }
 
     return RealtimeSessionResponseDto.parse({
@@ -122,7 +122,7 @@ export default defineApiHandler(async (event) => {
       userId: session.userId ?? null,
       reason: 'provider_error',
     });
-    throw apiError('E_UPSTREAM', 'OpenAI Realtime session не создана', {
+    throw apiError('E_UPSTREAM', 'Не удалось запустить голосовой режим', {
       cause: error?.data?.error?.message || error?.message || String(error),
     });
   }

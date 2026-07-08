@@ -17,7 +17,7 @@ export default defineApiHandler(async (event) => {
 
   const { apiKey } = resolveOpenAiConfig(runtimeConfig);
   if (!apiKey) {
-    throw apiError('E_UPSTREAM', 'NUXT_OPENAI_API_KEY не задан');
+    throw apiError('E_UPSTREAM', 'Провайдер озвучки не настроен');
   }
 
   const input = await readDto(event, TtsRequestDto);
@@ -45,7 +45,7 @@ export default defineApiHandler(async (event) => {
     setResponseHeader(event, 'Content-Type', mimeType);
     return new Uint8Array(response._data as ArrayBuffer);
   } catch (error: any) {
-    throw apiError('E_UPSTREAM', 'OpenAI не смог озвучить вопрос', {
+    throw apiError('E_UPSTREAM', 'Не удалось озвучить вопрос', {
       cause: error?.data?.error?.message || error?.message || String(error),
     });
   }

@@ -76,4 +76,18 @@ describe('openai interview engine helpers', () => {
       sampleAnswer: 'Я бы связал TypeScript со скоростью онбординга.',
     });
   });
+
+  it('does not append ellipsis when a generated sample answer is too long', () => {
+    const normalized = normalizeSampleAnswerHint({
+      sampleAnswer:
+        'Я бы начал с конкретного случая: на проекте заметил деградацию производительности после внедрения нового списка. ' +
+        'Сначала проверил Web Vitals и профилировщик, затем нашёл лишние перерендеры и вынес тяжёлые вычисления. ' +
+        'После релиза сравнил метрики до и после, подтвердил улучшение и описал результат команде. ' +
+        'Дополнительная техническая деталь '.repeat(40),
+    });
+
+    expect(normalized.sampleAnswer.length).toBeLessThanOrEqual(700);
+    expect(normalized.sampleAnswer).not.toMatch(/…$/);
+    expect(normalized.sampleAnswer).toMatch(/[.!?]$/);
+  });
 });

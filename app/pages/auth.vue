@@ -477,7 +477,7 @@
   .auth-card__head h2 {
     color: var(--text-primary);
     font-family: var(--font-display);
-    font-size: clamp(28px, 3vw, 42px);
+    font-size: clamp(22px, 2.4vw, 32px);
     line-height: 1;
     letter-spacing: 0;
   }
@@ -602,7 +602,7 @@
 
   .code-input {
     font-family: var(--font-mono);
-    font-size: 28px;
+    font-size: 24px;
     font-weight: 800;
     letter-spacing: 0.18em;
     text-align: center;

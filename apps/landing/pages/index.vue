@@ -1,70 +1,142 @@
 <script setup lang="ts">
-  // Временная заглушка до готовности полноценного лендинга.
-  // Тексты одноязычные (ru), i18n подключим вместе с настоящим лендингом.
-  import { useLandingAppAuthUrl } from '@/composables/useLandingAppAuthUrl';
+  import { computed, ref } from 'vue';
+  import { useHead, useRuntimeConfig } from 'nuxt/app';
+  import { useReveal } from '@/composables/useReveal';
+  import { useLandingContent } from '@/composables/useLandingContent';
 
-  const appAuthUrl = useLandingAppAuthUrl();
+  const runtimeConfig = useRuntimeConfig();
+  const landingRoot = ref<HTMLElement | null>(null);
+  const { faq, pricing } = useLandingContent();
+
+  // Глобальный пакетный reveal всех [data-reveal] на странице.
+  useReveal(landingRoot);
+
+  const siteUrl = computed(() =>
+    String(runtimeConfig.public.landingSiteUrl || 'https://glasno.app').replace(
+      /\/$/,
+      ''
+    )
+  );
+  const canonicalUrl = computed(() => `${siteUrl.value}/`);
+  const ogImage = computed(() => `${siteUrl.value}/og-cover.png`);
+
+  const description =
+    'Отрепетируйте собеседование голосом: интервью по вашей вакансии, подсказки во время ответа и честный разбор каждого ответа — до встречи с работодателем.';
+
+  const yandexVerification = String(
+    runtimeConfig.public.yandexVerification || ''
+  );
+  const googleVerification = String(
+    runtimeConfig.public.googleSiteVerification || ''
+  );
+
+  const priceValue = (raw: string) =>
+    Number(String(raw).replace(/[^\d]/g, '')) || 0;
+
+  // Structured data: помогает Google/Яндексу строить rich-сниппеты
+  // (FAQ-аккордеон в выдаче, карточка приложения с ценой).
+  const structuredData = computed(() => [
+    {
+      '@context': 'https://schema.org',
+      '@type': 'Organization',
+      name: 'Гласно',
+      url: canonicalUrl.value,
+      email: 'support@glasno.app',
+      logo: `${siteUrl.value}/favicon.svg`,
+    },
+    {
+      '@context': 'https://schema.org',
+      '@type': 'WebSite',
+      name: 'Гласно',
+      url: canonicalUrl.value,
+      inLanguage: 'ru-RU',
+    },
+    {
+      '@context': 'https://schema.org',
+      '@type': 'SoftwareApplication',
+      name: 'Гласно',
+      applicationCategory: 'BusinessApplication',
+      operatingSystem: 'Web, Telegram',
+      inLanguage: 'ru-RU',
+      description,
+      offers: {
+        '@type': 'AggregateOffer',
+        priceCurrency: 'RUB',
+        lowPrice: 0,
+        highPrice: Math.max(...pricing.plans.map((p) => priceValue(p.price))),
+        offerCount: pricing.plans.length,
+      },
+    },
+    {
+      '@context': 'https://schema.org',
+      '@type': 'FAQPage',
+      mainEntity: faq.map((item) => ({
+        '@type': 'Question',
+        name: item.q,
+        acceptedAnswer: { '@type': 'Answer', text: item.a },
+      })),
+    },
+  ]);
+
+  useHead(() => ({
+    title: 'Гласно — тренажёр собеседований голосом',
+    link: [{ rel: 'canonical', href: canonicalUrl.value }],
+    meta: [
+      { name: 'description', content: description },
+      {
+        name: 'robots',
+        content:
+          'index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1',
+      },
+      { name: 'format-detection', content: 'telephone=no' },
+      ...(yandexVerification
+        ? [{ name: 'yandex-verification', content: yandexVerification }]
+        : []),
+      ...(googleVerification
+        ? [{ name: 'google-site-verification', content: googleVerification }]
+        : []),
+      { property: 'og:title', content: 'Гласно — репетиция собеседования голосом' },
+      { property: 'og:description', content: description },
+      { property: 'og:type', content: 'website' },
+      { property: 'og:url', content: canonicalUrl.value },
+      { property: 'og:site_name', content: 'Гласно' },
+      { property: 'og:locale', content: 'ru_RU' },
+      { property: 'og:image', content: ogImage.value },
+      { property: 'og:image:width', content: '1200' },
+      { property: 'og:image:height', content: '630' },
+      { property: 'og:image:type', content: 'image/png' },
+      {
+        property: 'og:image:alt',
+        content: 'Гласно — тренажёр собеседований голосом',
+      },
+      { name: 'twitter:card', content: 'summary_large_image' },
+      { name: 'twitter:title', content: 'Гласно — тренажёр собеседований' },
+      { name: 'twitter:description', content: description },
+      { name: 'twitter:image', content: ogImage.value },
+    ],
+    script: structuredData.value.map((data, i) => ({
+      key: `ld-${i}`,
+      type: 'application/ld+json',
+      innerHTML: JSON.stringify(data),
+    })),
+  }));
 </script>
 
 <template>
-  <main class="hero">
-    <p class="hero__brand">Гласно</p>
-    <h1 class="hero__title">Тренажёр собеседований</h1>
-    <p class="hero__subtitle">
-      Вставьте вакансию, пройдите репетицию интервью голосом и получите
-      подробный разбор. Скоро здесь появится полноценный сайт.
-    </p>
-    <a class="hero__cta" :href="appAuthUrl">Войти в приложение</a>
-  </main>
+  <div ref="landingRoot" class="landing">
+    <TheHeader />
+    <main>
+      <HeroSection />
+      <HowItWorks />
+      <VoiceShowcase />
+      <HintsScrollytelling />
+      <ExplainFeature />
+      <ReportSection />
+      <PricingSection />
+      <TrustSection />
+      <FaqSection />
+      <FinalCta />
+    </main>
+    <TheFooter />
+  </div>
 </template>
-
-<style scoped>
-  .hero {
-    min-height: 100dvh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 16px;
-    padding: 24px;
-    text-align: center;
-  }
-
-  .hero__brand {
-    margin: 0;
-    font-size: 14px;
-    letter-spacing: 0.24em;
-    text-transform: uppercase;
-    color: var(--landing-muted);
-  }
-
-  .hero__title {
-    margin: 0;
-    font-size: clamp(32px, 6vw, 56px);
-    line-height: 1.1;
-    font-weight: 700;
-  }
-
-  .hero__subtitle {
-    margin: 0;
-    max-width: 480px;
-    font-size: 16px;
-    line-height: 1.6;
-    color: var(--landing-muted);
-  }
-
-  .hero__cta {
-    margin-top: 8px;
-    padding: 12px 28px;
-    border-radius: 999px;
-    background: var(--landing-accent);
-    color: var(--landing-accent-contrast);
-    font-weight: 600;
-    text-decoration: none;
-    transition: opacity 0.15s ease;
-  }
-
-  .hero__cta:hover {
-    opacity: 0.85;
-  }
-</style>

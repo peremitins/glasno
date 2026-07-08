@@ -72,6 +72,22 @@ describe('interview session hints panel', () => {
     expect(source).toContain('sampleAnswerQuestion');
   });
 
+  it('resets the hints scroll when new or refreshed hints replace the panel content', () => {
+    expect(source).toContain('hintsPane');
+    expect(source).toContain('hintDetailsPanels');
+    expect(source).toContain('scrollHintsToTop');
+    expect(source).toContain('hintsPane.value?.scrollTo({ top: 0');
+    expect(source).toContain('panel.scrollTo({ top: 0');
+    expect(source).toMatch(
+      /state\.value = await api<InterviewStateResponse>\([\s\S]*?await nextTick\(\);[\s\S]*?scrollHintsToTop\('auto'\);/
+    );
+    expect(source).toMatch(
+      /\(\) => currentHintsRequestKey\.value,[\s\S]*?scrollHintsToTop\('auto'\);/
+    );
+    expect(source).toContain('ref="hintsPane"');
+    expect(source).toContain(':ref="setHintDetailsPanelRef"');
+  });
+
   it('applies persisted realtime dialogue state for hint refreshes', () => {
     expect(source).toMatch(
       /state\.value = await api<InterviewStateResponse>\(\s*`\/api\/interview\/sessions\/\$\{sessionId\.value\}\/dialogue`/
@@ -91,5 +107,24 @@ describe('interview session hints panel', () => {
     expect(source).toContain('hint-text-shimmer');
     expect(source).toContain('background-clip: text');
     expect(source).not.toContain('hint-text-pulse');
+  });
+
+  it('lets sample answers finish naturally instead of showing UI ellipsis', () => {
+    const hintSampleStart = source.indexOf('.hint-sample {');
+    const hintSampleEnd = source.indexOf('}', hintSampleStart);
+    const hintSampleBlock = source.slice(hintSampleStart, hintSampleEnd);
+
+    expect(hintSampleBlock).toContain('overflow-wrap: anywhere');
+    expect(hintSampleBlock).toContain('white-space: normal');
+    expect(hintSampleBlock).not.toContain('text-overflow: ellipsis');
+    expect(hintSampleBlock).not.toContain('white-space: nowrap');
+    expect(hintSampleBlock).not.toContain('-webkit-line-clamp');
+  });
+
+  it('passes learning-term contexts for questions, chat messages, and hints', () => {
+    expect(source).toContain('learningTermContext');
+    expect(source).toContain("learningTermContext('interview_question'");
+    expect(source).toContain("learningTermContext('interview_message'");
+    expect(source).toContain("learningTermContext('interview_hint'");
   });
 });

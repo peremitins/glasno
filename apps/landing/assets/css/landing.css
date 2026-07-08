@@ -1,32 +1,276 @@
-/* Базовые стили заглушки. Токены основного приложения подключим вместе с
-   полноценным лендингом. */
-:root {
-  --landing-bg: #0b0d12;
-  --landing-fg: #f5f6f8;
-  --landing-muted: #9aa3b2;
-  --landing-accent: #f5f6f8;
-  --landing-accent-contrast: #0b0d12;
+/*
+ * Гласно — лендинг. Дизайн-система.
+ *
+ * Регистр: brand. Вайб: тёмный премиум-минимализм (Linear/Vercel), но с
+ * собственным голосом — холодная near-black база и ТЁПЛЫЙ акцент (метафора
+ * живого голоса). Сознательный уход от «AI-стартап неон-фиолет» клише.
+ * Никакого glassmorphism как основы, никакого gradient-text, никаких
+ * одинаковых сеток карточек. Цвета — OKLCH, нейтрали подкрашены в холодный тон.
+ */
+
+@import 'tailwindcss';
+@import '@fontsource-variable/onest';
+
+@theme {
+  --font-sans: 'Onest Variable', system-ui, -apple-system, 'Segoe UI', sans-serif;
 }
 
-* {
+:root {
+  /* Шрифт */
+  --l-font: 'Onest Variable', system-ui, -apple-system, 'Segoe UI', sans-serif;
+
+  /* Нейтрали — холодный near-black, hue 260, минимальная chroma */
+  --l-bg: oklch(0.145 0.01 260);
+  --l-bg-deep: oklch(0.115 0.01 260);
+  --l-bg-elevated: oklch(0.178 0.012 260);
+  --l-surface: oklch(0.205 0.014 260);
+  --l-surface-hi: oklch(0.255 0.016 260);
+
+  --l-line: oklch(1 0 0 / 0.09);
+  --l-line-hi: oklch(1 0 0 / 0.16);
+  --l-line-warm: oklch(0.8 0.145 62 / 0.32);
+
+  /* Текст */
+  --l-text: oklch(0.97 0.006 260);
+  --l-text-soft: oklch(0.81 0.012 260);
+  --l-text-mut: oklch(0.66 0.014 260);
+  --l-text-dim: oklch(0.52 0.014 260);
+
+  /* Тёплый акцент — «живой голос». Amber/coral. */
+  --l-warm: oklch(0.82 0.135 63);
+  --l-warm-solid: oklch(0.77 0.155 58);
+  --l-warm-strong: oklch(0.72 0.16 52);
+  --l-warm-ink: oklch(0.24 0.04 55);
+
+  /* Холодный вторичный — сдержанный мятно-циан (родство с приложением) */
+  --l-cool: oklch(0.85 0.095 200);
+  --l-cool-deep: oklch(0.7 0.11 214);
+
+  /* Семантика */
+  --l-success: oklch(0.82 0.15 155);
+  --l-danger: oklch(0.72 0.16 25);
+
+  /* Свечения (радиальные, малая насыщенность — для фонов) */
+  --l-glow-warm: radial-gradient(
+    circle,
+    oklch(0.77 0.155 58 / 0.28),
+    transparent 68%
+  );
+  --l-glow-cool: radial-gradient(
+    circle,
+    oklch(0.7 0.11 214 / 0.22),
+    transparent 70%
+  );
+
+  /* Тени */
+  --l-shadow-sm: 0 8px 24px -10px oklch(0 0 0 / 0.55);
+  --l-shadow: 0 30px 80px -24px oklch(0 0 0 / 0.62);
+  --l-shadow-warm: 0 24px 60px -22px oklch(0.72 0.16 52 / 0.45);
+
+  /* Радиусы */
+  --l-r-sm: 10px;
+  --l-r: 14px;
+  --l-r-lg: 22px;
+  --l-r-xl: 30px;
+  --l-r-pill: 999px;
+
+  /* Движение */
+  --l-ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --l-ease-io: cubic-bezier(0.65, 0, 0.35, 1);
+  --l-dur-1: 180ms;
+  --l-dur-2: 320ms;
+  --l-dur-3: 640ms;
+
+  /* Типографическая шкала (fluid, ratio ≥ 1.25). Сдержаннее — читабельнее. */
+  --l-fs-display: clamp(2.05rem, 5vw, 4.25rem);
+  --l-fs-h1: clamp(1.85rem, 3.6vw, 2.9rem);
+  --l-fs-h2: clamp(1.55rem, 2.7vw, 2.3rem);
+  --l-fs-h3: clamp(1.18rem, 1.6vw, 1.45rem);
+  --l-fs-lead: clamp(1.02rem, 1.3vw, 1.2rem);
+  --l-fs-body: 1.0625rem;
+  --l-fs-sm: 0.9375rem;
+  --l-fs-label: 0.75rem;
+
+  /* Раскладка */
+  --l-container: 1180px;
+  --l-gutter: clamp(20px, 5vw, 64px);
+  --l-section-y: clamp(72px, 12vh, 160px);
+}
+
+*,
+*::before,
+*::after {
   box-sizing: border-box;
 }
 
-html,
-body {
-  margin: 0;
-  padding: 0;
+html {
+  -webkit-text-size-adjust: 100%;
+  scroll-behavior: auto; /* плавность даёт Lenis; нативное поведение отключаем */
 }
 
 body {
-  background: var(--landing-bg);
-  color: var(--landing-fg);
-  font-family:
-    'Manrope',
-    -apple-system,
-    BlinkMacSystemFont,
-    'Segoe UI',
-    Roboto,
-    sans-serif;
+  margin: 0;
+  font-family: var(--l-font);
+  font-size: var(--l-fs-body);
+  line-height: 1.65; /* светлый текст на тёмном требует больше воздуха */
+  color: var(--l-text);
+  background: var(--l-bg);
+  font-feature-settings: 'ss01', 'cv01';
+  font-optical-sizing: auto;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  overflow-x: hidden;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  margin: 0;
+  font-weight: 600;
+  line-height: 1.08;
+  letter-spacing: -0.022em;
+  text-wrap: balance;
+}
+
+p {
+  margin: 0;
+  text-wrap: pretty;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+img,
+video {
+  display: block;
+  max-width: 100%;
+}
+
+::selection {
+  background: var(--l-warm-solid);
+  color: var(--l-warm-ink);
+}
+
+:focus-visible {
+  outline: 2px solid var(--l-warm);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+/* Тонкий скроллбар в тон */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: var(--l-bg-deep);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--l-surface-hi);
+  border-radius: var(--l-r-pill);
+  border: 2px solid var(--l-bg-deep);
+}
+
+/* Числа с табличными цифрами (метрики, цены, таймеры) */
+.l-tnum {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+}
+
+/* Контейнер */
+.l-container {
+  width: 100%;
+  max-width: calc(var(--l-container) + var(--l-gutter) * 2);
+  margin-inline: auto;
+  padding-inline: var(--l-gutter);
+}
+
+/* Скрытый, но доступный скринридерам */
+.l-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Кнопки-действия (переиспользуются в hero, тарифах, финальном CTA) */
+.l-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 46px;
+  padding-inline: 22px;
+  border-radius: var(--l-r-pill);
+  border: 1px solid transparent;
+  font-size: var(--l-fs-sm);
+  font-weight: 500;
+  white-space: nowrap;
+  transition:
+    transform var(--l-dur-1) var(--l-ease),
+    background var(--l-dur-1) var(--l-ease),
+    border-color var(--l-dur-1) var(--l-ease),
+    box-shadow var(--l-dur-1) var(--l-ease);
+}
+.l-btn svg {
+  width: 17px;
+  height: 17px;
+  transition: transform var(--l-dur-1) var(--l-ease);
+}
+.l-btn--lg {
+  height: 54px;
+  padding-inline: 28px;
+  font-size: 1.05rem;
+}
+.l-btn--primary {
+  background: var(--l-warm-solid);
+  color: var(--l-warm-ink);
+  box-shadow: var(--l-shadow-warm);
+}
+.l-btn--primary:hover {
+  background: var(--l-warm);
+  transform: translateY(-2px);
+}
+.l-btn--primary:hover svg {
+  transform: translateX(3px);
+}
+.l-btn--ghost {
+  border-color: var(--l-line-hi);
+  color: var(--l-text);
+}
+.l-btn--ghost:hover {
+  border-color: var(--l-line-warm);
+  background: oklch(1 0 0 / 0.03);
+}
+
+/*
+ * Reveal-элементы НЕ прячем через CSS: при отключённом JS, SSG-предрендере или
+ * reduced-motion контент обязан быть виден. Прячет и анимирует их GSAP inline
+ * (gsap.set в onMounted), только когда анимации реально включены.
+ */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
 }
