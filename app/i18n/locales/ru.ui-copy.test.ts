@@ -25,16 +25,15 @@ describe('russian UI copy', () => {
     expect(text).not.toContain('Гласно очистит');
   });
 
-  it('uses profession/vacancy wording on the new interview page instead of role wording', () => {
+  it('does not use role wording as the only way to describe vacancy context', () => {
     const entries = collectStrings(messages.interview.new);
     const texts = entries.map(([, value]) => value).join('\n');
 
-    expect(texts).not.toMatch(/(^|[^а-яё])роль([^а-яё]|$)/iu);
-    expect(texts).not.toMatch(/(^|[^а-яё])роли([^а-яё]|$)/iu);
-    expect(texts).not.toMatch(/(^|[^а-яё])ролью([^а-яё]|$)/iu);
+    expect(texts).toContain('Роль или должность');
+    expect(texts).toContain('ваканс');
   });
 
-  it('does not present session goal duration as a guaranteed timer', () => {
+  it('shows real session duration and question count together', () => {
     const goalTexts = collectStrings(messages.interview.goal)
       .map(([, value]) => value)
       .join('\n');
@@ -42,7 +41,9 @@ describe('russian UI copy', () => {
     expect(goalTexts).not.toContain('Разогрев перед интервью');
     expect(goalTexts).not.toContain('Баланс практики и темпа');
     expect(goalTexts).not.toContain('Длинный прогон с уточнениями');
-    expect(goalTexts).not.toMatch(/\d+\s*-\s*\d+\s*мин/);
+    expect(goalTexts).toContain('7 мин');
+    expect(goalTexts).toContain('15 мин');
+    expect(goalTexts).toContain('25 мин');
     expect(goalTexts).toContain('3 вопроса');
     expect(goalTexts).toContain('6 вопросов');
     expect(goalTexts).toContain('10 вопросов');

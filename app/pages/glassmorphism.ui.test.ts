@@ -26,17 +26,17 @@ describe('glassmorphism visual system', () => {
     }
   });
 
-  it('uses mono as the default app font and first selectable font', () => {
+  it('uses the modern UI font as the default and keeps mono optional', () => {
     const preferences = readFileSync(
       'app/composables/useDesignPreferences.ts',
       'utf8'
     );
 
     expect(preferences).toContain(
-      "const font = useState<GlasnoFont>('glasno-font', () => 'mono')"
+      "const font = useState<GlasnoFont>('glasno-font', () => 'manrope')"
     );
-    expect(preferences.indexOf("{ value: 'mono'")).toBeLessThan(
-      preferences.indexOf("{ value: 'manrope'")
+    expect(preferences.indexOf("{ value: 'manrope'")).toBeLessThan(
+      preferences.indexOf("{ value: 'mono'")
     );
   });
 });

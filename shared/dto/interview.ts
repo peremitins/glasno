@@ -113,7 +113,7 @@ export const CreateInterviewSessionRequestDto = z.object({
   role: z.string().trim().max(160).optional(),
   level: InterviewLevelDto.default('middle'),
   questionCount: QuestionCountDto.optional(),
-  sessionGoal: InterviewSessionGoalDto.default('quick'),
+  sessionGoal: InterviewSessionGoalDto.default('standard'),
   questionSourceMode: InterviewQuestionSourceModeDto.optional(),
   customQuestionsText: z.string().trim().max(10_000).optional(),
   focus: InterviewFocusDto.optional(),

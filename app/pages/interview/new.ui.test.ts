@@ -19,6 +19,12 @@ describe('interview new page UI structure', () => {
     expect(source).not.toContain('interview.new.candidate.ready');
   });
 
+  it('does not render specialization or skip-resume as separate primary controls', () => {
+    expect(source).not.toContain('id="specialization"');
+    expect(source).not.toContain('skipCandidateContext');
+    expect(source).not.toContain('interview.new.candidate.skip');
+  });
+
   it('lets users remove an uploaded resume from the preview', () => {
     expect(source).toContain('function clearResumeFile()');
     expect(source).toContain('resume-preview__clear');
@@ -41,6 +47,38 @@ describe('interview new page UI structure', () => {
   it('keeps custom role selection discoverable in manual mode', () => {
     expect(source).toContain('customRoleOption');
     expect(source).toContain('interview.new.roles.customAction');
+    expect(source).toContain('PROFESSIONAL_ROLE_OPTIONS');
+  });
+
+  it('drops the broken top step navigator in favor of the sticky summary', () => {
+    expect(source).not.toContain('section-nav__item');
+    expect(source).not.toContain('sectionAnchors');
+    expect(source).not.toContain('IntersectionObserver');
+    expect(source).toContain('sticky-start-bar');
+  });
+
+  it('renders role-aware context tags only after a role is chosen', () => {
+    expect(source).toContain('getRoleContextTags');
+    expect(source).toContain('visibleContextTags');
+    expect(source).toContain('v-if="form.professionRole.trim()"');
+  });
+
+  it('exposes selection controls as real radio options', () => {
+    expect(source).toContain('role="radiogroup"');
+    expect(source).toContain('role="radio"');
+    expect(source).toContain(':aria-checked');
+  });
+
+  it('uses focusable help buttons for tooltips', () => {
+    expect(source).toContain('class="help-button"');
+    expect(source).toContain('type="button"');
+    expect(source).not.toContain('class="source-help"');
+  });
+
+  it('keeps interview focus as one chip selector without a competing dropdown', () => {
+    expect(source).toContain('focus-chip-grid');
+    expect(source).toContain('interview.focus.salaryNegotiation');
+    expect(source).not.toContain('focus-select');
   });
 
   it('closes the custom profession menu and returns focus to the input', () => {
@@ -71,6 +109,12 @@ describe('interview new page UI structure', () => {
     expect(source).toContain('interview.new.preparing.title');
     expect(source).toContain('preparationSteps');
     expect(source).toContain('isSubmitting');
+  });
+
+  it('keeps a sticky start summary with default standard duration copy', () => {
+    expect(source).toContain('sticky-start-bar');
+    expect(source).toContain('selectedGoalSummary');
+    expect(source).toContain('15 мин');
   });
 
   it('constrains the teleported role menu to the viewport', () => {

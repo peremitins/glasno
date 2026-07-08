@@ -17,7 +17,7 @@ import { FREE_SESSIONS_LIMIT } from '@/server/application/billing/plans';
 const QUICK_SCENARIOS: DashboardQuickScenario[] = [
   {
     id: 'hr-screening',
-    title: 'HR-скрининг',
+    title: 'HR-экран',
     subtitle: 'Мотивация, ожидания и базовый скрининг перед этапом с руководителем.',
     sourceType: 'profession',
     focus: 'hr_screening',
@@ -26,7 +26,7 @@ const QUICK_SCENARIOS: DashboardQuickScenario[] = [
   },
   {
     id: 'professional',
-    title: 'Профессиональное',
+    title: 'Проф. вопросы',
     subtitle: 'Хард-скиллы и практические задачи по вашей роли.',
     sourceType: 'profession',
     focus: 'professional',
@@ -35,7 +35,7 @@ const QUICK_SCENARIOS: DashboardQuickScenario[] = [
   },
   {
     id: 'behavioral',
-    title: 'Поведенческое',
+    title: 'Кейсы STAR',
     subtitle: 'Кейсы из опыта по структуре STAR: ситуация, задача, действие, результат.',
     sourceType: 'profession',
     focus: 'behavioral',
@@ -44,7 +44,7 @@ const QUICK_SCENARIOS: DashboardQuickScenario[] = [
   },
   {
     id: 'salary-negotiation',
-    title: 'Зарплатные переговоры',
+    title: 'Оффер и зарплата',
     subtitle: 'Обсуждение оффера, аргументация цифры и работа с возражениями.',
     sourceType: 'profession',
     focus: 'salary_negotiation',

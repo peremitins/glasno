@@ -34,13 +34,19 @@ describe('manual interview source', () => {
     });
   });
 
-  it('requires a role and rejects too-short vacancy descriptions', () => {
+  it('accepts either a role or a sufficiently detailed vacancy description', () => {
     expect(isManualInterviewSourceReady({ role: '', vacancyText: '' })).toBe(
       false
     );
     expect(
       isManualInterviewSourceReady({ role: 'PM', vacancyText: 'short' })
     ).toBe(false);
+    expect(
+      isManualInterviewSourceReady({
+        role: '',
+        vacancyText: 'Достаточно подробное описание вакансии.',
+      })
+    ).toBe(true);
     expect(isManualInterviewSourceReady({ role: 'PM', vacancyText: '' })).toBe(
       true
     );
@@ -85,16 +91,16 @@ describe('manual interview source', () => {
     });
   });
 
-  it('keeps specialization for prepared profession options', () => {
+  it('does not attach hidden specialization to prepared profession options', () => {
     const option = {
       role: 'Frontend-разработчик',
-      specialization: 'Vue, React, производительность',
+      specialization: '',
       group: 'IT',
     };
 
     expect(resolveProfessionSelection(option)).toEqual({
       role: 'Frontend-разработчик',
-      specialization: 'Vue, React, производительность',
+      specialization: '',
       selectedOption: option,
       keepPickerOpen: false,
       focusInput: false,

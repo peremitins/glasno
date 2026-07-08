@@ -1,3 +1,4 @@
+@import '@fontsource-variable/onest';
 @import 'tailwindcss';
 
 @theme {
@@ -14,10 +15,12 @@
 :root {
   --font-manrope: 'Manrope', system-ui, -apple-system, BlinkMacSystemFont,
     'Segoe UI', sans-serif;
+  --font-onest: 'Onest Variable', 'Manrope', system-ui, -apple-system,
+    BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --font-space: 'Space Grotesk', 'Manrope', system-ui, sans-serif;
   --font-jetbrains: 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace;
-  --font-ui: var(--font-jetbrains);
-  --font-display: var(--font-jetbrains);
+  --font-ui: var(--font-onest);
+  --font-display: var(--font-manrope);
   --font-mono: var(--font-jetbrains);
 
   --radius-xs: 10px;
@@ -191,8 +194,8 @@ html[data-font='mono'] {
 }
 
 html[data-font='manrope'] {
-  --font-ui: var(--font-manrope);
-  --font-display: var(--font-space);
+  --font-ui: var(--font-onest);
+  --font-display: var(--font-manrope);
 }
 
 html,
