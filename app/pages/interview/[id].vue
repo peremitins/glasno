@@ -2104,7 +2104,7 @@
     color: var(--text-muted);
   }
 
-  .plan-list span {
+  .plan-list li > span {
     display: grid;
     place-items: center;
     width: 24px;
