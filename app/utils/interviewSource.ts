@@ -14,7 +14,7 @@ interface ManualInterviewSourceInput {
 
 export interface ProfessionSelectionOption {
   role: string;
-  specialization: string;
+  specialization?: string;
   group?: string;
   custom?: boolean;
 }
@@ -32,9 +32,8 @@ export function isManualInterviewSourceReady(
 ): boolean {
   const role = input.role.trim();
   const vacancyText = input.vacancyText.trim();
-  return (
-    role.length >= 2 && (vacancyText.length === 0 || vacancyText.length >= 10)
-  );
+  if (vacancyText.length > 0 && vacancyText.length < 10) return false;
+  return role.length >= 2 || vacancyText.length >= 10;
 }
 
 export function resolveProfessionSelection(
@@ -64,7 +63,7 @@ export function resolveProfessionSelection(
 
   return {
     role,
-    specialization: option.specialization.trim(),
+    specialization: '',
     selectedOption: option,
     keepPickerOpen: false,
     focusInput: false,
@@ -83,7 +82,7 @@ export function buildManualInterviewSource(
     return {
       type: 'text',
       text: vacancyText,
-      title: vacancyTitle || role,
+      title: vacancyTitle || role || undefined,
     };
   }
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CreateInterviewSessionRequestDto,
   GenerateInterviewHintsRequestDto,
   QuestionHintPackDto,
 } from './interview';
@@ -55,5 +56,17 @@ describe('interview DTO hints', () => {
       turnId: 'turn_1',
     });
     expect(() => GenerateInterviewHintsRequestDto.parse({ turnId: '' })).toThrow();
+  });
+
+  it('defaults new interview sessions to the standard 15-minute plan', () => {
+    const parsed = CreateInterviewSessionRequestDto.parse({
+      source: {
+        type: 'profession',
+        role: 'Менеджер по продукту',
+      },
+    });
+
+    expect(parsed.sessionGoal).toBe('standard');
+    expect(parsed.level).toBe('middle');
   });
 });
