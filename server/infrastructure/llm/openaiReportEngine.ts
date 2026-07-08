@@ -1,4 +1,8 @@
-import { ReportAnalysisDto, type ReportAnalysis } from '@/shared/dto';
+import {
+  ReportAnalysisDto,
+  type InterviewTrainingMode,
+  type ReportAnalysis,
+} from '@/shared/dto';
 import type {
   AnalyzeReportParams,
   ReportEngine,
@@ -164,7 +168,7 @@ export class OpenAiReportEngine implements ReportEngine {
               content: [
                 {
                   type: 'input_text',
-                  text: buildInstruction(),
+                  text: buildInstruction(params.session.trainingMode),
                 },
               ],
             },
@@ -212,7 +216,28 @@ export class OpenAiReportEngine implements ReportEngine {
   }
 }
 
-export function buildInstruction(): string {
+export function buildInstruction(
+  trainingMode: InterviewTrainingMode = 'candidate'
+): string {
+  if (trainingMode === 'interviewer') {
+    return [
+      'Ты тренер интервьюеров Гласно. Разбери завершённую тренировку, где пользователь проводил интервью, а AI играл кандидата.',
+      'Оцени три критерия от 0 до 100:',
+      'substance (Качество проверки) — проверил ли пользователь релевантные компетенции, опыт, мотивацию и факты по вакансии, а не только общее впечатление.',
+      'structure (Структура) — была ли понятная структура интервью: вступление, ключевые блоки, уточняющие вопросы, логичный переход между темами и завершение.',
+      'delivery (Подача) — ясность, уважительный тон, candidate experience, отсутствие рискованных или дискриминационных формулировок.',
+      'Оцени именно пользователя-интервьюера. Ответы AI-кандидата используй только как контекст для качества вопросов пользователя.',
+      'Для каждого основного и уточняющего вопроса из транскрипта верни отдельный элемент questionAnalysis. Сохраняй исходные turnId и kind.',
+      'Для каждого questionAnalysis обязательно проставь criteria по тем же трём критериям от 0 до 100.',
+      'Если пользователь почти не задавал вопросов или не получил факты, ставь низкие substance и structure и объясняй, чего не хватило.',
+      'modelAnswer используй как пример сильного следующего вопроса интервьюера или короткого фрагмента хорошего ведения интервью, а не как ответ кандидата.',
+      'whatWorked всегда должен быть непустым. Если сильных сторон нет, используй ровно фразу: Сильных элементов в интервью не выявлено.',
+      'strongerAnswerStar должен быть законченным: 2–4 предложения с улучшенной версией вопроса или перехода интервьюера, без многоточий.',
+      'Не выдумывай факты, цифры, названия компаний, сроки, метрики и результаты. Используй только вакансию, резюме кандидата и транскрипт.',
+      'recommendations.topFixes — от 1 до 5 самых важных действий для улучшения интервью, включая структуру интервью, уточняющие вопросы и candidate experience, если они просели.',
+    ].join('\n');
+  }
+
   return [
     'Ты карьерный коуч и интервьюер. Разбери завершённое собеседование на русском языке.',
     'Оцени три критерия от 0 до 100:',

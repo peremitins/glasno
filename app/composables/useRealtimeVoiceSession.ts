@@ -32,6 +32,7 @@ export function useRealtimeVoiceSession(options: {
   const client = ref<RealtimeVoiceClient | null>(null);
   const realtimeSession = ref<RealtimeSessionResponse | null>(null);
   const assistantMicrophoneMuteResponseIds = new Set<string>();
+  const assistantAudioResponseIds = new Set<string>();
   const physicalMicrophoneMuteEnabled = shouldPhysicallyMuteRealtimeMicrophone();
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
   let hardLimitTimer: ReturnType<typeof setTimeout> | null = null;
@@ -40,6 +41,9 @@ export function useRealtimeVoiceSession(options: {
   // input_audio_buffer.speech_started, но ещё не speech_stopped). Пока он
   // открыт, сессию нельзя закрывать по тишине — сколько бы человек ни говорил.
   let userIsSpeaking = false;
+  // Ассистент сейчас отвечает или его аудио ещё доигрывает. Это нельзя
+  // выводить только из mute-id: response.done может прийти раньше конца аудио.
+  let assistantOutputIsActive = false;
 
   const isActive = computed(() => realtimeVoiceUi.status === 'connected');
   const isBusy = computed(
@@ -74,9 +78,11 @@ export function useRealtimeVoiceSession(options: {
         },
         onKeepAlive() {
           // Держим серверную сессию живой, НО не трогаем таймер простоя:
-          // фоновый звук/озвучка ассистента не должны отменять автоотключение
-          // по тишине (30 сек без речи → сессия завершается, микрофон гаснет).
+          // фоновый звук микрофона не должен отменять автоотключение по тишине.
           void sendServerActivityPing();
+        },
+        onAssistantAudioActivity() {
+          void registerRealtimeActivity();
         },
         onPlaybackBlocked(error) {
           audioPermissionGate.handlePlaybackFailure(error);
@@ -180,6 +186,7 @@ export function useRealtimeVoiceSession(options: {
       // Ассистент отвечает — значит ход пользователя точно завершён
       // (страховка на случай потерянного speech_stopped).
       userIsSpeaking = false;
+      assistantOutputIsActive = true;
       muteMicrophoneForAssistantResponse(
         readResponseId((event as { response?: unknown }).response)
       );
@@ -188,9 +195,12 @@ export function useRealtimeVoiceSession(options: {
     }
 
     if (type === 'output_audio_buffer.started') {
-      muteMicrophoneForAssistantResponse(
-        stringValue((event as { response_id?: unknown }).response_id)
+      const responseId = stringValue(
+        (event as { response_id?: unknown }).response_id
       );
+      assistantOutputIsActive = true;
+      if (responseId) assistantAudioResponseIds.add(responseId);
+      muteMicrophoneForAssistantResponse(responseId);
       void registerRealtimeActivity();
       return;
     }
@@ -212,6 +222,19 @@ export function useRealtimeVoiceSession(options: {
         void registerRealtimeActivity();
         return;
       }
+      const responseStatus = readResponseStatus(
+        (event as { response?: unknown }).response
+      );
+      const shouldWaitForAudioPlayback =
+        type === 'response.done' &&
+        responseStatus !== 'cancelled' &&
+        responseStatus !== 'failed' &&
+        assistantAudioResponseIds.has(responseId);
+      if (shouldWaitForAudioPlayback) {
+        void registerRealtimeActivity();
+        return;
+      }
+      assistantAudioResponseIds.delete(responseId);
       unmuteMicrophoneForAssistantResponse(responseId);
       void registerRealtimeActivity();
     }
@@ -233,11 +256,16 @@ export function useRealtimeVoiceSession(options: {
   function unmuteMicrophoneForAssistantResponse(responseId: string) {
     if (!responseId) return;
     assistantMicrophoneMuteResponseIds.delete(responseId);
+    assistantOutputIsActive =
+      assistantMicrophoneMuteResponseIds.size > 0 ||
+      assistantAudioResponseIds.size > 0;
     updateAssistantMicrophoneMute();
   }
 
   function resetAssistantMicrophoneMute() {
     assistantMicrophoneMuteResponseIds.clear();
+    assistantAudioResponseIds.clear();
+    assistantOutputIsActive = false;
     if (!physicalMicrophoneMuteEnabled) return;
     client.value?.setMicrophoneEnabled(true);
   }
@@ -303,7 +331,8 @@ export function useRealtimeVoiceSession(options: {
       if (
         shouldDeferRealtimeIdleStop(
           assistantMicrophoneMuteResponseIds.size,
-          userIsSpeaking
+          userIsSpeaking,
+          assistantOutputIsActive
         )
       ) {
         void registerRealtimeActivity();
@@ -319,6 +348,7 @@ export function useRealtimeVoiceSession(options: {
     idleTimer = null;
     hardLimitTimer = null;
     userIsSpeaking = false;
+    assistantOutputIsActive = false;
   }
 
   async function endServerSession(reason: RealtimeSessionEndReason) {
@@ -416,6 +446,10 @@ function readResponseId(response: unknown): string {
   return stringValue((response as { id?: unknown } | undefined)?.id);
 }
 
+function readResponseStatus(response: unknown): string {
+  return stringValue((response as { status?: unknown } | undefined)?.status);
+}
+
 // Набор событий для мгновенной отмены речи ассистента. Отменяем известные
 // активные ответы по id, затем «дефолтный» (ответ мог стартовать до прихода
 // response.created), а для WebRTC дополнительно чистим буфер уже отправленного
@@ -458,9 +492,14 @@ export function shouldPhysicallyMuteRealtimeMicrophone(
 // этой проверки 30-секундный таймер срубал бы сессию посреди рассказа.
 export function shouldDeferRealtimeIdleStop(
   activeAssistantResponseCount: number,
-  userIsSpeaking = false
+  userIsSpeaking = false,
+  assistantOutputIsActive = activeAssistantResponseCount > 0
 ): boolean {
-  return activeAssistantResponseCount > 0 || userIsSpeaking;
+  return (
+    assistantOutputIsActive ||
+    activeAssistantResponseCount > 0 ||
+    userIsSpeaking
+  );
 }
 
 function csrfHeader(): Record<string, string> {

@@ -53,6 +53,39 @@ describe('interviewPlan', () => {
     expect(metadata.plan.items).toHaveLength(getSessionGoalConfig('standard').targetQuestionCount);
   });
 
+  it('stores interviewer training settings in session metadata', () => {
+    const metadata = buildInterviewPlanMetadata({
+      input: {
+        trainingMode: 'interviewer',
+        source: {
+          type: 'text',
+          title: 'Frontend-разработчик',
+          text: 'Vue, TypeScript, дизайн-система, продуктовая команда.',
+        },
+        resumeText:
+          'Кандидат: frontend-разработчик, 4 года опыта, Vue и TypeScript.',
+        candidatePersona: 'verbose_vague',
+        candidateDifficulty: 'challenging',
+        candidateNotes: 'Отвечает уверенно, но часто уходит от конкретики.',
+        level: 'middle',
+        sessionGoal: 'standard',
+        questionSourceMode: 'glasno',
+        responseMode: 'text',
+        hintMode: 'off',
+        language: 'ru',
+        interviewerMode: 'neutral',
+        interviewerAvatarId: 'neutral-pro',
+      },
+      role: 'Frontend-разработчик',
+      vacancyTitle: 'Frontend-разработчик',
+    });
+
+    expect(metadata.trainingMode).toBe('interviewer');
+    expect(metadata.candidatePersona).toBe('verbose_vague');
+    expect(metadata.candidateDifficulty).toBe('challenging');
+    expect(metadata.candidateNotes).toContain('уходит от конкретики');
+  });
+
   it('selects user questions first and stops custom-only sessions when they are exhausted', () => {
     const metadata = buildInterviewPlanMetadata({
       input: {

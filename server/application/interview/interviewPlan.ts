@@ -1,7 +1,11 @@
 import type {
+  CandidateDifficulty,
+  CandidatePersona,
   CreateInterviewSessionRequest,
+  CreateInterviewSessionRequestInput,
   InterviewFocus,
   InterviewSessionGoal,
+  InterviewTrainingMode,
   InterviewerFaceId,
   InterviewHintMode,
   InterviewPlan,
@@ -18,6 +22,7 @@ import {
 } from '@/server/application/interview/interviewerFace';
 
 export interface InterviewSessionMetadata {
+  trainingMode: InterviewTrainingMode;
   sessionGoal: InterviewSessionGoal;
   expectedDurationMinutes: number;
   questionSourceMode: InterviewQuestionSourceMode;
@@ -29,6 +34,9 @@ export interface InterviewSessionMetadata {
   // зарплатные переговоры). null — фокус не задан, движок выбирает вопросы
   // без смещения в сторону конкретного формата.
   focus: InterviewFocus | null;
+  candidatePersona: CandidatePersona;
+  candidateDifficulty: CandidateDifficulty;
+  candidateNotes: string | null;
   plan: InterviewPlan;
 }
 
@@ -77,7 +85,7 @@ export function getSessionGoalConfig(goal: InterviewSessionGoal) {
 }
 
 export function buildInterviewPlanMetadata(params: {
-  input: CreateInterviewSessionRequest;
+  input: CreateInterviewSessionRequestInput;
   role?: string | null;
   vacancyTitle?: string | null;
 }): InterviewSessionMetadata {
@@ -129,6 +137,7 @@ export function buildInterviewPlanMetadata(params: {
         });
 
   return {
+    trainingMode: params.input.trainingMode ?? 'candidate',
     sessionGoal,
     expectedDurationMinutes: config.expectedDurationMinutes,
     questionSourceMode,
@@ -144,6 +153,9 @@ export function buildInterviewPlanMetadata(params: {
       params.input.interviewerFaceId ??
       defaultFaceForMode(params.input.interviewerMode ?? 'neutral'),
     focus: params.input.focus ?? null,
+    candidatePersona: params.input.candidatePersona ?? 'strong_brief',
+    candidateDifficulty: params.input.candidateDifficulty ?? 'realistic',
+    candidateNotes: params.input.candidateNotes?.trim() || null,
     plan: {
       goal: sessionGoal,
       expectedDurationMinutes: config.expectedDurationMinutes,
@@ -158,8 +170,11 @@ export function parseInterviewSessionMetadata(
   if (!value || typeof value !== 'object') {
     return buildInterviewPlanMetadata({
       input: {
+        trainingMode: 'candidate',
         source: { type: 'profession', role: 'Кандидат' },
         level: 'middle',
+        candidatePersona: 'strong_brief',
+        candidateDifficulty: 'realistic',
         sessionGoal: 'quick',
         questionSourceMode: 'glasno',
         responseMode: 'text',
@@ -185,6 +200,9 @@ export function parseInterviewSessionMetadata(
         };
 
   return {
+    trainingMode: isTrainingMode(raw.trainingMode)
+      ? raw.trainingMode
+      : 'candidate',
     sessionGoal,
     expectedDurationMinutes:
       numberOrNull(raw.expectedDurationMinutes) ?? config.expectedDurationMinutes,
@@ -201,6 +219,16 @@ export function parseInterviewSessionMetadata(
       ? raw.interviewerFaceId
       : defaultFaceForMode('neutral'),
     focus: isInterviewFocus(raw.focus) ? raw.focus : null,
+    candidatePersona: isCandidatePersona(raw.candidatePersona)
+      ? raw.candidatePersona
+      : 'strong_brief',
+    candidateDifficulty: isCandidateDifficulty(raw.candidateDifficulty)
+      ? raw.candidateDifficulty
+      : 'realistic',
+    candidateNotes:
+      typeof raw.candidateNotes === 'string' && raw.candidateNotes.trim()
+        ? raw.candidateNotes.trim()
+        : null,
     plan,
   };
 }
@@ -362,5 +390,27 @@ function isInterviewFocus(value: unknown): value is InterviewFocus {
     value === 'professional' ||
     value === 'behavioral' ||
     value === 'salary_negotiation'
+  );
+}
+
+function isTrainingMode(value: unknown): value is InterviewTrainingMode {
+  return value === 'candidate' || value === 'interviewer';
+}
+
+function isCandidatePersona(value: unknown): value is CandidatePersona {
+  return (
+    value === 'strong_brief' ||
+    value === 'verbose_vague' ||
+    value === 'anxious' ||
+    value === 'overconfident' ||
+    value === 'weak_hard_good_soft'
+  );
+}
+
+function isCandidateDifficulty(value: unknown): value is CandidateDifficulty {
+  return (
+    value === 'calm' ||
+    value === 'realistic' ||
+    value === 'challenging'
   );
 }

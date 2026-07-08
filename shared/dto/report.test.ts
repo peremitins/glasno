@@ -70,6 +70,7 @@ describe('report DTO', () => {
     const parsed = InterviewReportDto.parse({
       id: 'r1',
       sessionId: 's1',
+      trainingMode: 'interviewer',
       status: 'done',
       overallScore: 70,
       verdict: 'ok',
@@ -104,6 +105,27 @@ describe('report DTO', () => {
     });
 
     expect(parsed.criteria).toBeNull();
+    expect(parsed.trainingMode).toBe('interviewer');
     expect(parsed.questionAnalysis?.[0]?.criteria).toBeNull();
+  });
+
+  it('defaults old reports to candidate training mode', () => {
+    const parsed = InterviewReportDto.parse({
+      id: 'r2',
+      sessionId: 's2',
+      status: 'queued',
+      overallScore: null,
+      verdict: null,
+      summary: null,
+      criteria: null,
+      recommendations: null,
+      questionAnalysis: null,
+      errorMessage: null,
+      model: null,
+      createdAt: '2026-07-05T00:00:00.000Z',
+      updatedAt: '2026-07-05T00:00:00.000Z',
+    });
+
+    expect(parsed.trainingMode).toBe('candidate');
   });
 });

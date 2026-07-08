@@ -4,6 +4,28 @@ import { readFileSync } from 'node:fs';
 const source = readFileSync('app/pages/interview/new.vue', 'utf8');
 
 describe('interview new page UI structure', () => {
+  it('offers candidate and interviewer training modes before the source fields', () => {
+    const modeIndex = source.indexOf('class="training-mode-grid"');
+    const sourceIndex = source.indexOf('id="vacancy"');
+
+    expect(modeIndex).toBeGreaterThan(-1);
+    expect(modeIndex).toBeLessThan(sourceIndex);
+    expect(source).toContain("type TrainingMode = CreateInterviewSessionRequest['trainingMode']");
+    expect(source).toContain("value: 'candidate'");
+    expect(source).toContain("value: 'interviewer'");
+    expect(source).toContain('interview.new.trainingMode.candidate.title');
+    expect(source).toContain('interview.new.trainingMode.interviewer.title');
+  });
+
+  it('replaces candidate experience with AI candidate setup in interviewer mode', () => {
+    expect(source).toContain('isInterviewerTraining');
+    expect(source).toContain('interview.new.aiCandidate.title');
+    expect(source).toContain('interview.new.aiCandidate.resumeFile');
+    expect(source).toContain('candidatePersonaOptions');
+    expect(source).toContain('candidateDifficultyOptions');
+    expect(source).toContain('id="candidate-notes"');
+  });
+
   it('keeps resume file preview next to the upload before candidate notes', () => {
     const uploadIndex = source.indexOf('id="resume-file"');
     const previewIndex = source.indexOf('class="resume-preview"');

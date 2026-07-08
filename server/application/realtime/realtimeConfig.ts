@@ -2,13 +2,22 @@ import {
   buildInterviewerGenderInstruction,
   type InterviewerGender,
 } from '@/shared/interviewerVoice';
+import type {
+  CandidateDifficulty,
+  CandidatePersona,
+  InterviewTrainingMode,
+} from '@/shared/dto';
 
 interface RuntimeRealtimeContext {
   sessionId: string;
+  trainingMode?: InterviewTrainingMode | null;
   role?: string | null;
   level?: string | null;
   interviewerMode?: string | null;
   interviewerGender?: InterviewerGender | null;
+  candidatePersona?: CandidatePersona | null;
+  candidateDifficulty?: CandidateDifficulty | null;
+  candidateNotes?: string | null;
   vacancyTitle?: string | null;
   companyName?: string | null;
   currentQuestion?: string | null;
@@ -23,6 +32,26 @@ interface RealtimeOptions {
 export function buildRealtimeInstructions(
   context: RuntimeRealtimeContext
 ): string {
+  if (context.trainingMode === 'interviewer') {
+    return [
+      'Ты голосовой AI-кандидат Гласно. Всегда говори по-русски, кратко и естественно, как живой человек на собеседовании.',
+      'Пользователь проводит интервью и тренирует навык интервьюера.',
+      'Отвечай как кандидат по роли, вакансии, резюме и заданному профилю. Не помогай пользователю проводить интервью.',
+      'Если вопрос общий, отвечай естественно, но не раскрывай всё сам: оставляй место для уточнений.',
+      'Если пользователь произнёс команду перехода («следующий вопрос», «другой вопрос», «дальше», «переходим») — это команда приложению. Не спорь и не управляй переходом.',
+      'Не утверждай, что интервью завершено, и не давай оценку интервьюеру во время разговора.',
+      `ID сессии: ${context.sessionId}.`,
+      `Роль кандидата: ${context.role || 'не указана'}.`,
+      `Уровень кандидата: ${context.level || 'middle'}.`,
+      `Профиль кандидата: ${describeCandidatePersona(context.candidatePersona)}.`,
+      `Сложность кандидата: ${describeCandidateDifficulty(context.candidateDifficulty)}.`,
+      `Заметки о кандидате: ${context.candidateNotes || 'нет'}.`,
+      `Вакансия: ${context.vacancyTitle || 'не указана'}.`,
+      `Компания: ${context.companyName || 'не указана'}.`,
+      `Текущий этап: ${context.currentQuestion || 'нет активного этапа'}.`,
+    ].join('\n');
+  }
+
   return [
     'Ты голосовой интервьюер Гласно. Всегда говори по-русски, кратко и естественно, как живой человек на собеседовании.',
     'Веди живой диалог по ТЕКУЩЕМУ вопросу: слушай ответ, реагируй, можешь задать короткий уточняющий вопрос.',
@@ -41,6 +70,38 @@ export function buildRealtimeInstructions(
     `Компания: ${context.companyName || 'не указана'}.`,
     `Текущий вопрос: ${context.currentQuestion || 'нет активного вопроса'}.`,
   ].join('\n');
+}
+
+function describeCandidatePersona(
+  persona?: CandidatePersona | null
+): string {
+  switch (persona) {
+    case 'verbose_vague':
+      return 'много говорит, но часто без фактов';
+    case 'anxious':
+      return 'волнуется и иногда просит уточнить вопрос';
+    case 'overconfident':
+      return 'уверен в себе и может переоценивать вклад';
+    case 'weak_hard_good_soft':
+      return 'приятный в общении, но профессиональная конкретика слабее';
+    case 'strong_brief':
+    default:
+      return 'сильный, отвечает кратко и по делу';
+  }
+}
+
+function describeCandidateDifficulty(
+  difficulty?: CandidateDifficulty | null
+): string {
+  switch (difficulty) {
+    case 'calm':
+      return 'спокойный сценарий';
+    case 'challenging':
+      return 'сложный сценарий с неполными ответами и уходом от конкретики';
+    case 'realistic':
+    default:
+      return 'реалистичный сценарий';
+  }
 }
 
 export function buildRealtimeSessionPayload(

@@ -15,6 +15,7 @@ import type {
   InterviewerMode,
   InterviewSessionStatus,
   InterviewSourceType,
+  InterviewTrainingMode,
   InterviewTurnKind,
 } from '@/shared/dto';
 
@@ -26,6 +27,7 @@ function mapSession(row: SessionRow): InterviewSessionRecord {
     id: row.id,
     anonymousSessionId: row.anonymousSessionId,
     userId: row.userId,
+    trainingMode: (row.trainingMode || 'candidate') as InterviewTrainingMode,
     source: row.source as InterviewSourceType,
     vacancyTitle: row.vacancyTitle,
     vacancyRaw: row.vacancyRaw,
@@ -83,6 +85,7 @@ export class DrizzleInterviewRepository implements InterviewRepository {
       .values({
         anonymousSessionId: input.anonymousSessionId,
         userId: input.userId ?? null,
+        trainingMode: input.trainingMode,
         source: input.source,
         vacancyTitle: input.vacancyTitle ?? null,
         vacancyRaw: input.vacancyRaw ?? null,

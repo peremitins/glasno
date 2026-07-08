@@ -1,10 +1,14 @@
 import { existsSync } from 'node:fs';
 import PDFDocument from 'pdfkit';
-import type { InterviewReport } from '@/shared/dto';
+import type { InterviewReport, InterviewTrainingMode } from '@/shared/dto';
 
 export const REPORT_PDF_MODEL_ANSWER_LABEL = 'Вариант сильного ответа';
 export const REPORT_PDF_STAR_LABEL =
   'Как усилить ответ (STAR: ситуация, задача, действие, результат)';
+export const REPORT_PDF_INTERVIEWER_MODEL_ANSWER_LABEL =
+  'Как можно было спросить сильнее';
+export const REPORT_PDF_INTERVIEWER_STAR_LABEL =
+  'Как усилить следующий вопрос';
 const REPORT_PDF_STAR_EXPLANATION =
   'STAR (ситуация, задача, действие, результат)';
 
@@ -29,7 +33,9 @@ export async function renderReportPdf(report: InterviewReport): Promise<Buffer> 
       doc.font('GlasnoSans');
     }
 
-    doc.fontSize(22).text('Гласно — отчёт по интервью');
+    const labels = reportPdfLabels(report.trainingMode);
+
+    doc.fontSize(22).text(labels.title);
     doc.moveDown(0.7);
     doc.fontSize(12).fillColor('#555').text(`Отчёт: ${report.id}`);
     doc.fillColor('#000').moveDown();
@@ -56,7 +62,9 @@ export async function renderReportPdf(report: InterviewReport): Promise<Buffer> 
       doc.fontSize(15).text('Критерии');
       doc.moveDown(0.4);
       for (const [key, value] of Object.entries(report.criteria)) {
-        doc.fontSize(11).text(`${criteriaLabel(key)}: ${value}/100`);
+        doc
+          .fontSize(11)
+          .text(`${criteriaLabel(key, report.trainingMode)}: ${value}/100`);
       }
       doc.moveDown();
     }
@@ -83,24 +91,28 @@ export async function renderReportPdf(report: InterviewReport): Promise<Buffer> 
           .fillColor('#555')
           .text(reportQuestionKindLabel(item.kind));
         doc.fillColor('#000');
-        doc.fontSize(10).text(`Ответ: ${formatReportPdfText(item.answer)}`);
+        doc
+          .fontSize(10)
+          .text(`${labels.answer}: ${formatReportPdfText(item.answer)}`);
         if (item.criteria) {
           doc.text('Оценки по вопросу');
           for (const [key, value] of Object.entries(item.criteria)) {
-            doc.text(`${criteriaLabel(key)}: ${value}/100`);
+            doc.text(
+              `${criteriaLabel(key, report.trainingMode)}: ${value}/100`
+            );
           }
         }
         doc.text(`Что хорошо: ${formatReportPdfText(item.whatWorked)}`);
         doc.text(`Что слабо: ${formatReportPdfText(item.whatWeak)}`);
         if (item.modelAnswer) {
           doc.text(
-            `${REPORT_PDF_MODEL_ANSWER_LABEL}: ${formatReportPdfText(
+            `${labels.modelAnswer}: ${formatReportPdfText(
               item.modelAnswer
             )}`
           );
         }
         doc.text(
-          `${REPORT_PDF_STAR_LABEL}: ${formatReportPdfText(
+          `${labels.strongerStar}: ${formatReportPdfText(
             item.strongerAnswerStar
           )}`
         );
@@ -123,16 +135,48 @@ export function formatReportPdfText(value: string): string {
 }
 
 export function reportPdfCriteriaLabel(key: string): string {
-  const labels: Record<string, string> = {
+  return reportPdfCriteriaLabelForMode(key, 'candidate');
+}
+
+export function reportPdfCriteriaLabelForMode(
+  key: string,
+  trainingMode: InterviewTrainingMode
+): string {
+  const candidateLabels: Record<string, string> = {
     substance: 'Суть ответа',
     structure: 'Структура',
     delivery: 'Подача',
   };
+  const interviewerLabels: Record<string, string> = {
+    substance: 'Качество проверки',
+    structure: 'Структура интервью',
+    delivery: 'Подача',
+  };
+  const labels =
+    trainingMode === 'interviewer' ? interviewerLabels : candidateLabels;
   return labels[key] || key;
 }
 
-function criteriaLabel(key: string): string {
-  return reportPdfCriteriaLabel(key);
+function criteriaLabel(key: string, trainingMode: InterviewTrainingMode): string {
+  return reportPdfCriteriaLabelForMode(key, trainingMode);
+}
+
+function reportPdfLabels(trainingMode: InterviewTrainingMode) {
+  if (trainingMode === 'interviewer') {
+    return {
+      title: 'Гласно — отчёт по интервьюеру',
+      answer: 'Вопросы интервьюера',
+      modelAnswer: REPORT_PDF_INTERVIEWER_MODEL_ANSWER_LABEL,
+      strongerStar: REPORT_PDF_INTERVIEWER_STAR_LABEL,
+    };
+  }
+
+  return {
+    title: 'Гласно — отчёт по интервью',
+    answer: 'Ответ',
+    modelAnswer: REPORT_PDF_MODEL_ANSWER_LABEL,
+    strongerStar: REPORT_PDF_STAR_LABEL,
+  };
 }
 
 function reportQuestionKindLabel(kind: string): string {
