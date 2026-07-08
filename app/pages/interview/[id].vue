@@ -46,7 +46,12 @@
     RealtimeInterviewChatAdapter,
     REALTIME_QUESTION_ANNOUNCEMENT_KIND,
   } from '@/app/services/realtime/realtimeInterviewChatAdapter';
+  import { RealtimeResponseScheduler } from '@/app/services/realtime/realtimeResponseScheduler';
   import type { RealtimeVoiceControl } from '@/app/composables/useRealtimeVoiceSession';
+  import {
+    useRealtimeVoiceSettings,
+    RESPONSE_PAUSE_OPTIONS_MS,
+  } from '@/app/composables/useRealtimeVoiceSettings';
   import { INTERVIEW_STREAM_MODE } from '@/app/constants/interview';
   import { getInterviewerFacePhotoSrc } from '@/app/utils/interviewerAssets';
   import {
@@ -117,6 +122,25 @@
   // Управление активной realtime-сессией (отмена ответа модели, отправка
   // событий) — выдаётся панелью RealtimeVoicePanel через onControl.
   const realtimeControl = ref<RealtimeVoiceControl | null>(null);
+  // Настраиваемая пауза «окна тишины» перед ответом интервьюера.
+  const { responsePauseMs, setResponsePauseMs } = useRealtimeVoiceSettings();
+  const responsePauseOptions = RESPONSE_PAUSE_OPTIONS_MS;
+  // Окно тишины: semantic_vad режет ход на естественных паузах, поэтому ответ
+  // интервьюера (response.create) откладываем на responsePauseMs и снимаем,
+  // если кандидат заговорил снова. Так пауза «подумать» не засчитывается за
+  // законченный ответ.
+  const responseScheduler = new RealtimeResponseScheduler({
+    getDelayMs: () => responsePauseMs.value,
+    onElapsed: () => {
+      realtimeControl.value?.sendEvent({ type: 'response.create' });
+    },
+  });
+  // Кандидат прямо сейчас произносит сегмент речи. Ведём по СЫРЫМ событиям VAD
+  // (speech_started/stopped), а не по UI-флагу userSpeaking: адаптер гасит
+  // userSpeaking ещё и на завершении транскрипции, из-за чего он ложно
+  // становится false, пока идёт уже следующий сегмент. Для решения «ставить ли
+  // окно тишины» нужен честный флаг, не зависящий от транскрипции.
+  let userSpeechActive = false;
   let realtimePersistQueue: Promise<void> = Promise.resolve();
   // Runtime-пузыри, уже поставленные в очередь на сохранение: защита от
   // повторного персиста одной и той же реплики (дубли в истории диалога).
@@ -315,7 +339,10 @@
       if (status !== 'connected') {
         realtimeSpeaking.value = false;
         userSpeaking.value = false;
+        userSpeechActive = false;
         firstQuestionAnnounced.value = false;
+        // Соединение оборвалось/остановлено — отложенного ответа быть не должно.
+        responseScheduler.cancel();
         return;
       }
       // Соединение установлено: модель сама здоровается и озвучивает текущий
@@ -379,10 +406,11 @@
         handleRealtimeAssistantTranscript(transcript, messageId);
       },
       onUserTranscriptFailed() {
-        // Текст реплики распознать не удалось, но аудио уже в контексте
-        // модели — явно просим интервьюера ответить, чтобы диалог не замер
-        // (авто-ответ VAD выключен, см. realtimeConfig).
-        realtimeControl.value?.sendEvent({ type: 'response.create' });
+        // Текст реплики распознать не удалось, но аудио уже в контексте модели.
+        // Ответ VAD выключен, поэтому запускаем его сами — но через то же окно
+        // тишины, чтобы не перебить кандидата на паузе. Если он молчит, не
+        // говорит — планировщик выждет паузу и попросит интервьюера ответить.
+        if (!userSpeechActive) responseScheduler.arm();
       },
       onAssistantSpeechStarted() {
         realtimeSpeaking.value = true;
@@ -402,6 +430,15 @@
 
   function handleRealtimeEvent(event: unknown) {
     if (!event || typeof event !== 'object') return;
+    const type = (event as { type?: unknown }).type;
+    // Кандидат заговорил (в т.ч. возобновил речь после паузы) — ход не окончен:
+    // снимаем отложенный ответ и держим окно тишины закрытым.
+    if (type === 'input_audio_buffer.speech_started') {
+      userSpeechActive = true;
+      responseScheduler.cancel();
+    } else if (type === 'input_audio_buffer.speech_stopped') {
+      userSpeechActive = false;
+    }
     ensureRealtimeAdapter().handleServerEvent(event as { type?: string });
   }
 
@@ -411,17 +448,20 @@
     // В realtime реплики кандидата уже попадают в чат через адаптер.
     // В поле ответа ничего НЕ пишем. По голосовой команде — переходим дальше.
     if (isNextQuestionVoiceCommand(normalized)) {
-      // Команда адресована приложению, а не интервьюеру. Авто-ответ VAD
-      // выключен, поэтому модель на команду голосом не реагирует вовсе;
-      // cancel — страховка, если она ещё договаривает прошлый ответ.
+      // Команда адресована приложению, а не интервьюеру. Реагируем сразу,
+      // минуя окно тишины: снимаем отложенный ответ и переключаем вопрос.
+      responseScheduler.cancel();
       realtimeControl.value?.cancelActiveResponses();
       void goToNextQuestion();
       return;
     }
     queueRealtimeDialogueMessage('user', normalized, messageId);
-    // Обычная реплика кандидата: явно запускаем ответ интервьюера — теперь
-    // это делаем мы (после анализа транскрипта), а не VAD автоматически.
-    realtimeControl.value?.sendEvent({ type: 'response.create' });
+    // Обычная реплика кандидата: не отвечаем сразу, а ставим окно тишины.
+    // Пауза «подумать» внутри ответа снимет таймер (speech_started выше);
+    // ответ уйдёт только если кандидат реально замолчал на responsePauseMs.
+    // Если в момент готовности транскрипта кандидат уже начал следующий
+    // сегмент — не ставим таймер, его поставит завершение того сегмента.
+    if (!userSpeechActive) responseScheduler.arm();
   }
 
   function handleRealtimeAssistantTranscript(
@@ -445,7 +485,9 @@
     const question = currentTurn.value?.question?.trim();
     if (!control || !voiceConnected.value || !question) return;
 
-    // На случай, если модель всё ещё договаривает что-то по старому вопросу.
+    // Снимаем отложенный ответ по прошлому вопросу и обрываем текущую озвучку —
+    // иначе на смене вопроса зазвучат два голоса.
+    responseScheduler.cancel();
     control.cancelActiveResponses();
 
     const contextText = options.firstQuestion
@@ -1159,6 +1201,7 @@
   onBeforeUnmount(() => {
     window.removeEventListener('keydown', onKeydown);
     stopSpeech();
+    responseScheduler.dispose();
   });
 </script>
 
@@ -1811,6 +1854,37 @@
               </span>
             </button>
           </div>
+        </div>
+
+        <!-- Пауза «окна тишины» перед ответом интервьюера в голосовом режиме. -->
+        <div class="picker-group">
+          <p class="picker-group-label">
+            {{ t('interview.session.interviewerPicker.responsePauseTitle') }}
+          </p>
+          <div
+            class="pause-row"
+            role="group"
+            :aria-label="t('interview.session.interviewerPicker.responsePauseTitle')"
+          >
+            <button
+              v-for="ms in responsePauseOptions"
+              :key="ms"
+              type="button"
+              class="pause-chip"
+              :class="{ 'pause-chip--active': responsePauseMs === ms }"
+              :aria-pressed="responsePauseMs === ms"
+              @click="setResponsePauseMs(ms)"
+            >
+              {{
+                t('interview.session.interviewerPicker.responsePauseSeconds', {
+                  seconds: (ms / 1000).toLocaleString('ru-RU'),
+                })
+              }}
+            </button>
+          </div>
+          <p class="pause-hint">
+            {{ t('interview.session.interviewerPicker.responsePauseHint') }}
+          </p>
         </div>
       </div>
     </div>
@@ -2637,6 +2711,7 @@
   .side-head--chat {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr) auto;
+    justify-items: end;
     gap: 8px;
   }
 
@@ -3182,6 +3257,42 @@
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 10px;
+  }
+
+  .pause-row {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .pause-chip {
+    padding: 10px 0;
+    border: 1px solid var(--glass-border);
+    border-radius: 12px;
+    background: var(--surface-soft);
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 14px;
+    font-weight: 900;
+    cursor: pointer;
+    transition: border-color var(--motion-fast) var(--ease-out),
+      transform var(--motion-fast) var(--ease-out);
+  }
+  .pause-chip:hover {
+    border-color: var(--glass-border-strong);
+    transform: translateY(-1px);
+  }
+  .pause-chip--active {
+    border-color: var(--accent);
+    color: var(--accent-2);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 50%, transparent);
+  }
+
+  .pause-hint {
+    margin: 8px 0 0;
+    color: var(--text-muted);
+    font-size: 13px;
+    line-height: 1.4;
   }
 
   .picker-card {
