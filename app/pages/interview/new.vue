@@ -54,6 +54,10 @@
   type InterviewLevel = CreateInterviewSessionRequest['level'];
   type InterviewerMode = CreateInterviewSessionRequest['interviewerMode'];
   type InterviewSessionGoal = CreateInterviewSessionRequest['sessionGoal'];
+  type TrainingMode = CreateInterviewSessionRequest['trainingMode'];
+  type CandidatePersona = CreateInterviewSessionRequest['candidatePersona'];
+  type CandidateDifficulty =
+    CreateInterviewSessionRequest['candidateDifficulty'];
   type QuestionSourceMode = NonNullable<
     CreateInterviewSessionRequest['questionSourceMode']
   >;
@@ -111,15 +115,21 @@
   const customContextVisible = ref(false);
   const resumeFileName = ref('');
   const resumeExtractedText = ref('');
+  const aiCandidateResumeFileName = ref('');
+  const aiCandidateResumeExtractedText = ref('');
   const questionsFileName = ref('');
   const questionsFileText = ref('');
 
   const form = reactive({
+    trainingMode: 'candidate' as TrainingMode,
     hhUrl: '',
     vacancyText: '',
     vacancyTitle: '',
     professionRole: String(route.query.role || ''),
     resumeNotes: '',
+    candidatePersona: 'strong_brief' as CandidatePersona,
+    candidateDifficulty: 'realistic' as CandidateDifficulty,
+    candidateNotes: '',
     level: (route.query.level === 'junior' ||
     route.query.level === 'middle' ||
     route.query.level === 'senior'
@@ -147,6 +157,75 @@
   }> = [
     { value: 'hh_url', label: 'interview.new.source.hh', icon: Link2Icon },
     { value: 'manual', label: 'interview.new.source.manual', icon: CubeIcon },
+  ];
+
+  const trainingModeOptions: Array<{
+    value: TrainingMode;
+    title: string;
+    description: string;
+    meta: string;
+  }> = [
+    {
+      value: 'candidate',
+      title: 'interview.new.trainingMode.candidate.title',
+      description: 'interview.new.trainingMode.candidate.description',
+      meta: 'interview.new.trainingMode.candidate.meta',
+    },
+    {
+      value: 'interviewer',
+      title: 'interview.new.trainingMode.interviewer.title',
+      description: 'interview.new.trainingMode.interviewer.description',
+      meta: 'interview.new.trainingMode.interviewer.meta',
+    },
+  ];
+
+  const candidatePersonaOptions: Array<{
+    value: CandidatePersona;
+    title: string;
+    description: string;
+  }> = [
+    {
+      value: 'strong_brief',
+      title: 'interview.new.aiCandidate.persona.strongBrief.title',
+      description: 'interview.new.aiCandidate.persona.strongBrief.description',
+    },
+    {
+      value: 'verbose_vague',
+      title: 'interview.new.aiCandidate.persona.verboseVague.title',
+      description: 'interview.new.aiCandidate.persona.verboseVague.description',
+    },
+    {
+      value: 'anxious',
+      title: 'interview.new.aiCandidate.persona.anxious.title',
+      description: 'interview.new.aiCandidate.persona.anxious.description',
+    },
+    {
+      value: 'overconfident',
+      title: 'interview.new.aiCandidate.persona.overconfident.title',
+      description:
+        'interview.new.aiCandidate.persona.overconfident.description',
+    },
+    {
+      value: 'weak_hard_good_soft',
+      title: 'interview.new.aiCandidate.persona.weakHardGoodSoft.title',
+      description:
+        'interview.new.aiCandidate.persona.weakHardGoodSoft.description',
+    },
+  ];
+
+  const candidateDifficultyOptions: Array<{
+    value: CandidateDifficulty;
+    label: string;
+  }> = [
+    { value: 'calm', label: 'interview.new.aiCandidate.difficulty.calm' },
+    {
+      value: 'realistic',
+      label: 'interview.new.aiCandidate.difficulty.realistic',
+    },
+    {
+      value: 'challenging',
+      label: 'interview.new.aiCandidate.difficulty.challenging',
+    },
   ];
 
   const roleOptions: RoleOption[] = PROFESSIONAL_ROLE_OPTIONS.map((role) => ({
@@ -281,9 +360,10 @@
             .includes(query)
         )
       : roleOptions;
-    return [...options.slice(0, MAX_VISIBLE_ROLE_OPTIONS), customRoleOption.value].filter(
-      (option): option is RoleOption => Boolean(option)
-    );
+    return [
+      ...options.slice(0, MAX_VISIBLE_ROLE_OPTIONS),
+      customRoleOption.value,
+    ].filter((option): option is RoleOption => Boolean(option));
   });
 
   const roleInputValue = computed({
@@ -297,9 +377,19 @@
   });
 
   const selectedSourceHint = computed(() => {
+    if (isInterviewerTraining.value) {
+      if (sourceMode.value === 'hh_url') {
+        return t('interview.new.sourceHint.hhInterviewer');
+      }
+      return t('interview.new.sourceHint.manualInterviewer');
+    }
     if (sourceMode.value === 'hh_url') return t('interview.new.sourceHint.hh');
     return t('interview.new.sourceHint.manual');
   });
+
+  const isInterviewerTraining = computed(
+    () => form.trainingMode === 'interviewer'
+  );
 
   const customQuestionsCombinedText = computed(() =>
     form.customQuestionsText.trim()
@@ -333,30 +423,55 @@
 
   const resumeContextText = computed(() => {
     const parts: string[] = [];
-    const extracted = resumeExtractedText.value.trim();
-    const notes = form.resumeNotes.trim();
+    const extracted = isInterviewerTraining.value
+      ? aiCandidateResumeExtractedText.value.trim()
+      : resumeExtractedText.value.trim();
+    const notes = isInterviewerTraining.value
+      ? form.candidateNotes.trim()
+      : form.resumeNotes.trim();
+    const fileName = isInterviewerTraining.value
+      ? aiCandidateResumeFileName.value
+      : resumeFileName.value;
 
     if (extracted) {
       parts.push(
-        `Резюме из файла ${
-          resumeFileName.value ? `"${resumeFileName.value}"` : ''
-        }:\n${extracted}`
+        `${
+          isInterviewerTraining.value ? 'Резюме кандидата' : 'Резюме из файла'
+        } ${fileName ? `"${fileName}"` : ''}:\n${extracted}`
       );
     }
 
     if (notes) {
-      parts.push(`Дополнительно от кандидата:\n${notes}`);
+      parts.push(
+        `${
+          isInterviewerTraining.value
+            ? 'Дополнительные заметки о кандидате'
+            : 'Дополнительно от кандидата'
+        }:\n${notes}`
+      );
     }
 
     return trimResumeContext(parts.join('\n\n'));
   });
 
+  const activeResumeFileName = computed(() =>
+    isInterviewerTraining.value
+      ? aiCandidateResumeFileName.value
+      : resumeFileName.value
+  );
+
+  const activeResumeExtractedText = computed(() =>
+    isInterviewerTraining.value
+      ? aiCandidateResumeExtractedText.value
+      : resumeExtractedText.value
+  );
+
   const resumePreviewBlocks = computed(() =>
-    buildResumePreviewBlocks(resumeExtractedText.value)
+    buildResumePreviewBlocks(activeResumeExtractedText.value)
   );
 
   const resumePreviewMeta = computed(() => {
-    const count = resumeExtractedText.value.length;
+    const count = activeResumeExtractedText.value.length;
     return count
       ? t('interview.new.resume.previewMeta', { count })
       : t('interview.new.resume.previewEmptyMeta');
@@ -381,6 +496,14 @@
         ?.summary ?? 'Стандарт · 15 мин'
   );
 
+  const selectedTrainingModeSummary = computed(() =>
+    t(
+      isInterviewerTraining.value
+        ? 'interview.new.trainingMode.interviewer.summary'
+        : 'interview.new.trainingMode.candidate.summary'
+    )
+  );
+
   const selectedFocusSummary = computed(() => {
     const option = focusOptions.find((item) => item.value === form.focus);
     return option ? t(option.label) : t('interview.focus.mixedShort');
@@ -388,7 +511,11 @@
 
   const selectedLevelSummary = computed(() => {
     const option = levelOptions.find((item) => item.value === form.level);
-    return option ? `${t(option.label)} · ${option.code}` : 'Уверенный · Middle';
+    const prefix = isInterviewerTraining.value
+      ? t('interview.new.aiCandidate.levelPrefix')
+      : '';
+    const label = option ? `${t(option.label)} · ${option.code}` : 'Middle';
+    return prefix ? `${prefix}: ${label}` : label;
   });
 
   const submitBlockerMessage = computed(() => {
@@ -495,6 +622,7 @@
 
   function buildPayload(): CreateInterviewSessionRequestInput {
     const base = {
+      trainingMode: form.trainingMode,
       resumeText: resumeContextText.value || undefined,
       role: form.professionRole.trim() || undefined,
       level: form.level,
@@ -502,6 +630,15 @@
       questionSourceMode: form.questionSourceMode,
       focus: form.focus ?? undefined,
       customQuestionsText: customQuestionsCombinedText.value || undefined,
+      candidatePersona: isInterviewerTraining.value
+        ? form.candidatePersona
+        : undefined,
+      candidateDifficulty: isInterviewerTraining.value
+        ? form.candidateDifficulty
+        : undefined,
+      candidateNotes: isInterviewerTraining.value
+        ? form.candidateNotes.trim() || undefined
+        : undefined,
       language: 'ru' as const,
       interviewerMode: form.interviewerMode,
       interviewerAvatarId: avatarByMode[form.interviewerMode],
@@ -545,9 +682,15 @@
     const input = event.target as HTMLInputElement;
     const file = input.files?.[0];
     if (!file) return;
+    const target = isInterviewerTraining.value ? 'ai_candidate' : 'candidate';
 
-    resumeFileName.value = file.name;
-    resumeExtractedText.value = '';
+    if (target === 'ai_candidate') {
+      aiCandidateResumeFileName.value = file.name;
+      aiCandidateResumeExtractedText.value = '';
+    } else {
+      resumeFileName.value = file.name;
+      resumeExtractedText.value = '';
+    }
     isExtractingResume.value = true;
     errorMessage.value = '';
     errorCode.value = '';
@@ -561,11 +704,21 @@
           body,
         }
       );
-      resumeExtractedText.value = response.text;
-      resumeFileName.value = response.fileName || file.name;
+      if (target === 'ai_candidate') {
+        aiCandidateResumeExtractedText.value = response.text;
+        aiCandidateResumeFileName.value = response.fileName || file.name;
+      } else {
+        resumeExtractedText.value = response.text;
+        resumeFileName.value = response.fileName || file.name;
+      }
     } catch (err) {
-      resumeFileName.value = '';
-      resumeExtractedText.value = '';
+      if (target === 'ai_candidate') {
+        aiCandidateResumeFileName.value = '';
+        aiCandidateResumeExtractedText.value = '';
+      } else {
+        resumeFileName.value = '';
+        resumeExtractedText.value = '';
+      }
       errorMessage.value = extractApiError(err);
     } finally {
       isExtractingResume.value = false;
@@ -574,6 +727,11 @@
   }
 
   function clearResumeFile() {
+    if (isInterviewerTraining.value) {
+      aiCandidateResumeFileName.value = '';
+      aiCandidateResumeExtractedText.value = '';
+      return;
+    }
     resumeFileName.value = '';
     resumeExtractedText.value = '';
   }
@@ -677,18 +835,67 @@
         <h1>{{ t('interview.new.context.title') }}</h1>
       </div>
 
+      <section class="training-mode-grid" role="radiogroup">
+        <button
+          v-for="option in trainingModeOptions"
+          :key="option.value"
+          type="button"
+          class="training-mode-card"
+          :class="{
+            'training-mode-card--active': form.trainingMode === option.value,
+          }"
+          role="radio"
+          :aria-checked="form.trainingMode === option.value"
+          @click="form.trainingMode = option.value"
+        >
+          <span>
+            <strong>{{ t(option.title) }}</strong>
+            <small>{{ t(option.description) }}</small>
+          </span>
+          <em>{{ t(option.meta) }}</em>
+        </button>
+      </section>
+
       <div class="context-grid">
         <article id="vacancy" class="context-column section-anchor">
           <div class="panel-head panel-head--compact">
             <div>
-              <p class="panel-label">{{ t('interview.new.source.kicker') }}</p>
-              <h2>{{ t('interview.new.source.title') }}</h2>
+              <p class="panel-label">
+                {{
+                  t(
+                    isInterviewerTraining
+                      ? 'interview.new.source.kickerInterviewer'
+                      : 'interview.new.source.kicker'
+                  )
+                }}
+              </p>
+              <h2>
+                {{
+                  t(
+                    isInterviewerTraining
+                      ? 'interview.new.source.titleInterviewer'
+                      : 'interview.new.source.title'
+                  )
+                }}
+              </h2>
             </div>
             <button
-              v-tooltip="t('interview.new.sourceHelp')"
+              v-tooltip="
+                t(
+                  isInterviewerTraining
+                    ? 'interview.new.sourceHelpInterviewer'
+                    : 'interview.new.sourceHelp'
+                )
+              "
               class="help-button"
               type="button"
-              :aria-label="t('interview.new.sourceHelp')"
+              :aria-label="
+                t(
+                  isInterviewerTraining
+                    ? 'interview.new.sourceHelpInterviewer'
+                    : 'interview.new.sourceHelp'
+                )
+              "
             >
               <QuestionMarkCircledIcon aria-hidden="true" />
             </button>
@@ -723,7 +930,7 @@
                 type="url"
                 inputmode="url"
                 placeholder="https://company.ru/careers/product-manager"
-              >
+              />
             </div>
           </div>
 
@@ -818,7 +1025,9 @@
               <span class="field-label">{{
                 t('interview.new.contextTags.title')
               }}</span>
-              <p class="field-hint">{{ t('interview.new.contextTags.hint') }}</p>
+              <p class="field-hint">
+                {{ t('interview.new.contextTags.hint') }}
+              </p>
               <div class="context-tags">
                 <button
                   v-for="tag in visibleContextTags"
@@ -857,8 +1066,12 @@
                     t('interview.new.contextTags.customPlaceholder')
                   "
                   @keydown.enter.prevent="addCustomContextTag"
+                />
+                <button
+                  type="button"
+                  class="secondary-button"
+                  @click="addCustomContextTag"
                 >
-                <button type="button" class="secondary-button" @click="addCustomContextTag">
                   {{ t('interview.new.contextTags.addCustom') }}
                 </button>
               </div>
@@ -890,17 +1103,92 @@
         >
           <div class="panel-head panel-head--compact">
             <div>
-              <p class="panel-label">{{ t('interview.new.resume.kicker') }}</p>
-              <h2>{{ t('interview.new.resume.title') }}</h2>
+              <p class="panel-label">
+                {{
+                  t(
+                    isInterviewerTraining
+                      ? 'interview.new.aiCandidate.kicker'
+                      : 'interview.new.resume.kicker'
+                  )
+                }}
+              </p>
+              <h2>
+                {{
+                  t(
+                    isInterviewerTraining
+                      ? 'interview.new.aiCandidate.title'
+                      : 'interview.new.resume.title'
+                  )
+                }}
+              </h2>
             </div>
           </div>
 
-          <p class="source-hint">{{ t('interview.new.resume.helper') }}</p>
+          <p class="source-hint">
+            {{
+              t(
+                isInterviewerTraining
+                  ? 'interview.new.aiCandidate.helper'
+                  : 'interview.new.resume.helper'
+              )
+            }}
+          </p>
 
           <div class="candidate-stack">
+            <div v-if="isInterviewerTraining" class="field">
+              <span class="field-label">
+                {{ t('interview.new.aiCandidate.personaTitle') }}
+              </span>
+              <div class="candidate-option-grid" role="radiogroup">
+                <button
+                  v-for="option in candidatePersonaOptions"
+                  :key="option.value"
+                  type="button"
+                  class="focus-chip"
+                  :class="{
+                    'focus-chip--active':
+                      form.candidatePersona === option.value,
+                  }"
+                  role="radio"
+                  :aria-checked="form.candidatePersona === option.value"
+                  @click="form.candidatePersona = option.value"
+                >
+                  <strong>{{ t(option.title) }}</strong>
+                  <small>{{ t(option.description) }}</small>
+                </button>
+              </div>
+            </div>
+
+            <div v-if="isInterviewerTraining" class="field">
+              <span class="field-label">
+                {{ t('interview.new.aiCandidate.difficultyTitle') }}
+              </span>
+              <div class="segmented segmented--compact" role="radiogroup">
+                <button
+                  v-for="option in candidateDifficultyOptions"
+                  :key="option.value"
+                  type="button"
+                  class="segment"
+                  :class="{
+                    'segment--active':
+                      form.candidateDifficulty === option.value,
+                  }"
+                  role="radio"
+                  :aria-checked="form.candidateDifficulty === option.value"
+                  @click="form.candidateDifficulty = option.value"
+                >
+                  {{ t(option.label) }}
+                </button>
+              </div>
+            </div>
+
             <div class="field">
               <label for="resume-file">{{
-                t('interview.new.resume.file')
+                t(
+                  isInterviewerTraining
+                    ? 'interview.new.aiCandidate.resumeFile'
+                    : 'interview.new.resume.file'
+                )
               }}</label>
               <div class="file-upload file-upload--compact">
                 <input
@@ -910,7 +1198,7 @@
                   accept=".pdf,.txt,.md,.png,.jpg,.jpeg,text/plain,text/markdown,application/pdf,image/png,image/jpeg"
                   :disabled="isExtractingResume"
                   @change="onResumeFileChange"
-                >
+                />
                 <label
                   class="file-drop file-drop--compact button-loader-host"
                   for="resume-file"
@@ -927,11 +1215,22 @@
                     </span>
                     <span class="file-drop__copy">
                       <strong>
-                        {{ t('interview.new.resume.uploadTitle') }}
+                        {{
+                          t(
+                            isInterviewerTraining
+                              ? 'interview.new.aiCandidate.uploadTitle'
+                              : 'interview.new.resume.uploadTitle'
+                          )
+                        }}
                       </strong>
                       <small>
                         {{
-                          resumeFileName || t('interview.new.resume.uploadHint')
+                          activeResumeFileName ||
+                          t(
+                            isInterviewerTraining
+                              ? 'interview.new.aiCandidate.uploadHint'
+                              : 'interview.new.resume.uploadHint'
+                          )
                         }}
                       </small>
                     </span>
@@ -952,7 +1251,7 @@
                 <div class="resume-preview__actions">
                   <small>{{ resumePreviewMeta }}</small>
                   <button
-                    v-if="resumeFileName || resumeExtractedText"
+                    v-if="activeResumeFileName || activeResumeExtractedText"
                     class="resume-preview__clear"
                     type="button"
                     :aria-label="t('interview.new.resume.clearFile')"
@@ -993,14 +1292,25 @@
             </section>
 
             <div class="field">
-              <label for="resume-notes">{{
+              <label v-if="!isInterviewerTraining" for="resume-notes">{{
                 t('interview.new.resume.notes')
               }}</label>
+              <label v-else for="candidate-notes">{{
+                t('interview.new.aiCandidate.notes')
+              }}</label>
               <VoiceTextarea
+                v-if="!isInterviewerTraining"
                 id="resume-notes"
                 v-model="form.resumeNotes"
                 :rows="5"
                 :placeholder="t('interview.new.placeholders.resumeText')"
+              />
+              <VoiceTextarea
+                v-else
+                id="candidate-notes"
+                v-model="form.candidateNotes"
+                :rows="5"
+                :placeholder="t('interview.new.aiCandidate.notesPlaceholder')"
               />
             </div>
           </div>
@@ -1012,7 +1322,15 @@
       <div class="panel-head">
         <div>
           <p class="panel-label">{{ t('interview.new.params.kicker') }}</p>
-          <h2>{{ t('interview.new.params.title') }}</h2>
+          <h2>
+            {{
+              t(
+                isInterviewerTraining
+                  ? 'interview.new.params.titleInterviewer'
+                  : 'interview.new.params.title'
+              )
+            }}
+          </h2>
         </div>
       </div>
 
@@ -1043,7 +1361,15 @@
 
         <section class="parameter-group">
           <div class="parameter-copy">
-            <h3>{{ t('interview.new.fields.level') }}</h3>
+            <h3>
+              {{
+                t(
+                  isInterviewerTraining
+                    ? 'interview.new.fields.candidateLevel'
+                    : 'interview.new.fields.level'
+                )
+              }}
+            </h3>
           </div>
           <div class="goal-grid" role="radiogroup">
             <button
@@ -1064,8 +1390,24 @@
 
         <section class="parameter-group">
           <div class="parameter-copy">
-            <h3>{{ t('interview.new.fields.focus') }}</h3>
-            <p>{{ t('interview.new.fields.focusHint') }}</p>
+            <h3>
+              {{
+                t(
+                  isInterviewerTraining
+                    ? 'interview.new.fields.focusInterviewer'
+                    : 'interview.new.fields.focus'
+                )
+              }}
+            </h3>
+            <p>
+              {{
+                t(
+                  isInterviewerTraining
+                    ? 'interview.new.fields.focusHintInterviewer'
+                    : 'interview.new.fields.focusHint'
+                )
+              }}
+            </p>
           </div>
           <div class="focus-chip-grid" role="radiogroup">
             <button
@@ -1088,7 +1430,15 @@
           <summary>
             <span>
               <strong>{{ t('interview.new.advanced.title') }}</strong>
-              <small>{{ t('interview.new.advanced.summary') }}</small>
+              <small>
+                {{
+                  t(
+                    isInterviewerTraining
+                      ? 'interview.new.advanced.summaryInterviewer'
+                      : 'interview.new.advanced.summary'
+                  )
+                }}
+              </small>
             </span>
             <span class="advanced-panel__chevron" aria-hidden="true">
               <ChevronDownIcon />
@@ -1096,7 +1446,10 @@
           </summary>
 
           <div class="advanced-content">
-            <section class="parameter-group parameter-group--advanced">
+            <section
+              v-if="!isInterviewerTraining"
+              class="parameter-group parameter-group--advanced"
+            >
               <div class="parameter-copy">
                 <h3>{{ t('interview.new.fields.interviewerMode') }}</h3>
                 <p>{{ t('interview.new.advanced.interviewerSummary') }}</p>
@@ -1123,15 +1476,41 @@
               <div class="panel-head panel-head--compact">
                 <div>
                   <p class="panel-label">
-                    {{ t('interview.new.customQuestions.kicker') }}
+                    {{
+                      t(
+                        isInterviewerTraining
+                          ? 'interview.new.customQuestions.kickerInterviewer'
+                          : 'interview.new.customQuestions.kicker'
+                      )
+                    }}
                   </p>
-                  <h3>{{ t('interview.new.customQuestions.title') }}</h3>
+                  <h3>
+                    {{
+                      t(
+                        isInterviewerTraining
+                          ? 'interview.new.customQuestions.titleInterviewer'
+                          : 'interview.new.customQuestions.title'
+                      )
+                    }}
+                  </h3>
                 </div>
                 <button
-                  v-tooltip="t('interview.new.customQuestions.tooltip')"
+                  v-tooltip="
+                    t(
+                      isInterviewerTraining
+                        ? 'interview.new.customQuestions.tooltipInterviewer'
+                        : 'interview.new.customQuestions.tooltip'
+                    )
+                  "
                   class="help-button"
                   type="button"
-                  :aria-label="t('interview.new.customQuestions.tooltip')"
+                  :aria-label="
+                    t(
+                      isInterviewerTraining
+                        ? 'interview.new.customQuestions.tooltipInterviewer'
+                        : 'interview.new.customQuestions.tooltip'
+                    )
+                  "
                 >
                   <QuestionMarkCircledIcon aria-hidden="true" />
                 </button>
@@ -1140,14 +1519,22 @@
               <div class="custom-questions-grid">
                 <div class="field">
                   <label for="custom-questions">{{
-                    t('interview.new.customQuestions.label')
+                    t(
+                      isInterviewerTraining
+                        ? 'interview.new.customQuestions.labelInterviewer'
+                        : 'interview.new.customQuestions.label'
+                    )
                   }}</label>
                   <VoiceTextarea
                     id="custom-questions"
                     v-model="form.customQuestionsText"
                     :rows="5"
                     :placeholder="
-                      t('interview.new.customQuestions.placeholder')
+                      t(
+                        isInterviewerTraining
+                          ? 'interview.new.customQuestions.placeholderInterviewer'
+                          : 'interview.new.customQuestions.placeholder'
+                      )
                     "
                   />
                 </div>
@@ -1165,7 +1552,7 @@
                         accept=".pdf,.txt,.md,.csv,.xls,.xlsx,.png,.jpg,.jpeg,text/plain,text/markdown,text/csv,application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,image/png,image/jpeg"
                         :disabled="isExtractingQuestionsFile"
                         @change="onCustomQuestionsFileChange"
-                      >
+                      />
                       <label
                         class="file-drop file-drop--compact button-loader-host"
                         for="custom-questions-file"
@@ -1190,9 +1577,7 @@
                             <small>
                               {{
                                 questionsFileName ||
-                                t(
-                                  'interview.new.customQuestions.uploadHint'
-                                )
+                                t('interview.new.customQuestions.uploadHint')
                               }}
                             </small>
                           </span>
@@ -1214,14 +1599,22 @@
                   </div>
 
                   <label class="toggle-option">
-                    <input v-model="customOnlyEnabled" type="checkbox" >
+                    <input v-model="customOnlyEnabled" type="checkbox" />
                     <span class="toggle-switch" aria-hidden="true" />
                     <span class="toggle-copy">
                       <strong>{{
-                        t('interview.new.customQuestions.onlyMine')
+                        t(
+                          isInterviewerTraining
+                            ? 'interview.new.customQuestions.onlyMineInterviewer'
+                            : 'interview.new.customQuestions.onlyMine'
+                        )
                       }}</strong>
                       <small>{{
-                        t('interview.new.customQuestions.onlyMineHint')
+                        t(
+                          isInterviewerTraining
+                            ? 'interview.new.customQuestions.onlyMineHintInterviewer'
+                            : 'interview.new.customQuestions.onlyMineHint'
+                        )
                       }}</small>
                     </span>
                   </label>
@@ -1244,6 +1637,7 @@
       <div class="sticky-start-bar__copy">
         <p>{{ t('interview.new.sticky.title') }}</p>
         <div class="summary-chips" aria-label="Параметры интервью">
+          <span>{{ selectedTrainingModeSummary }}</span>
           <span>{{ selectedGoalSummary }}</span>
           <span>{{ selectedFocusSummary }}</span>
           <span>{{ selectedLevelSummary }}</span>
@@ -1264,7 +1658,13 @@
             class="button-loader-content"
             :class="{ 'button-loader-content--loading': isSubmitting }"
           >
-            {{ t('interview.new.actions.start') }}
+            {{
+              t(
+                isInterviewerTraining
+                  ? 'interview.new.actions.startInterviewer'
+                  : 'interview.new.actions.start'
+              )
+            }}
             <span class="primary-action__icon" aria-hidden="true">
               <ArrowRightIcon />
             </span>
@@ -1337,6 +1737,91 @@
 
   .setup-head {
     margin-bottom: 18px;
+  }
+
+  .training-mode-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    margin-bottom: 18px;
+  }
+
+  .training-mode-card {
+    position: relative;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 14px;
+    align-items: center;
+    min-height: 112px;
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-control);
+    background: var(--surface-soft);
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 16px;
+    text-align: left;
+    transition: background var(--motion-normal) var(--ease-out),
+      border-color var(--motion-normal) var(--ease-out),
+      box-shadow var(--motion-normal) var(--ease-out),
+      transform var(--motion-normal) var(--ease-out);
+  }
+
+  .training-mode-card:hover,
+  .training-mode-card--active {
+    border-color: color-mix(in srgb, var(--accent) 52%, var(--glass-border));
+    background: var(--surface-raised);
+    box-shadow: inset 0 1px 0 var(--inner-highlight),
+      0 14px 32px color-mix(in srgb, var(--accent) 14%, transparent);
+    transform: translateY(-1px);
+  }
+
+  .training-mode-card::after {
+    content: '';
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    width: 10px;
+    height: 10px;
+    border-radius: 999px;
+    box-shadow: inset 0 0 0 1px var(--glass-border-strong);
+  }
+
+  .training-mode-card--active::after {
+    background: var(--accent-2);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 16%, transparent);
+  }
+
+  .training-mode-card span {
+    display: grid;
+    gap: 7px;
+    min-width: 0;
+  }
+
+  .training-mode-card strong {
+    color: var(--text-primary);
+    font-size: 17px;
+    font-weight: 950;
+  }
+
+  .training-mode-card small {
+    max-width: 56ch;
+    color: var(--text-secondary);
+    font-size: 13px;
+    line-height: 1.45;
+  }
+
+  .training-mode-card em {
+    align-self: end;
+    border: 1px solid var(--glass-border);
+    border-radius: 999px;
+    background: var(--surface-soft);
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-style: normal;
+    font-weight: 900;
+    padding: 6px 9px;
+    white-space: nowrap;
   }
 
   .context-grid {
@@ -1823,7 +2308,11 @@
     min-height: 200px;
     border: 1px solid var(--glass-border);
     border-radius: var(--radius-control);
-    background: color-mix(in srgb, var(--surface-raised) 72%, var(--surface-soft));
+    background: color-mix(
+      in srgb,
+      var(--surface-raised) 72%,
+      var(--surface-soft)
+    );
     box-shadow: inset 0 1px 0 var(--inner-highlight);
   }
 
@@ -1960,6 +2449,7 @@
 
   .goal-grid,
   .focus-chip-grid,
+  .candidate-option-grid,
   .custom-questions-grid {
     display: grid;
     gap: 8px;
@@ -1971,6 +2461,10 @@
 
   .focus-chip-grid {
     grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+
+  .candidate-option-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .goal-card,
@@ -2222,6 +2716,7 @@
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
+    align-items: center;
   }
 
   .summary-chips span {
@@ -2495,6 +2990,8 @@
 
     .goal-grid,
     .focus-chip-grid,
+    .training-mode-grid,
+    .candidate-option-grid,
     .segmented,
     .segmented--compact,
     .parameter-group,

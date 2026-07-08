@@ -28,6 +28,20 @@ describe('realtimeConfig', () => {
     expect(instructions).not.toContain('не сохраняешь ответ');
   });
 
+  it('builds candidate voice instructions for interviewer training', () => {
+    const instructions = buildRealtimeInstructions({
+      ...context,
+      trainingMode: 'interviewer',
+      candidatePersona: 'strong_brief',
+      candidateDifficulty: 'realistic',
+    });
+
+    expect(instructions).toContain('Ты голосовой AI-кандидат Гласно');
+    expect(instructions).toContain('Пользователь проводит интервью');
+    expect(instructions).toContain('Отвечай как кандидат');
+    expect(instructions).not.toContain('ты проверяешь кандидата');
+  });
+
   it('includes interviewer gender grammar instruction', () => {
     const instructions = buildRealtimeInstructions({
       ...context,

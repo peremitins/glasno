@@ -1,5 +1,6 @@
 import type {
   InterviewReport,
+  InterviewTrainingMode,
   ReportAnalysis,
   ReportCriteria,
   ReportQuestionAnalysis,
@@ -37,14 +38,14 @@ export class ReportService {
   }): Promise<InterviewReport> {
     const generation = await this.prepareReportGeneration(params);
     if (!generation.shouldGenerate) {
-      return toReportDto(generation.report);
+      return toReportDto(generation.report, generation.session.trainingMode);
     }
 
     const processing = await this.deps.reportRepository.markProcessing(
       generation.report.id
     );
     const saved = await this.runReportAnalysis(generation.session, processing.id);
-    return toReportDto(saved);
+    return toReportDto(saved, generation.session.trainingMode);
   }
 
   async prepareQueuedReport(params: {
@@ -53,7 +54,7 @@ export class ReportService {
     sessionId: string;
   }): Promise<InterviewReport> {
     const generation = await this.prepareReportGeneration(params);
-    return toReportDto(generation.report);
+    return toReportDto(generation.report, generation.session.trainingMode);
   }
 
   async startReportGeneration(params: {
@@ -63,7 +64,7 @@ export class ReportService {
   }): Promise<InterviewReport> {
     const generation = await this.prepareReportGeneration(params);
     if (!generation.shouldGenerate) {
-      return toReportDto(generation.report);
+      return toReportDto(generation.report, generation.session.trainingMode);
     }
 
     const processing = await this.deps.reportRepository.markProcessing(
@@ -80,7 +81,7 @@ export class ReportService {
       );
     });
 
-    return toReportDto(processing);
+    return toReportDto(processing, generation.session.trainingMode);
   }
 
   private async prepareReportGeneration(params: {
@@ -157,7 +158,7 @@ export class ReportService {
       params.userId
     );
     const report = await this.deps.reportRepository.findBySessionId(session.id);
-    return report ? toReportDto(report) : null;
+    return report ? toReportDto(report, session.trainingMode) : null;
   }
 
   async getById(params: {
@@ -169,12 +170,12 @@ export class ReportService {
     if (!report) {
       throw apiError('E_NOT_FOUND', 'Отчёт не найден');
     }
-    await this.requireOwnedSession(
+    const session = await this.requireOwnedSession(
       params.anonymousSessionId,
       report.sessionId,
       params.userId
     );
-    return toReportDto(report);
+    return toReportDto(report, session.trainingMode);
   }
 
   private async requireOwnedSession(
@@ -498,10 +499,14 @@ function sanitizeReportQuestionAnalysis(
   return normalizeQuestionAnalysis(items, []);
 }
 
-export function toReportDto(report: ReportRecord): InterviewReport {
+export function toReportDto(
+  report: ReportRecord,
+  trainingMode: InterviewTrainingMode = 'candidate'
+): InterviewReport {
   return {
     id: report.id,
     sessionId: report.sessionId,
+    trainingMode,
     status: report.status,
     overallScore: report.overallScore,
     verdict: report.verdict,

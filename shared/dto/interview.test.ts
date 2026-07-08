@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CreateInterviewSessionRequestDto,
   GenerateInterviewHintsRequestDto,
+  InterviewSessionDto,
   QuestionHintPackDto,
 } from './interview';
 
@@ -68,5 +69,73 @@ describe('interview DTO hints', () => {
 
     expect(parsed.sessionGoal).toBe('standard');
     expect(parsed.level).toBe('middle');
+    expect(parsed.trainingMode).toBe('candidate');
+  });
+
+  it('accepts interviewer training settings with a real candidate resume', () => {
+    const parsed = CreateInterviewSessionRequestDto.parse({
+      trainingMode: 'interviewer',
+      source: {
+        type: 'text',
+        title: 'Frontend-разработчик',
+        text: 'Vue, TypeScript, продуктовая команда, много самостоятельной работы.',
+      },
+      resumeText:
+        'Алексей, frontend-разработчик. 4 года опыта, Vue, TypeScript, дизайн-системы.',
+      candidatePersona: 'strong_brief',
+      candidateDifficulty: 'realistic',
+      candidateNotes: 'Кандидат отвечает коротко, но по делу.',
+    });
+
+    expect(parsed.trainingMode).toBe('interviewer');
+    expect(parsed.candidatePersona).toBe('strong_brief');
+    expect(parsed.candidateDifficulty).toBe('realistic');
+    expect(parsed.resumeText).toContain('Алексей');
+  });
+
+  it('exposes interviewer training profile on session responses', () => {
+    const parsed = InterviewSessionDto.parse({
+      id: 'session_1',
+      status: 'running',
+      trainingMode: 'interviewer',
+      source: 'text',
+      vacancyTitle: 'Frontend-разработчик',
+      vacancyUrl: null,
+      companyName: null,
+      role: 'Frontend-разработчик',
+      level: 'middle',
+      questionCount: 3,
+      sessionGoal: 'quick',
+      expectedDurationMinutes: 7,
+      questionSourceMode: 'glasno',
+      focus: null,
+      responseMode: 'text',
+      hintMode: 'off',
+      realtimeLimits: {
+        targetMinutes: 7,
+        warningAtMinutes: 6,
+        softLimitMinutes: 7,
+        hardLimitMinutes: 10,
+      },
+      plan: {
+        goal: 'quick',
+        expectedDurationMinutes: 7,
+        items: [],
+      },
+      language: 'ru',
+      interviewerMode: 'neutral',
+      interviewerAvatarId: 'neutral-pro',
+      interviewerFaceId: 'male-neutral',
+      candidatePersona: 'anxious',
+      candidateDifficulty: 'challenging',
+      candidateNotes: 'Кандидат заметно волнуется.',
+      currentQuestionIndex: 1,
+      totalQuestions: 3,
+      createdAt: '2026-07-08T00:00:00.000Z',
+    });
+
+    expect(parsed.trainingMode).toBe('interviewer');
+    expect(parsed.candidatePersona).toBe('anxious');
+    expect(parsed.candidateDifficulty).toBe('challenging');
   });
 });

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { InterviewTurnKindDto } from './interview';
+import { InterviewTrainingModeDto, InterviewTurnKindDto } from './interview';
 
 export const ReportStatusDto = z.enum(['queued', 'processing', 'done', 'failed']);
 
@@ -49,6 +49,7 @@ export const ReportAnalysisDto = z.object({
 export const InterviewReportDto = z.object({
   id: z.string(),
   sessionId: z.string(),
+  trainingMode: InterviewTrainingModeDto.default('candidate'),
   status: ReportStatusDto,
   overallScore: z.number().int().min(0).max(100).nullable(),
   verdict: z.string().nullable(),

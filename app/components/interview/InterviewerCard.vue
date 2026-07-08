@@ -13,6 +13,8 @@
     mode: InterviewerMode;
     faceId?: InterviewerFaceId;
     isSpeaking?: boolean;
+    label?: string;
+    displayName?: string;
   }>();
 
   const { t } = useI18n();
@@ -72,7 +74,7 @@
       v-if="showPhoto"
       class="interviewer-photo"
       :src="photoSrc"
-      :alt="profile.name"
+      :alt="displayName || profile.name"
       @error="photoFailed = true"
     >
     <div v-if="showPhoto" class="photo-shade" aria-hidden="true"/>
@@ -93,8 +95,8 @@
       <span/><span/>
     </div>
     <div class="meta">
-      <p>{{ t('interview.session.stage.interviewer') }}</p>
-      <h2>{{ profile.name }}</h2>
+      <p>{{ label || t('interview.session.stage.interviewer') }}</p>
+      <h2>{{ displayName || profile.name }}</h2>
       <span>{{
         isSpeaking
           ? t('interview.session.stage.speaking')

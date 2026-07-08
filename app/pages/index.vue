@@ -34,9 +34,7 @@
     resumeText: '',
   });
 
-  const hasSessions = computed(
-    () => (summary.value?.totals.sessions ?? 0) > 0
-  );
+  const hasSessions = computed(() => (summary.value?.totals.sessions ?? 0) > 0);
 
   const quickLauncherDefaults = [
     'Стандарт · 15 мин',
@@ -209,7 +207,9 @@
       await navigateTo(`/interview/${state.session.id}`);
     } catch (error) {
       quickStartError.value =
-        error instanceof Error ? error.message : t('interview.common.unknownError');
+        error instanceof Error
+          ? error.message
+          : t('interview.common.unknownError');
     } finally {
       isSubmitting.value = false;
     }
@@ -225,10 +225,7 @@
     />
 
     <template v-else>
-      <section
-        v-if="!hasSessions"
-        class="first-run-dashboard dashboard-mode"
-      >
+      <section v-if="!hasSessions" class="first-run-dashboard dashboard-mode">
         <article class="quick-launcher quick-launcher--hero glass-frame">
           <div class="launcher-copy">
             <p class="page-kicker">{{ t('dashboard.eyebrow') }}</p>
@@ -247,7 +244,7 @@
                 class="text-control"
                 type="text"
                 :placeholder="t('dashboard.launcherInputPlaceholder')"
-              >
+              />
             </div>
 
             <div class="field">
@@ -265,10 +262,7 @@
 
             <div class="launcher-footer">
               <div class="summary-chips">
-                <span
-                  v-for="item in quickLauncherDefaults"
-                  :key="item"
-                >
+                <span v-for="item in quickLauncherDefaults" :key="item">
                   {{ item }}
                 </span>
               </div>
@@ -396,7 +390,9 @@
           <article class="quick-launcher glass-frame">
             <div class="panel-head">
               <div>
-                <p class="panel-label">{{ t('dashboard.quickScenariosLabel') }}</p>
+                <p class="panel-label">
+                  {{ t('dashboard.quickScenariosLabel') }}
+                </p>
                 <h2>{{ t('dashboard.launcherTitleReturning') }}</h2>
               </div>
               <NuxtLink to="/interview/new">{{
@@ -404,7 +400,10 @@
               }}</NuxtLink>
             </div>
 
-            <form class="launcher-form launcher-form--compact" @submit.prevent="startQuickInterview">
+            <form
+              class="launcher-form launcher-form--compact"
+              @submit.prevent="startQuickInterview"
+            >
               <div class="field">
                 <label for="dashboard-source-returning">{{
                   t('dashboard.launcherInputLabel')
@@ -415,13 +414,10 @@
                   class="text-control"
                   type="text"
                   :placeholder="t('dashboard.launcherInputPlaceholder')"
-                >
+                />
               </div>
               <div class="summary-chips">
-                <span
-                  v-for="item in quickLauncherDefaults"
-                  :key="item"
-                >
+                <span v-for="item in quickLauncherDefaults" :key="item">
                   {{ item }}
                 </span>
               </div>
@@ -621,6 +617,7 @@
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
+    align-items: center;
   }
 
   .summary-chips span {

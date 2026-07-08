@@ -39,6 +39,33 @@
   );
 
   const report = computed(() => data.value?.report ?? null);
+  const isInterviewerTraining = computed(
+    () => report.value?.trainingMode === 'interviewer'
+  );
+  const reportTitle = computed(() =>
+    t(isInterviewerTraining.value ? 'report.interviewer.title' : 'report.title')
+  );
+  const reportAnswerLabel = computed(() =>
+    t(
+      isInterviewerTraining.value
+        ? 'report.interviewer.answer'
+        : 'report.answer'
+    )
+  );
+  const reportModelAnswerLabel = computed(() =>
+    t(
+      isInterviewerTraining.value
+        ? 'report.interviewer.modelAnswer'
+        : 'report.modelAnswer'
+    )
+  );
+  const reportStrongerStarLabel = computed(() =>
+    t(
+      isInterviewerTraining.value
+        ? 'report.interviewer.strongerStar'
+        : 'report.strongerStar'
+    )
+  );
   const isReportInitialLoading = computed(() => pending.value && !data.value);
   const isReportBuilding = computed(
     () =>
@@ -94,12 +121,24 @@
     }
   }
 
+  function criteriaLabelKey(key: CriteriaKey): string {
+    return isInterviewerTraining.value
+      ? `report.interviewer.criteria.${key}`
+      : `report.criteria.${key}`;
+  }
+
+  function criteriaHintKey(key: CriteriaKey): string {
+    return isInterviewerTraining.value
+      ? `report.interviewer.criteria.${key}Hint`
+      : `report.criteria.${key}Hint`;
+  }
+
   function criteriaLabel(key: CriteriaKey): string {
-    return t(`report.criteria.${key}`);
+    return t(criteriaLabelKey(key));
   }
 
   function criteriaHint(key: CriteriaKey): string {
-    return t(`report.criteria.${key}Hint`);
+    return t(criteriaHintKey(key));
   }
 
   function getCriteriaScoreRows(
@@ -241,7 +280,7 @@
       }}</NuxtLink>
       <div class="app-page-header__main">
         <p class="page-kicker">{{ t('report.eyebrow') }}</p>
-        <h1 class="page-title">{{ t('report.title') }}</h1>
+        <h1 class="page-title">{{ reportTitle }}</h1>
       </div>
     </header>
 
@@ -450,7 +489,7 @@
                           />
                         </h3>
                         <div class="answer-panel">
-                          <span>{{ t('report.answer') }}</span>
+                          <span>{{ reportAnswerLabel }}</span>
                           <p>
                             <TextWithInterviewTerms
                               :text="row.item.answer"
@@ -506,7 +545,7 @@
 
                     <div v-if="row.item.modelAnswer" class="model-answer">
                       <span class="model-answer__label">{{
-                        t('report.modelAnswer')
+                        reportModelAnswerLabel
                       }}</span>
                       <p>
                         <TextWithInterviewTerms
@@ -519,7 +558,7 @@
                     <p class="practice-line">
                       <strong>
                         <TextWithInterviewTerms
-                          :text="t('report.strongerStar')"
+                          :text="reportStrongerStarLabel"
                           :context="reportTermContext('STAR')"
                           manual-selection
                         />:

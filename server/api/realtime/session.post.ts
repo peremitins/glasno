@@ -70,10 +70,14 @@ export default defineApiHandler(async (event) => {
   const payload = buildRealtimeSessionPayload(
     {
       sessionId: state.session.id,
+      trainingMode: state.session.trainingMode,
       role: state.session.role,
       level: state.session.level,
       interviewerMode: state.session.interviewerMode,
       interviewerGender: getInterviewerGender(state.session.interviewerFaceId),
+      candidatePersona: state.session.candidatePersona,
+      candidateDifficulty: state.session.candidateDifficulty,
+      candidateNotes: state.session.candidateNotes,
       vacancyTitle: state.session.vacancyTitle,
       companyName: state.session.companyName,
       currentQuestion: currentTurn.question,

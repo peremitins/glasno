@@ -5,12 +5,16 @@ import {
   REPORT_PDF_STAR_LABEL,
   formatReportPdfText,
   reportPdfCriteriaLabel,
+  reportPdfCriteriaLabelForMode,
 } from './reportPdf';
 
 describe('report pdf labels', () => {
   it('uses reader-friendly report wording', () => {
     expect(reportPdfCriteriaLabel('substance')).toBe('Суть ответа');
     expect(reportPdfCriteriaLabel('delivery')).toBe('Подача');
+    expect(reportPdfCriteriaLabelForMode('substance', 'interviewer')).toBe(
+      'Качество проверки'
+    );
     expect(REPORT_PDF_MODEL_ANSWER_LABEL).toBe('Вариант сильного ответа');
     expect(REPORT_PDF_STAR_LABEL).toContain(
       'STAR: ситуация, задача, действие, результат'
@@ -22,6 +26,7 @@ describe('report pdf labels', () => {
     const pdf = await renderReportPdf({
       id: 'report_1',
       sessionId: 'session_1',
+      trainingMode: 'candidate',
       status: 'done',
       overallScore: 82,
       verdict: 'Хороший ответ.',

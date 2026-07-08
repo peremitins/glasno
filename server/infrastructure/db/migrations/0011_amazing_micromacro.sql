@@ -1,0 +1,1 @@
+ALTER TABLE "interview_sessions" ADD COLUMN "training_mode" text DEFAULT 'candidate' NOT NULL;

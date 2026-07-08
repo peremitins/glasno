@@ -275,8 +275,7 @@ export async function startRealtimeWebsocketClient(
     pendingPlaybackChunks += 1;
     bufferSource.onended = () => {
       pendingPlaybackChunks = Math.max(0, pendingPlaybackChunks - 1);
-      // Голос ассистента звучит — это keep-alive, не сброс idle-таймера.
-      if (!stopped) options.onKeepAlive?.();
+      if (!stopped) options.onAssistantAudioActivity?.();
       // Очередь опустела — звук ответа действительно доиграл: гасим анимацию.
       if (pendingPlaybackChunks === 0) scheduleAssistantAudioStopped();
     };
@@ -284,7 +283,7 @@ export async function startRealtimeWebsocketClient(
     const startAt = Math.max(outputContext.currentTime + 0.02, nextPlaybackAt);
     nextPlaybackAt = startAt + audioBuffer.duration;
     bufferSource.start(startAt);
-    options.onKeepAlive?.();
+    options.onAssistantAudioActivity?.();
   }
 
   return { stop, setMicrophoneEnabled, sendEvent };

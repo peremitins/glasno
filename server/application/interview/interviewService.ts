@@ -1,7 +1,9 @@
+import { CreateInterviewSessionRequestDto } from '@/shared/dto';
 import type {
   AppendInterviewTurnMessageRequest,
   AnswerInterviewTurnRequest,
   CreateInterviewSessionRequest,
+  CreateInterviewSessionRequestInput,
   GenerateInterviewHintsRequest,
   InterviewDialogueMessage,
   InterviewPlan,
@@ -48,16 +50,17 @@ export class InterviewService {
   async createSession(params: {
     anonymousSessionId: string;
     userId?: string | null;
-    input: CreateInterviewSessionRequest;
+    input: CreateInterviewSessionRequestInput;
   }): Promise<InterviewStateResponse> {
-    const preparedSource = await prepareInterviewSource(params.input.source, {
+    const parsedInput = CreateInterviewSessionRequestDto.parse(params.input);
+    const preparedSource = await prepareInterviewSource(parsedInput.source, {
       hhClient: this.deps.hhClient,
     });
     const input = await this.normalizeCustomQuestionsInput({
-      input: params.input,
+      input: parsedInput,
       anonymousSessionId: params.anonymousSessionId,
       userId: params.userId ?? null,
-      role: params.input.role || preparedSource.role,
+      role: parsedInput.role || preparedSource.role,
       vacancyTitle: preparedSource.vacancyTitle,
       vacancyRaw: preparedSource.vacancyRaw,
     });
@@ -71,6 +74,7 @@ export class InterviewService {
     const session = await this.deps.repository.createSession({
       anonymousSessionId: params.anonymousSessionId,
       userId: params.userId ?? null,
+      trainingMode: input.trainingMode,
       source: preparedSource.source,
       vacancyTitle: preparedSource.vacancyTitle,
       vacancyRaw: preparedSource.vacancyRaw,
@@ -652,6 +656,7 @@ export class InterviewService {
         session,
         turns,
         input: {
+          trainingMode: session.trainingMode,
           source: {
             type:
               session.source === 'hh_url'
@@ -662,6 +667,9 @@ export class InterviewService {
             role: session.role || undefined,
           } as CreateInterviewSessionRequest['source'],
           resumeText: session.resumeRaw || undefined,
+          candidatePersona: metadata.candidatePersona,
+          candidateDifficulty: metadata.candidateDifficulty,
+          candidateNotes: metadata.candidateNotes ?? undefined,
           role: session.role || undefined,
           level: session.level || 'middle',
           sessionGoal: metadata.sessionGoal,
@@ -791,10 +799,11 @@ function toSessionDto(
       ? currentTurn.index
       : mainTurns.at(-1)?.index ?? mainTurns.length;
 
-  return {
-    id: session.id,
-    status: session.status,
-    source: session.source,
+    return {
+      id: session.id,
+      status: session.status,
+      trainingMode: session.trainingMode,
+      source: session.source,
     vacancyTitle: session.vacancyTitle,
     vacancyUrl: session.vacancyUrl,
     companyName: session.companyName,
@@ -813,6 +822,9 @@ function toSessionDto(
     interviewerMode: session.interviewerMode,
     interviewerAvatarId: session.interviewerAvatarId,
     interviewerFaceId: metadata.interviewerFaceId,
+    candidatePersona: metadata.candidatePersona,
+    candidateDifficulty: metadata.candidateDifficulty,
+    candidateNotes: metadata.candidateNotes,
     currentQuestionIndex,
     totalQuestions: session.questionCount,
     createdAt: toIso(session.createdAt)!,

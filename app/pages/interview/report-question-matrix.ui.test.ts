@@ -5,6 +5,14 @@ const source = readFileSync('app/pages/interview/report/[id].vue', 'utf8');
 const messages = JSON.parse(readFileSync('app/i18n/locales/ru.json', 'utf8'));
 
 describe('interview report question matrix UI', () => {
+  it('switches report labels for interviewer training reports', () => {
+    expect(source).toContain('isInterviewerTraining');
+    expect(source).toContain('criteriaLabelKey');
+    expect(source).toContain('report.interviewer.answer');
+    expect(source).toContain('report.interviewer.modelAnswer');
+    expect(source).toContain('report.interviewer.strongerStar');
+  });
+
   it('renders question-answer rows with per-criterion score cells', () => {
     expect(source).toContain('reportQuestionRows');
     expect(source).toContain('scorePillStyle');

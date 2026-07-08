@@ -44,6 +44,16 @@ describe('openai report engine helpers', () => {
     expect(instruction).toContain('recommendations.topFixes');
   });
 
+  it('switches report criteria to interviewer skills for interviewer training', () => {
+    const instruction = buildInstruction('interviewer');
+
+    expect(instruction).toContain('пользователь проводил интервью');
+    expect(instruction).toContain('структуру интервью');
+    expect(instruction).toContain('уточняющие вопросы');
+    expect(instruction).toContain('candidate experience');
+    expect(instruction).not.toContain('modelAnswer — сильный возможный вариант ответа');
+  });
+
   it('keeps the structured-output schema in sync with the Zod DTO criteria', () => {
     const schemaCriteriaKeys = Object.keys(
       REPORT_JSON_SCHEMA.properties.criteria.properties

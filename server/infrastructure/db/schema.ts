@@ -71,6 +71,7 @@ export const interviewSessions = pgTable('interview_sessions', {
   userId: uuid('user_id')
     .references(() => users.id),
   anonymousSessionId: text('anonymous_session_id').notNull(),
+  trainingMode: text('training_mode').default('candidate').notNull(),
   source: text('source').notNull(), // 'hh' | 'text' | 'profession'
   vacancyTitle: text('vacancy_title'),
   vacancyUrl: text('vacancy_url'),
