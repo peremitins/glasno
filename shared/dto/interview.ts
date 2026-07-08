@@ -1,8 +1,21 @@
 import { z } from 'zod';
 
 export const InterviewSourceTypeDto = z.enum(['hh_url', 'text', 'profession']);
+export const InterviewTrainingModeDto = z.enum(['candidate', 'interviewer']);
 export const InterviewLevelDto = z.enum(['junior', 'middle', 'senior']);
 export const InterviewerModeDto = z.enum(['soft', 'neutral', 'strict']);
+export const CandidatePersonaDto = z.enum([
+  'strong_brief',
+  'verbose_vague',
+  'anxious',
+  'overconfident',
+  'weak_hard_good_soft',
+]);
+export const CandidateDifficultyDto = z.enum([
+  'calm',
+  'realistic',
+  'challenging',
+]);
 // Тип/фокус сессии — что именно тренируем. Не выбор профессии (её даёт
 // вакансия/роль), а формат вопросов внутри интервью. Используется быстрыми
 // сценариями на дашборде и параметром на странице создания интервью.
@@ -108,12 +121,16 @@ export const InterviewPlanDto = z.object({
 });
 
 export const CreateInterviewSessionRequestDto = z.object({
+  trainingMode: InterviewTrainingModeDto.default('candidate'),
   source: InterviewSourceDto,
   resumeText: z.string().trim().max(15_000).optional(),
+  candidatePersona: CandidatePersonaDto.default('strong_brief'),
+  candidateDifficulty: CandidateDifficultyDto.default('realistic'),
+  candidateNotes: z.string().trim().max(4_000).optional(),
   role: z.string().trim().max(160).optional(),
   level: InterviewLevelDto.default('middle'),
   questionCount: QuestionCountDto.optional(),
-  sessionGoal: InterviewSessionGoalDto.default('quick'),
+  sessionGoal: InterviewSessionGoalDto.default('standard'),
   questionSourceMode: InterviewQuestionSourceModeDto.optional(),
   customQuestionsText: z.string().trim().max(10_000).optional(),
   focus: InterviewFocusDto.optional(),
@@ -128,6 +145,7 @@ export const CreateInterviewSessionRequestDto = z.object({
 export const InterviewSessionDto = z.object({
   id: z.string(),
   status: InterviewSessionStatusDto,
+  trainingMode: InterviewTrainingModeDto.default('candidate'),
   source: InterviewSourceTypeDto,
   vacancyTitle: z.string().nullable(),
   vacancyUrl: z.string().nullable(),
@@ -147,6 +165,9 @@ export const InterviewSessionDto = z.object({
   interviewerMode: InterviewerModeDto,
   interviewerAvatarId: InterviewerAvatarIdDto,
   interviewerFaceId: InterviewerFaceIdDto.default('male-neutral'),
+  candidatePersona: CandidatePersonaDto.default('strong_brief'),
+  candidateDifficulty: CandidateDifficultyDto.default('realistic'),
+  candidateNotes: z.string().nullable().default(null),
   currentQuestionIndex: z.number().int().nonnegative(),
   totalQuestions: z.number().int().positive(),
   createdAt: z.string(),
@@ -246,8 +267,11 @@ export const QuestionInputExtractResponseDto = z.object({
 });
 
 export type InterviewSourceType = z.infer<typeof InterviewSourceTypeDto>;
+export type InterviewTrainingMode = z.infer<typeof InterviewTrainingModeDto>;
 export type InterviewLevel = z.infer<typeof InterviewLevelDto>;
 export type InterviewerMode = z.infer<typeof InterviewerModeDto>;
+export type CandidatePersona = z.infer<typeof CandidatePersonaDto>;
+export type CandidateDifficulty = z.infer<typeof CandidateDifficultyDto>;
 export type InterviewFocus = z.infer<typeof InterviewFocusDto>;
 export type InterviewerAvatarId = z.infer<typeof InterviewerAvatarIdDto>;
 export type InterviewerFaceId = z.infer<typeof InterviewerFaceIdDto>;

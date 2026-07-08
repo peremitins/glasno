@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildConverseInstruction,
   extractResponsesText,
   normalizeSampleAnswerHint,
   normalizeQuestionHintDetails,
@@ -89,5 +90,17 @@ describe('openai interview engine helpers', () => {
     expect(normalized.sampleAnswer.length).toBeLessThanOrEqual(700);
     expect(normalized.sampleAnswer).not.toMatch(/…$/);
     expect(normalized.sampleAnswer).toMatch(/[.!?]$/);
+  });
+
+  it('switches live dialogue instructions to AI candidate mode for interviewer training', () => {
+    const instruction = buildConverseInstruction({
+      trainingMode: 'interviewer',
+      interviewerMode: 'neutral',
+    } as any);
+
+    expect(instruction).toContain('Ты — AI-кандидат Гласно');
+    expect(instruction).toContain('Пользователь проводит интервью');
+    expect(instruction).toContain('отвечай как кандидат');
+    expect(instruction).not.toContain('отвечать ВМЕСТО кандидата');
   });
 });

@@ -4,6 +4,14 @@ import { describe, expect, it } from 'vitest';
 const source = readFileSync('app/pages/interview/[id].vue', 'utf8');
 
 describe('interview session hints panel', () => {
+  it('renames the AI side and composer for interviewer training mode', () => {
+    expect(source).toContain('isInterviewerTraining');
+    expect(source).toContain('assistantParticipantLabel');
+    expect(source).toContain('interview.session.stage.candidate');
+    expect(source).toContain('interview.session.replyPlaceholderInterviewer');
+    expect(source).toContain('interview.session.hintsPanel.interviewerPlan');
+  });
+
   it('loads detailed hints on demand through the hints endpoint', () => {
     expect(source).toContain('generateHintsForCurrentTurn');
     expect(source).toContain('/hints');

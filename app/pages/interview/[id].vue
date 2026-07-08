@@ -167,6 +167,60 @@
   );
   const sessionInitialPending = computed(() => pending.value && !state.value);
   const currentTurn = computed(() => state.value?.currentTurn ?? null);
+  const isInterviewerTraining = computed(
+    () => state.value?.session.trainingMode === 'interviewer'
+  );
+  const assistantParticipantLabel = computed(() =>
+    t(
+      isInterviewerTraining.value
+        ? 'interview.session.stage.candidate'
+        : 'interview.session.stage.interviewer'
+    )
+  );
+  const assistantParticipantName = computed(() => {
+    if (!isInterviewerTraining.value) return undefined;
+    return t(
+      `interview.session.aiCandidate.persona.${state.value?.session.candidatePersona || 'strong_brief'}`
+    );
+  });
+  const currentTurnLabel = computed(() => {
+    if (isInterviewerTraining.value) {
+      return currentTurn.value?.kind === 'clarification'
+        ? t('interview.session.clarificationInterviewer')
+        : t('interview.session.stagePrompt');
+    }
+    return currentTurn.value?.kind === 'clarification'
+      ? t('interview.session.clarification')
+      : t('interview.session.question');
+  });
+  const replyPlaceholder = computed(() =>
+    t(
+      isInterviewerTraining.value
+        ? 'interview.session.replyPlaceholderInterviewer'
+        : 'interview.session.replyPlaceholder'
+    )
+  );
+  const hintPlanTitle = computed(() =>
+    t(
+      isInterviewerTraining.value
+        ? 'interview.session.hintsPanel.interviewerPlan'
+        : 'interview.session.hintsPanel.answerPlan'
+    )
+  );
+  const hintStructureTitle = computed(() =>
+    t(
+      isInterviewerTraining.value
+        ? 'interview.session.hintsPanel.interviewerStructure'
+        : 'interview.session.hintsPanel.answerStructure'
+    )
+  );
+  const hintSampleTitle = computed(() =>
+    t(
+      isInterviewerTraining.value
+        ? 'interview.session.hintsPanel.sampleQuestion'
+        : 'interview.session.hintsPanel.sampleAnswer'
+    )
+  );
   const isDone = computed(() => state.value?.session.status === 'done');
   const isLastQuestion = computed(() => {
     const session = state.value?.session;
@@ -279,10 +333,16 @@
         content: turn.question,
         meta:
           turn.kind === 'clarification'
-            ? t('interview.session.clarification')
+            ? isInterviewerTraining.value
+              ? t('interview.session.clarificationInterviewer')
+              : t('interview.session.clarification')
             : turn.questionSource === 'user'
-            ? t('interview.session.userQuestion')
-            : t('interview.session.question'),
+            ? isInterviewerTraining.value
+              ? t('interview.session.userQuestionInterviewer')
+              : t('interview.session.userQuestion')
+            : isInterviewerTraining.value
+              ? t('interview.session.stagePrompt')
+              : t('interview.session.question'),
       });
       // Живой диалог по вопросу: реплики кандидата и интервьюера.
       if (turn.messages?.length) {
@@ -1253,8 +1313,11 @@
                 :mode="state.session.interviewerMode"
                 :face-id="state.session.interviewerFaceId"
                 :is-speaking="isInterviewerSpeaking"
+                :label="assistantParticipantLabel"
+                :display-name="assistantParticipantName"
               />
               <button
+                v-if="!isInterviewerTraining"
                 v-tooltip="t('interview.session.interviewerPicker.open')"
                 class="interviewer-settings"
                 type="button"
@@ -1298,11 +1361,7 @@
           <!-- Текущий вопрос -->
           <div class="now-question">
             <span class="badge">
-              {{
-                currentTurn.kind === 'clarification'
-                  ? t('interview.session.clarification')
-                  : t('interview.session.question')
-              }}
+              {{ currentTurnLabel }}
             </span>
             <p>
               <TextWithInterviewTerms
@@ -1525,7 +1584,7 @@
                 v-model="answer"
                 rows="3"
                 :disabled="isSending || realtimeVoiceLocked"
-                :placeholder="t('interview.session.replyPlaceholder')"
+                :placeholder="replyPlaceholder"
                 @keydown.enter="handleComposerKeydown"
               />
               <p v-if="errorMessage" class="error">{{ errorMessage }}</p>
@@ -1609,9 +1668,7 @@
                       <em class="coach-label">{{
                         t('interview.session.hints')
                       }}</em>
-                      <strong>{{
-                        t('interview.session.hintsPanel.answerPlan')
-                      }}</strong>
+                      <strong>{{ hintPlanTitle }}</strong>
                     </span>
                   </summary>
 
@@ -1670,7 +1727,7 @@
 
                     <template v-if="currentHintPack">
                       <p class="hint-subtitle">
-                        {{ t('interview.session.hintsPanel.answerStructure') }}
+                        {{ hintStructureTitle }}
                       </p>
                       <p class="hint-structure">
                         <TextWithInterviewTerms
@@ -1729,7 +1786,7 @@
                         }}
                       </em>
                       <strong>{{
-                        t('interview.session.hintsPanel.sampleAnswer')
+                        hintSampleTitle
                       }}</strong>
                     </span>
                   </summary>
@@ -1845,7 +1902,7 @@
                     :src="getInterviewerFacePhotoSrc(opt.id)"
                     :alt="t(opt.modeLabel)"
                     @error="onThumbError(opt.id)"
-                  />
+                  >
                   <em v-else class="picker-initials">{{
                     group.key === 'male' ? 'М' : 'Ж'
                   }}</em>

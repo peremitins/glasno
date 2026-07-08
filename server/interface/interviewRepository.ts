@@ -5,6 +5,7 @@ import type {
   InterviewerMode,
   InterviewSessionStatus,
   InterviewSourceType,
+  InterviewTrainingMode,
   InterviewTurnKind,
   QuestionHintPack,
 } from '@/shared/dto';
@@ -13,6 +14,7 @@ export interface InterviewSessionRecord {
   id: string;
   anonymousSessionId: string;
   userId: string | null;
+  trainingMode: InterviewTrainingMode;
   source: InterviewSourceType;
   vacancyTitle: string | null;
   vacancyRaw: string | null;
@@ -46,6 +48,7 @@ export interface InterviewTurnRecord {
 export interface CreateInterviewSessionRecordInput {
   anonymousSessionId: string;
   userId?: string | null;
+  trainingMode: InterviewTrainingMode;
   source: InterviewSourceType;
   vacancyTitle?: string | null;
   vacancyRaw?: string | null;

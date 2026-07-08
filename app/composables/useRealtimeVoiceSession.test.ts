@@ -38,6 +38,12 @@ describe('useRealtimeVoiceSession helpers', () => {
     expect(shouldDeferRealtimeIdleStop(0)).toBe(false);
   });
 
+  it('defers idle stop while assistant audio is still playing after response.done', () => {
+    // response.done может прийти раньше, чем WebRTC-аудио реально доиграло.
+    // В этот момент mute-набор уже может быть пустым, но полной тишины ещё нет.
+    expect(shouldDeferRealtimeIdleStop(0, false, true)).toBe(true);
+  });
+
   it('defers idle stop while the user is still speaking', () => {
     // Длинный монолог: сегмент речи открыт — сессию не рвём по тишине.
     expect(shouldDeferRealtimeIdleStop(0, true)).toBe(true);
@@ -53,8 +59,13 @@ describe('useRealtimeVoiceSession helpers', () => {
     expect(source).toContain('userIsSpeaking = true');
     expect(source).toContain('userIsSpeaking = false');
     expect(source).toContain(
-      'shouldDeferRealtimeIdleStop(\n          assistantMicrophoneMuteResponseIds.size,\n          userIsSpeaking\n        )'
+      'shouldDeferRealtimeIdleStop(\n          assistantMicrophoneMuteResponseIds.size,\n          userIsSpeaking,\n          assistantOutputIsActive\n        )'
     );
+  });
+
+  it('treats assistant audio playback as realtime activity', () => {
+    expect(source).toContain('onAssistantAudioActivity()');
+    expect(source).toContain('void registerRealtimeActivity();');
   });
 
   it('builds cancel events for active responses with WebRTC audio flush', () => {

@@ -5,13 +5,14 @@ export type GlasnoFont = 'manrope' | 'space' | 'mono';
 
 const THEME_KEY = 'glasno:theme';
 const FONT_KEY = 'glasno:font';
+const FONT_MIGRATION_KEY = 'glasno:font:migrated-from-mono-v2';
 
 const themeValues: GlasnoTheme[] = ['dark', 'light'];
-const fontValues: GlasnoFont[] = ['mono', 'manrope', 'space'];
+const fontValues: GlasnoFont[] = ['manrope', 'space', 'mono'];
 
 export function useDesignPreferences() {
   const theme = useState<GlasnoTheme>('glasno-theme', () => 'dark');
-  const font = useState<GlasnoFont>('glasno-font', () => 'mono');
+  const font = useState<GlasnoFont>('glasno-font', () => 'manrope');
 
   const themeOptions: Array<{ value: GlasnoTheme; label: string }> = [
     { value: 'dark', label: 'Темная' },
@@ -19,9 +20,9 @@ export function useDesignPreferences() {
   ];
 
   const fontOptions: Array<{ value: GlasnoFont; label: string; title: string }> = [
-    { value: 'mono', label: 'Mono', title: 'JetBrains Mono' },
-    { value: 'manrope', label: 'Manrope', title: 'Современный UI' },
+    { value: 'manrope', label: 'Onest', title: 'Современный UI' },
     { value: 'space', label: 'Grotesk', title: 'Акцентный гротеск' },
+    { value: 'mono', label: 'Mono', title: 'JetBrains Mono' },
   ];
 
   function isTheme(value: string | null): value is GlasnoTheme {
@@ -55,9 +56,15 @@ export function useDesignPreferences() {
   onMounted(() => {
     const savedTheme = window.localStorage.getItem(THEME_KEY);
     const savedFont = window.localStorage.getItem(FONT_KEY);
+    const migratedFromMono = window.localStorage.getItem(FONT_MIGRATION_KEY);
 
     if (isTheme(savedTheme)) theme.value = savedTheme;
-    if (isFont(savedFont)) font.value = savedFont;
+    if (savedFont === 'mono' && !migratedFromMono) {
+      font.value = 'manrope';
+      window.localStorage.setItem(FONT_MIGRATION_KEY, '1');
+    } else if (isFont(savedFont)) {
+      font.value = savedFont;
+    }
 
     watch(
       [theme, font],

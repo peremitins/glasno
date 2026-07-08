@@ -19,8 +19,11 @@ import {
   getInterviewerGender,
 } from '@/shared/interviewerVoice';
 import type {
+  CandidateDifficulty,
+  CandidatePersona,
   InterviewerFaceId,
   InterviewFocus,
+  InterviewTrainingMode,
   QuestionHintDetails,
 } from '@/shared/dto';
 import {
@@ -176,6 +179,7 @@ function sessionContext(params: GenerateQuestionParams | EvaluateAnswerParams) {
 function sessionContextForConverse(session: InterviewSessionRecord) {
   const focus = readInterviewFocus(session);
   return [
+    `Режим тренировки: ${describeTrainingMode(readTrainingMode(session))}`,
     `Роль: ${session.role || 'не указана'}`,
     `Уровень: ${session.level || 'middle'}`,
     `Режим интервьюера: ${session.interviewerMode}`,
@@ -187,6 +191,9 @@ function sessionContextForConverse(session: InterviewSessionRecord) {
     `Вакансия: ${session.vacancyTitle || 'не указана'}`,
     `Описание вакансии: ${session.vacancyRaw || 'нет'}`,
     `Резюме кандидата: ${session.resumeRaw || 'нет'}`,
+    `Профиль AI-кандидата: ${describeCandidatePersona(readCandidatePersona(session))}`,
+    `Сложность AI-кандидата: ${describeCandidateDifficulty(readCandidateDifficulty(session))}`,
+    `Заметки о кандидате: ${readCandidateNotes(session) || 'нет'}`,
     `Фокус интервью: ${describeInterviewFocus(focus)}`,
   ].join('\n');
 }
@@ -201,6 +208,29 @@ function readInterviewerFaceId(
 function readInterviewFocus(session: InterviewSessionRecord): InterviewFocus | null {
   const value = session.metadata?.focus;
   return typeof value === 'string' ? (value as InterviewFocus) : null;
+}
+
+function readTrainingMode(session: InterviewSessionRecord): InterviewTrainingMode {
+  if (session.trainingMode === 'interviewer') return 'interviewer';
+  const value = session.metadata?.trainingMode;
+  return value === 'interviewer' ? 'interviewer' : 'candidate';
+}
+
+function readCandidatePersona(session: InterviewSessionRecord): CandidatePersona {
+  const value = session.metadata?.candidatePersona;
+  return isCandidatePersona(value) ? value : 'strong_brief';
+}
+
+function readCandidateDifficulty(
+  session: InterviewSessionRecord
+): CandidateDifficulty {
+  const value = session.metadata?.candidateDifficulty;
+  return isCandidateDifficulty(value) ? value : 'realistic';
+}
+
+function readCandidateNotes(session: InterviewSessionRecord): string {
+  const value = session.metadata?.candidateNotes;
+  return typeof value === 'string' ? value.trim() : '';
 }
 
 // Короткая инструкция для LLM о том, какие вопросы задавать в этом фокусе.
@@ -220,22 +250,75 @@ function describeInterviewFocus(focus: InterviewFocus | null): string {
   }
 }
 
+function describeTrainingMode(mode: InterviewTrainingMode): string {
+  return mode === 'interviewer'
+    ? 'пользователь проводит интервью, AI играет кандидата'
+    : 'пользователь проходит интервью как кандидат, AI играет интервьюера';
+}
+
+function describeCandidatePersona(persona: CandidatePersona): string {
+  switch (persona) {
+    case 'verbose_vague':
+      return 'много говорит, но часто отвечает общо и без фактов';
+    case 'anxious':
+      return 'волнуется, сомневается, иногда просит уточнить вопрос';
+    case 'overconfident':
+      return 'уверен в себе, может переоценивать вклад и уходить от слабых мест';
+    case 'weak_hard_good_soft':
+      return 'приятно общается, но профессиональная конкретика слабее заявленного уровня';
+    case 'strong_brief':
+    default:
+      return 'сильный кандидат, отвечает кратко и по делу';
+  }
+}
+
+function describeCandidateDifficulty(difficulty: CandidateDifficulty): string {
+  switch (difficulty) {
+    case 'calm':
+      return 'спокойный сценарий, кандидат отвечает дружелюбно и достаточно прямо';
+    case 'challenging':
+      return 'сложный сценарий, кандидат может давать неполные ответы, спорить или уходить от конкретики';
+    case 'realistic':
+    default:
+      return 'реалистичный сценарий, кандидат отвечает естественно, не помогает интервьюеру сверх меры';
+  }
+}
+
+function isCandidatePersona(value: unknown): value is CandidatePersona {
+  return (
+    value === 'strong_brief' ||
+    value === 'verbose_vague' ||
+    value === 'anxious' ||
+    value === 'overconfident' ||
+    value === 'weak_hard_good_soft'
+  );
+}
+
+function isCandidateDifficulty(value: unknown): value is CandidateDifficulty {
+  return value === 'calm' || value === 'realistic' || value === 'challenging';
+}
+
 // Текст диалога по текущему вопросу для промпта converse/converseStream.
 function formatConverseDialogue(params: ConverseParams): string {
-  return formatDialogue(params.dialogue);
+  return formatDialogue(params.dialogue, readTrainingMode(params.session));
 }
 
 function formatDialogue(
-  dialogue: Array<{ role: 'user' | 'interviewer'; content: string }>
+  dialogue: Array<{ role: 'user' | 'interviewer'; content: string }>,
+  trainingMode: InterviewTrainingMode = 'candidate'
 ): string {
+  const userLabel = trainingMode === 'interviewer' ? 'Интервьюер' : 'Кандидат';
+  const aiLabel = trainingMode === 'interviewer' ? 'AI-кандидат' : 'Интервьюер';
   return dialogue.length
     ? dialogue
         .map(
           (message) =>
-            `${message.role === 'user' ? 'Кандидат' : 'Интервьюер'}: ${message.content}`
+            `${message.role === 'user' ? userLabel : aiLabel}: ${message.content}`
         )
         .join('\n')
-    : 'Кандидат ещё ничего не сказал.';
+    : trainingMode === 'interviewer'
+      ? 'Интервьюер ещё ничего не сказал.'
+      : 'Кандидат ещё ничего не сказал.';
 }
 
 function converseUserText(params: ConverseParams): string {
@@ -250,7 +333,7 @@ function converseUserText(params: ConverseParams): string {
 }
 
 // Общая часть инструкции интервьюера (без формата вывода).
-const CONVERSE_RULES =
+const CANDIDATE_TRAINING_CONVERSE_RULES =
   'Ты — интервьюер Гласно, ведёшь живое собеседование голосом и текстом. Веди диалог по ТЕКУЩЕМУ вопросу как живой человек. ' +
   'Реагируй кратко (1–3 предложения), по-русски, в роли интервьюера. ' +
   'Строго соблюдай указанный пол интервьюера и грамматический род в репликах от своего лица. ' +
@@ -259,6 +342,23 @@ const CONVERSE_RULES =
   'СТРОГО запрещено: отвечать ВМЕСТО кандидата, подсказывать готовый ответ, решать задачу за него — ты проверяешь кандидата, а не учишь. ' +
   'НЕ переходи к следующему вопросу из плана сам и не меняй тему. ' +
   'Решение о переходе принимает пользователь — ты только предлагаешь.';
+
+const INTERVIEWER_TRAINING_CONVERSE_RULES =
+  'Ты — AI-кандидат Гласно. Пользователь проводит интервью и тренирует навык интервьюера. ' +
+  'В диалоге отвечай как кандидат по роли, вакансии, резюме и профилю AI-кандидата. ' +
+  'Пиши по-русски, кратко и естественно: 1–3 предложения, без префиксов и оценок пользователя. ' +
+  'Не помогай интервьюеру формулировать вопросы и не объясняй, как проводить интервью. ' +
+  'Если вопрос интервьюера общий, отвечай естественно, но не раскрывай всё сам: оставляй место для уточняющих вопросов. ' +
+  'Если спрашивают рискованное или некорректное, отвечай осторожно и по-человечески, без юридических лекций. ' +
+  'НЕ переходи к следующей теме сам и не объявляй итог собеседования. Решение о переходе принимает пользователь.';
+
+export function buildConverseInstruction(
+  session: Pick<InterviewSessionRecord, 'trainingMode' | 'interviewerMode' | 'metadata'>
+): string {
+  return readTrainingMode(session as InterviewSessionRecord) === 'interviewer'
+    ? INTERVIEWER_TRAINING_CONVERSE_RULES
+    : CANDIDATE_TRAINING_CONVERSE_RULES;
+}
 
 const CONVERSE_MOVE_ON_RULE =
   'Если кандидат ответил достаточно полно, либо по этому вопросу уже было много реплик, либо он явно «плавает» и продолжать смысла нет — предложи перейти к следующему вопросу (например: «Хорошо, здесь всё понятно. Готовы перейти к следующему вопросу?»).';
@@ -332,9 +432,12 @@ export class OpenAiInterviewEngine implements InterviewEngine {
   async generateQuestion(
     params: GenerateQuestionParams
   ): Promise<{ question: string }> {
+    const isInterviewerTraining =
+      readTrainingMode(params.session) === 'interviewer';
     const raw = await this.requestJson({
-      instruction:
-        'Ты профессиональный интервьюер. Сгенерируй следующий краткий вопрос для собеседования. Не повторяй предыдущие вопросы. Верни строго JSON вида {"question":"..."}',
+      instruction: isInterviewerTraining
+        ? 'Ты редактор сценария Гласно. Сгенерируй короткую стартовую или переходную реплику AI-кандидата для тренировки интервьюера. Реплика должна дать пользователю повод задать следующий вопрос, но не проводить интервью за него. Не повторяй предыдущие реплики. Верни строго JSON вида {"question":"..."}'
+        : 'Ты профессиональный интервьюер. Сгенерируй следующий краткий вопрос для собеседования. Не повторяй предыдущие вопросы. Верни строго JSON вида {"question":"..."}',
       userText: `${sessionContext(params)}\n\nИстория:\n${formatTurns(params.turns)}`,
       maxOutputTokens: 220,
       kind: 'question_gen',
@@ -351,14 +454,17 @@ export class OpenAiInterviewEngine implements InterviewEngine {
   async generateQuestionHints(
     params: GenerateQuestionHintsParams
   ): Promise<QuestionHintDetails> {
+    const isInterviewerTraining =
+      readTrainingMode(params.session) === 'interviewer';
     const raw = await this.requestJson({
-      instruction:
-        'Ты карьерный тренер Гласно. Сгенерируй подсказки к ТЕКУЩЕМУ вопросу интервью, чтобы кандидат понял, о чём говорить, но не получил нечестную шпаргалку. ' +
-        'Пиши по-русски, конкретно и кратко. Обязательно привязывайся к вопросу, роли, вакансии и резюме, если они есть. ' +
-        'Не выдумывай работодателей, годы опыта, метрики, проекты, технологии и факты, которых нет в контексте. Если конкретики нет — предложи кандидату подставить свой пример или свою метрику. ' +
-        'Верни строго JSON вида {"focus":"...","answerPlan":["..."],"keyDefinitions":["..."],"sampleAnswer":"..."}. ' +
-        'answerPlan: 3–5 коротких тезисов. keyDefinitions: 0–4 коротких определения терминов из вопроса. sampleAnswer: 2–4 предложения от первого лица. ' +
-        'sampleAnswer должен быть законченным: не заканчивай текст многоточием, оборванной фразой или незавершённым списком.',
+      instruction: isInterviewerTraining
+        ? 'Ты тренер интервьюеров Гласно. Сгенерируй подсказки к текущему этапу интервью, чтобы пользователь лучше провёл разговор с AI-кандидатом. Пиши по-русски, конкретно и кратко. Подсказывай, что проверить дальше, какие уточнения задать и каких рискованных формулировок избегать. Не пиши готовые ответы кандидата. Верни строго JSON вида {"focus":"...","answerPlan":["..."],"keyDefinitions":["..."],"sampleAnswer":"..."}. answerPlan: 3–5 коротких действий интервьюера. keyDefinitions: 0–4 коротких определения методик интервью. sampleAnswer: 2–4 предложения с примером хорошего вопроса интервьюера.'
+        : 'Ты карьерный тренер Гласно. Сгенерируй подсказки к ТЕКУЩЕМУ вопросу интервью, чтобы кандидат понял, о чём говорить, но не получил нечестную шпаргалку. ' +
+          'Пиши по-русски, конкретно и кратко. Обязательно привязывайся к вопросу, роли, вакансии и резюме, если они есть. ' +
+          'Не выдумывай работодателей, годы опыта, метрики, проекты, технологии и факты, которых нет в контексте. Если конкретики нет — предложи кандидату подставить свой пример или свою метрику. ' +
+          'Верни строго JSON вида {"focus":"...","answerPlan":["..."],"keyDefinitions":["..."],"sampleAnswer":"..."}. ' +
+          'answerPlan: 3–5 коротких тезисов. keyDefinitions: 0–4 коротких определения терминов из вопроса. sampleAnswer: 2–4 предложения от первого лица. ' +
+          'sampleAnswer должен быть законченным: не заканчивай текст многоточием, оборванной фразой или незавершённым списком.',
       userText: [
         sessionContextForConverse(params.session),
         '',
@@ -430,7 +536,7 @@ export class OpenAiInterviewEngine implements InterviewEngine {
   }> {
     const raw = await this.requestJson({
       instruction:
-        `${CONVERSE_RULES} ` +
+        `${buildConverseInstruction(params.session)} ` +
         `${CONVERSE_MOVE_ON_RULE} ` +
         'Если предлагаешь перейти дальше — поставь suggestMoveOn=true, иначе false. ' +
         'Верни строго JSON вида {"reply":"...","suggestMoveOn":true|false}.',
@@ -458,7 +564,7 @@ export class OpenAiInterviewEngine implements InterviewEngine {
     }
 
     const instruction =
-      `${CONVERSE_RULES} ` +
+      `${buildConverseInstruction(params.session)} ` +
       `${CONVERSE_MOVE_ON_RULE} ` +
       'Сначала выдай ТОЛЬКО текст реплики интервьюера (без префиксов и кавычек). ' +
       `В самом конце на отдельной строке поставь ровно один служебный маркер: «${NEXT_MARKER}» — если предлагаешь перейти к следующему вопросу, иначе «${STAY_MARKER}». ` +

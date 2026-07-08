@@ -203,6 +203,64 @@ describe('InterviewService', () => {
     });
   });
 
+  it('creates interviewer training sessions with candidate resume context', async () => {
+    const repository = createInMemoryRepository();
+    const engine = {
+      converse: vi.fn(),
+      converseStream: vi.fn(),
+      normalizeCustomQuestions: vi.fn(),
+      generateQuestion: vi
+        .fn()
+        .mockResolvedValue({ question: 'Начните интервью с кандидатом.' }),
+      evaluateAnswer: vi.fn(),
+      generateQuestionHints: vi.fn(),
+      generateSampleAnswerHint: vi.fn(),
+    };
+
+    const service = new InterviewService({
+      repository,
+      engine,
+      hhClient: null,
+    });
+
+    await service.createSession({
+      anonymousSessionId: 'anon_interviewer',
+      input: {
+        trainingMode: 'interviewer',
+        source: {
+          type: 'text',
+          title: 'Frontend-разработчик',
+          text: 'Нужен Vue/TypeScript разработчик в продуктовую команду.',
+        },
+        resumeText:
+          'Кандидат: frontend-разработчик, 4 года опыта, Vue, TypeScript.',
+        candidatePersona: 'strong_brief',
+        candidateDifficulty: 'realistic',
+        candidateNotes: 'Отвечает кратко, но конкретно.',
+        role: 'Frontend-разработчик',
+        level: 'middle',
+        sessionGoal: 'quick',
+        responseMode: 'text',
+        hintMode: 'off',
+        language: 'ru',
+        interviewerMode: 'neutral',
+        interviewerAvatarId: 'neutral-pro',
+      },
+    });
+
+    expect(repository.sessions[0]).toMatchObject({
+      trainingMode: 'interviewer',
+      resumeRaw:
+        'Кандидат: frontend-разработчик, 4 года опыта, Vue, TypeScript.',
+      metadata: expect.objectContaining({
+        trainingMode: 'interviewer',
+        candidatePersona: 'strong_brief',
+        candidateDifficulty: 'realistic',
+        candidateNotes: 'Отвечает кратко, но конкретно.',
+      }),
+    });
+  });
+
   it('appends realtime dialogue messages to the current turn without generating a reply', async () => {
     const repository = createInMemoryRepository();
     const engine = {

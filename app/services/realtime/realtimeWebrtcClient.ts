@@ -24,10 +24,13 @@ export interface RealtimeVoiceClientOptions {
   // события ответа модели) — сбрасывает таймер простоя (idle-отключение).
   onActivity?: () => void;
   // «Фоновый» сигнал жизни соединения (амбиентный уровень микрофона,
-  // воспроизведение голоса ассистента). Держит серверную сессию живой, но
+  // технические heartbeat-и). Держит серверную сессию живой, но
   // НЕ сбрасывает таймер простоя — иначе тишина никогда не приводит к
   // автоотключению (фоновый шум постоянно «переставлял» бы таймер).
   onKeepAlive?: () => void;
+  // Реальное воспроизведение голоса ассистента: это уже не тишина, поэтому
+  // сбрасывает idle-таймер до момента, когда интервьюер замолчит.
+  onAssistantAudioActivity?: () => void;
   onPlaybackBlocked?: (error: unknown) => void;
 }
 
@@ -78,9 +81,7 @@ export async function startRealtimeWebrtcClient(
     }
 
     lastRemoteAudioActivityAtMs = now;
-    // Воспроизведение голоса ассистента — это keep-alive, не «разговорная»
-    // активность пользователя: idle-таймер оно сбрасывать не должно.
-    options.onKeepAlive?.();
+    options.onAssistantAudioActivity?.();
   };
 
   remoteAudio.addEventListener('playing', notifyRemoteAudioActivity);
