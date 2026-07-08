@@ -1053,15 +1053,6 @@
               }}</small>
             </span>
           </label>
-
-          <div class="question-mode-note">
-            <strong>{{
-              t('interview.new.customQuestions.defaultMode')
-            }}</strong>
-            <span>{{
-              t('interview.new.customQuestions.defaultModeHint')
-            }}</span>
-          </div>
         </div>
       </div>
     </section>
