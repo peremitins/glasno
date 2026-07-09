@@ -11,7 +11,15 @@
     <div class="ftr__inner l-container">
       <div class="ftr__brand">
         <span class="ftr__mark">
-          <span class="ftr__dot" aria-hidden="true" />
+          <span class="ftr__mark-icon" aria-hidden="true">
+            <img
+              class="ftr__mark-logo"
+              src="/brand/logo.webp"
+              alt=""
+              width="32"
+              height="32"
+            >
+          </span>
           Гласно
         </span>
         <span class="ftr__tagline">{{ footer.tagline }}</span>
@@ -58,13 +66,19 @@
     gap: 9px;
     font-size: 1.1rem;
     font-weight: 600;
-    letter-spacing: -0.02em;
+    letter-spacing: 0;
   }
-  .ftr__dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--l-warm-solid);
+  .ftr__mark-icon {
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+  }
+  .ftr__mark-logo {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
   }
   .ftr__tagline {
     font-size: var(--l-fs-sm);

@@ -42,7 +42,7 @@
       name: 'Гласно',
       url: canonicalUrl.value,
       email: 'support@glasno.app',
-      logo: `${siteUrl.value}/favicon.svg`,
+      logo: `${siteUrl.value}/brand/logo.png`,
     },
     {
       '@context': 'https://schema.org',

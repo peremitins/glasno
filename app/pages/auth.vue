@@ -3,7 +3,6 @@
     ArrowLeftIcon,
     ArrowRightIcon,
     EnvelopeClosedIcon,
-    LightningBoltIcon,
     MoonIcon,
     SunIcon,
   } from '@radix-icons/vue';
@@ -185,7 +184,14 @@
           <div>
             <NuxtLink to="/" class="brand">
               <span class="brand-mark">
-                <LightningBoltIcon aria-hidden="true" />
+                <img
+                  class="brand-logo"
+                  src="/brand/logo.webp"
+                  alt=""
+                  width="40"
+                  height="40"
+                  aria-hidden="true"
+                >
               </span>
               <span>{{ t('app.name') }}</span>
             </NuxtLink>
@@ -409,20 +415,27 @@
   .verify-note__icon {
     display: grid;
     place-items: center;
+  }
+
+  .verify-note__icon {
     color: var(--button-text);
     background: var(--button-bg);
     box-shadow: var(--button-shadow);
   }
 
   .brand-mark {
-    width: 36px;
-    height: 36px;
-    border-radius: 12px;
+    width: 40px;
+    height: 40px;
+    background: transparent;
+    box-shadow: none;
+    overflow: visible;
   }
 
-  .brand-mark svg {
-    width: 18px;
-    height: 18px;
+  .brand-logo {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
   }
 
   .visual-copy {

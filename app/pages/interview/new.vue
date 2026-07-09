@@ -1728,6 +1728,7 @@
 
   .section-anchor {
     scroll-margin-top: 110px;
+    padding-right: clamp(16px, 2vw, 24px);
   }
 
   .setup-shell,
@@ -1826,8 +1827,7 @@
 
   .context-grid {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(360px, 0.86fr);
-    gap: clamp(16px, 2vw, 24px);
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     align-items: start;
   }
 
@@ -3085,7 +3085,9 @@
 </style>
 
 <style>
+  /* Reka Combobox рендерит меню через Teleport, поэтому эти правила не scoped. */
   .role-menu {
+    z-index: 80;
     width: min(
       var(--reka-combobox-trigger-width, 520px),
       calc(100vw - 28px)
@@ -3096,15 +3098,93 @@
       320px
     ) !important;
     overflow: hidden !important;
+    padding: 6px;
   }
 
   .role-menu-viewport {
+    display: grid;
+    gap: 3px;
     max-height: min(
       calc(var(--reka-combobox-content-available-height, 320px) - 16px),
       calc(100dvh - 156px),
       304px
     ) !important;
+    overflow-x: hidden !important;
     overflow-y: auto !important;
     overscroll-behavior: contain;
+    padding-right: 4px;
+    scrollbar-color: var(--glass-border-strong) transparent;
+    scrollbar-width: thin;
+  }
+
+  .role-menu .role-menu-viewport::-webkit-scrollbar {
+    display: block !important;
+    width: 6px;
+  }
+
+  .role-menu .role-menu-viewport::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .role-menu .role-menu-viewport::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: var(--glass-border-strong);
+  }
+
+  .role-option {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px;
+    align-items: center;
+    min-height: 46px;
+    border: 0;
+    border-radius: 12px;
+    background: transparent;
+    color: var(--text-primary);
+    cursor: pointer;
+    outline: 0;
+    padding: 8px 12px;
+    text-align: left;
+    user-select: none;
+  }
+
+  .role-option:hover,
+  .role-option[data-highlighted] {
+    background: var(--surface-raised);
+  }
+
+  .role-option--custom {
+    border: 1px dashed var(--glass-border);
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
+  }
+
+  .role-option span {
+    display: grid;
+    gap: 3px;
+    min-width: 0;
+  }
+
+  .role-option strong,
+  .role-option small {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .role-option small {
+    color: var(--text-secondary);
+    font-size: 12px;
+  }
+
+  .role-option-check {
+    width: 16px;
+    height: 16px;
+    color: var(--accent-2);
+  }
+
+  .role-empty {
+    padding: 16px 12px;
+    color: var(--text-secondary);
+    font-size: 13px;
   }
 </style>
