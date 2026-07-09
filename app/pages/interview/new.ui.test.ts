@@ -145,4 +145,12 @@ describe('interview new page UI structure', () => {
     expect(globalStyle).toContain('calc(100vw - 28px)');
     expect(globalStyle).toContain('!important');
   });
+
+  it('keeps teleported role menu options globally styleable', () => {
+    const globalStyle = source.slice(source.lastIndexOf('<style>'));
+
+    expect(globalStyle).toContain('.role-option');
+    expect(globalStyle).toContain('.role-empty');
+    expect(globalStyle).toContain('::-webkit-scrollbar');
+  });
 });

@@ -2,7 +2,6 @@
   import {
     BarChartIcon,
     ClockIcon,
-    DashboardIcon,
     DoubleArrowLeftIcon,
     DoubleArrowRightIcon,
     GearIcon,
@@ -70,7 +69,14 @@
       <div class="sidebar-top">
         <NuxtLink to="/" class="brand" aria-label="Гласно">
           <span class="brand-mark">
-            <DashboardIcon />
+            <img
+              class="brand-logo"
+              src="/brand/logo.webp"
+              alt=""
+              width="44"
+              height="44"
+              aria-hidden="true"
+            >
           </span>
           <span class="brand-text">{{ t('app.name') }}</span>
         </NuxtLink>
@@ -250,17 +256,18 @@
   }
 
   .brand-mark {
-    width: 40px;
-    height: 40px;
-    border-radius: 14px;
-    background: var(--button-bg);
-    box-shadow: var(--button-shadow);
-    color: var(--button-text);
+    width: 44px;
+    height: 44px;
+    background: transparent;
+    box-shadow: none;
+    overflow: visible;
   }
 
-  .brand-mark svg {
-    width: 20px;
-    height: 20px;
+  .brand-logo {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
   }
 
   .brand-text {
@@ -457,9 +464,8 @@
   }
 
   .layout-shell--collapsed .brand-mark {
-    width: 42px;
-    height: 42px;
-    border-radius: 16px;
+    width: 44px;
+    height: 44px;
   }
 
   .layout-shell--collapsed .sidebar-toggle {

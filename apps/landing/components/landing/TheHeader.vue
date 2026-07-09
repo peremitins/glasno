@@ -35,7 +35,15 @@
         aria-label="Гласно, в начало"
         @click.prevent="goTo('top')"
       >
-        <span class="hdr__brand-dot" aria-hidden="true" />
+        <span class="hdr__brand-mark" aria-hidden="true">
+          <img
+            class="hdr__brand-logo"
+            src="/brand/logo.webp"
+            alt=""
+            width="34"
+            height="34"
+          >
+        </span>
         Гласно
       </a>
 
@@ -87,19 +95,25 @@
   .hdr__brand {
     display: inline-flex;
     align-items: center;
-    gap: 9px;
+    gap: 10px;
     font-size: 1.1rem;
     font-weight: 600;
-    letter-spacing: -0.02em;
+    letter-spacing: 0;
     color: var(--l-text);
   }
 
-  .hdr__brand-dot {
-    width: 9px;
-    height: 9px;
-    border-radius: 50%;
-    background: var(--l-warm-solid);
-    box-shadow: 0 0 14px 1px oklch(0.77 0.155 58 / 0.6);
+  .hdr__brand-mark {
+    display: grid;
+    place-items: center;
+    width: 34px;
+    height: 34px;
+  }
+
+  .hdr__brand-logo {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
   }
 
   .hdr__nav {

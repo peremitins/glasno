@@ -40,7 +40,67 @@ export default defineNuxtConfig({
       htmlAttrs: { lang: 'ru' },
       title: 'Гласно — тренажёр собеседований',
       viewport: 'width=device-width, initial-scale=1, viewport-fit=cover',
+      meta: [
+        { name: 'application-name', content: 'Гласно' },
+        { name: 'apple-mobile-web-app-title', content: 'Гласно' },
+        { name: 'apple-mobile-web-app-capable', content: 'yes' },
+        {
+          name: 'apple-mobile-web-app-status-bar-style',
+          content: 'black-translucent',
+        },
+        { name: 'theme-color', content: '#070a18' },
+        { name: 'msapplication-TileColor', content: '#070a18' },
+        { name: 'msapplication-config', content: '/browserconfig.xml' },
+      ],
       link: [
+        { rel: 'icon', href: '/favicon.ico', sizes: 'any' },
+        { rel: 'shortcut icon', href: '/favicon.ico' },
+        { rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' },
+        {
+          rel: 'icon',
+          type: 'image/png',
+          sizes: '16x16',
+          href: '/favicon-16x16.png',
+        },
+        {
+          rel: 'icon',
+          type: 'image/png',
+          sizes: '32x32',
+          href: '/favicon-32x32.png',
+        },
+        {
+          rel: 'icon',
+          type: 'image/png',
+          sizes: '48x48',
+          href: '/favicon-48x48.png',
+        },
+        {
+          rel: 'icon',
+          type: 'image/png',
+          sizes: '96x96',
+          href: '/favicon-96x96.png',
+        },
+        {
+          rel: 'apple-touch-icon',
+          sizes: '120x120',
+          href: '/apple-touch-icon-120x120.png',
+        },
+        {
+          rel: 'apple-touch-icon',
+          sizes: '152x152',
+          href: '/apple-touch-icon-152x152.png',
+        },
+        {
+          rel: 'apple-touch-icon',
+          sizes: '167x167',
+          href: '/apple-touch-icon-167x167.png',
+        },
+        {
+          rel: 'apple-touch-icon',
+          sizes: '180x180',
+          href: '/apple-touch-icon.png',
+        },
+        { rel: 'manifest', href: '/site.webmanifest' },
         { rel: 'preconnect', href: 'https://fonts.googleapis.com' },
         {
           rel: 'preconnect',
