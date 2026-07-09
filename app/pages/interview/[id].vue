@@ -64,6 +64,9 @@
   import { useAudioPermissionGate } from '@/app/composables/useAudioPermissionGate';
   import { useCameraPermissionGate } from '@/app/composables/useCameraPermissionGate';
   import { useMicPermissionGate } from '@/app/composables/useMicPermissionGate';
+  import {
+    buildRealtimeResponseCreateEvent,
+  } from '@/app/utils/interviewModeBridgeContext';
 
   type ConversationMessage = {
     id: string;
@@ -132,7 +135,7 @@
   const responseScheduler = new RealtimeResponseScheduler({
     getDelayMs: () => responsePauseMs.value,
     onElapsed: () => {
-      realtimeControl.value?.sendEvent({ type: 'response.create' });
+      sendRealtimeResponseCreate();
     },
   });
   // Кандидат прямо сейчас произносит сегмент речи. Ведём по СЫРЫМ событиям VAD
@@ -409,9 +412,9 @@
       // вопрос — чтобы кандидат понял, что можно отвечать (без «немой» паузы).
       if (firstQuestionAnnounced.value) return;
       firstQuestionAnnounced.value = true;
-      void nextTick(() =>
-        announceCurrentQuestionViaRealtime({ firstQuestion: true })
-      );
+      void nextTick(() => {
+        announceCurrentQuestionViaRealtime({ firstQuestion: true });
+      });
     }
   );
 
@@ -424,6 +427,28 @@
     return sanitizeProviderErrorMessage(
       error instanceof Error ? error.message : '',
       fallback
+    );
+  }
+
+  function scrollChatAfterRealtimeContentChange() {
+    if (!stickToBottom.value) return;
+    void nextTick(() => scrollChatToBottom('auto'));
+  }
+
+  function sendRealtimeResponseCreate(
+    options: {
+      instructions?: string;
+      metadata?: Record<string, unknown>;
+    } = {}
+  ) {
+    const control = realtimeControl.value;
+    if (!control || !voiceConnected.value) return;
+    control.sendEvent(
+      buildRealtimeResponseCreateEvent({
+        state: state.value,
+        instructions: options.instructions,
+        metadata: options.metadata,
+      })
     );
   }
 
@@ -446,13 +471,19 @@
         const message = runtimeMessages.value.find(
           (item) => item.id === messageId
         );
-        if (message) message.content += delta;
+        if (message) {
+          message.content += delta;
+          scrollChatAfterRealtimeContentChange();
+        }
       },
       replaceContent(messageId, content) {
         const message = runtimeMessages.value.find(
           (item) => item.id === messageId
         );
-        if (message) message.content = content;
+        if (message) {
+          message.content = content;
+          scrollChatAfterRealtimeContentChange();
+        }
       },
       removeMessage(messageId) {
         runtimeMessages.value = runtimeMessages.value.filter(
@@ -542,40 +573,49 @@
     options: { firstQuestion?: boolean } = {}
   ) {
     const control = realtimeControl.value;
-    const question = currentTurn.value?.question?.trim();
-    if (!control || !voiceConnected.value || !question) return;
+    const turn = currentTurn.value;
+    const question = turn?.question?.trim();
+    if (!control || !voiceConnected.value || !turn || !question) return;
 
     // Снимаем отложенный ответ по прошлому вопросу и обрываем текущую озвучку —
     // иначе на смене вопроса зазвучат два голоса.
     responseScheduler.cancel();
     control.cancelActiveResponses();
 
-    const contextText = options.firstQuestion
+    const hasPreviousMainQuestions =
+      state.value?.turns.some(
+        (item) =>
+          item.kind === 'main' && item.id !== turn.id && item.index < turn.index
+      ) === true;
+    const hasCurrentQuestionDialogue =
+      turn.messages.some((message) => message.content.trim()) ||
+      runtimeMessages.value.some((message) => message.content.trim());
+    const isFreshInterviewStart =
+      options.firstQuestion &&
+      !hasPreviousMainQuestions &&
+      !hasCurrentQuestionDialogue;
+
+    const contextText = isFreshInterviewStart
       ? `Интервью началось. Текущий вопрос: «${question}». Обсуждай только его.`
+      : options.firstQuestion
+      ? `Пользователь включил голосовой режим в уже идущем интервью. Текущий вопрос: «${question}». ` +
+        'Продолжай с учётом контекста текущего интервью и не начинай интервью заново.'
       : `Приложение переключило интервью на следующий вопрос. Текущий вопрос теперь: «${question}». ` +
         'Обсуждай только его и не возвращайся к предыдущему вопросу.';
 
-    const instructions = options.firstQuestion
+    const announcementInstructions = isFreshInterviewStart
       ? `Коротко поздоровайся с кандидатом одной фразой (например, «Здравствуйте, давайте начнём») и сразу задай первый вопрос интервью дословно: «${question}». ` +
         'Ничего не добавляй после вопроса.'
+      : options.firstQuestion
+      ? `Коротко скажи, что продолжим голосом, и напомни текущий вопрос интервью дословно: «${question}». ` +
+        'Не говори, что интервью начинается сначала. Ничего не добавляй после вопроса.'
       : `Озвучь кандидату следующий вопрос интервью дословно: «${question}». ` +
         'Перед вопросом допустима только короткая связка вроде «Хорошо, следующий вопрос». ' +
         'Ничего не добавляй после вопроса.';
 
-    control.sendEvent({
-      type: 'conversation.item.create',
-      item: {
-        type: 'message',
-        role: 'system',
-        content: [{ type: 'input_text', text: contextText }],
-      },
-    });
-    control.sendEvent({
-      type: 'response.create',
-      response: {
-        metadata: { glasno_kind: REALTIME_QUESTION_ANNOUNCEMENT_KIND },
-        instructions,
-      },
+    sendRealtimeResponseCreate({
+      metadata: { glasno_kind: REALTIME_QUESTION_ANNOUNCEMENT_KIND },
+      instructions: [contextText, announcementInstructions].join('\n\n'),
     });
   }
 
@@ -698,6 +738,7 @@
     // (оптимистичный пузырь), а текстере освобождается под следующий ответ.
     answer.value = '';
     try {
+      await flushRealtimePersistence();
       if (INTERVIEW_STREAM_MODE) {
         await sendMessageStreaming(turn.id, message);
       } else {

@@ -321,15 +321,37 @@ function formatDialogue(
       : 'Кандидат ещё ничего не сказал.';
 }
 
-function converseUserText(params: ConverseParams): string {
+export function buildConverseUserText(params: ConverseParams): string {
   return [
     sessionContextForConverse(params.session),
+    '',
+    `Предыдущие основные вопросы (без ответов):\n${formatPreviousMainQuestions(params.turns, params.turn)}`,
     '',
     `Текущий вопрос: ${params.turn.question}`,
     `Реплик кандидата по этому вопросу: ${params.exchanges}`,
     '',
     `Диалог по текущему вопросу:\n${formatConverseDialogue(params)}`,
   ].join('\n');
+}
+
+function formatPreviousMainQuestions(
+  turns: InterviewTurnRecord[],
+  currentTurn: InterviewTurnRecord
+): string {
+  const previous = turns
+    .filter(
+      (turn) =>
+        turn.kind === 'main' &&
+        turn.id !== currentTurn.id &&
+        turn.index < currentTurn.index
+    )
+    .sort((left, right) => left.index - right.index)
+    .map((turn, index) => `${index + 1}. ${turn.question.trim()}`)
+    .filter((line) => line.length > 3);
+
+  return previous.length
+    ? previous.join('\n')
+    : 'Пока нет предыдущих основных вопросов.';
 }
 
 // Общая часть инструкции интервьюера (без формата вывода).
@@ -540,7 +562,7 @@ export class OpenAiInterviewEngine implements InterviewEngine {
         `${CONVERSE_MOVE_ON_RULE} ` +
         'Если предлагаешь перейти дальше — поставь suggestMoveOn=true, иначе false. ' +
         'Верни строго JSON вида {"reply":"...","suggestMoveOn":true|false}.',
-      userText: converseUserText(params),
+      userText: buildConverseUserText(params),
       maxOutputTokens: 320,
       kind: 'interview_converse',
       context: usageContext(params.session),
@@ -596,7 +618,9 @@ export class OpenAiInterviewEngine implements InterviewEngine {
           },
           {
             role: 'user',
-            content: [{ type: 'input_text', text: converseUserText(params) }],
+            content: [
+              { type: 'input_text', text: buildConverseUserText(params) },
+            ],
           },
         ],
       } as any);
