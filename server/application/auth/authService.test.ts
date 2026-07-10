@@ -110,7 +110,7 @@ function createRepository() {
 }
 
 describe('AuthService', () => {
-  it('verifies email code, creates user session, and migrates anonymous data', async () => {
+  it('verifies email code and creates user session without attaching stale anonymous data', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-06-28T10:00:00.000Z'));
 
@@ -152,9 +152,7 @@ describe('AuthService', () => {
     });
     expect(verified.cookieValue).toBeTruthy();
     expect(verified.csrfToken).toBeTruthy();
-    expect(repository.migrated).toEqual([
-      { anonymousSessionId: 'anon_1', userId: 'user_1' },
-    ]);
+    expect(repository.migrated).toEqual([]);
     expect(repository.codes[0].consumedAt).toBeInstanceOf(Date);
 
     vi.useRealTimers();
@@ -206,9 +204,7 @@ describe('AuthService', () => {
       email: 'externalreview@glasno.test',
       role: 'user',
     });
-    expect(repository.migrated).toEqual([
-      { anonymousSessionId: 'anon_review', userId: 'user_1' },
-    ]);
+    expect(repository.migrated).toEqual([]);
 
     vi.useRealTimers();
   });

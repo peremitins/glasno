@@ -1,7 +1,56 @@
 import { describe, expect, it } from 'vitest';
-import { getBillingPlan, getPaidBillingPlan, getPublicBillingPlans } from './plans';
+import { useLandingContent } from '../../../apps/landing/composables/useLandingContent';
+import {
+  getBillingPlan,
+  getPaidBillingPlan,
+  getPublicBillingPlans,
+} from './plans';
 
 describe('billing plans', () => {
+  it('keeps the approved public tariff copy exact', () => {
+    expect(getBillingPlan('free')).toMatchObject({
+      description: 'Попробуйте формат без оплаты.',
+      features: [
+        '1 быстрое интервью на 5–7 минут',
+        'Ответы голосом или текстом',
+        'Разбор с оценкой и рекомендациями',
+      ],
+    });
+    expect(getBillingPlan('single_prep')).toMatchObject({
+      description: 'Одна серьёзная репетиция перед конкретным интервью.',
+      features: [
+        '1 интервью любой длины и глубины',
+        '30 минут живого голосового интервью',
+        'Подробный разбор и PDF-отчёт',
+        'Докупка минут',
+      ],
+    });
+    expect(getBillingPlan('pro_monthly')).toMatchObject({
+      description: 'Для активного поиска и регулярной практики.',
+      features: [
+        'Интервью без ограничений',
+        '60 минут живого голосового интервью',
+        'История прогресса и разборы в PDF',
+        'Докупка минут, отмена автопродления в один клик',
+      ],
+    });
+  });
+
+  it('keeps public main tariff copy synchronized with the landing', () => {
+    const landingPlans = useLandingContent().pricing.plans;
+
+    for (const planId of ['free', 'single_prep', 'pro_monthly']) {
+      const billingPlan = getBillingPlan(planId);
+      const landingPlan = landingPlans.find((plan) => plan.id === planId);
+
+      expect(landingPlan).toMatchObject({
+        name: billingPlan.name,
+        description: billingPlan.description,
+        features: billingPlan.features,
+      });
+    }
+  });
+
   it('exposes monthly realtime voice minutes on paid plans', () => {
     const pro = getBillingPlan('pro_monthly');
     const careerPack = getBillingPlan('career_pack');

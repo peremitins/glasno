@@ -41,7 +41,7 @@
       '@type': 'Organization',
       name: 'Гласно',
       url: canonicalUrl.value,
-      email: 'support@glasno.app',
+      email: 'peremitinns@gmail.com',
       logo: `${siteUrl.value}/brand/logo.png`,
     },
     {
@@ -138,5 +138,6 @@
       <FinalCta />
     </main>
     <TheFooter />
+    <CookieConsentBanner />
   </div>
 </template>

@@ -255,5 +255,11 @@ function ownerClause(params: {
 }) {
   return params.userId
     ? eq(schema.realtimeVoiceSessions.userId, params.userId)
-    : eq(schema.realtimeVoiceSessions.anonymousSessionId, params.anonymousSessionId);
+    : and(
+        isNull(schema.realtimeVoiceSessions.userId),
+        eq(
+          schema.realtimeVoiceSessions.anonymousSessionId,
+          params.anonymousSessionId
+        )
+      );
 }

@@ -24,8 +24,10 @@
           :class="{ 'plan--hi': plan.highlighted }"
           data-reveal
         >
-          <span v-if="plan.badge" class="plan__badge">{{ plan.badge }}</span>
-          <h3 class="plan__name">{{ plan.name }}</h3>
+          <div class="plan__head">
+            <h3 class="plan__name">{{ plan.name }}</h3>
+            <span v-if="plan.badge" class="plan__badge">{{ plan.badge }}</span>
+          </div>
           <p class="plan__desc">{{ plan.description }}</p>
 
           <div class="plan__price">
@@ -82,13 +84,14 @@
     display: grid;
     grid-template-columns: repeat(3, 1fr);
     gap: clamp(16px, 2vw, 24px);
-    align-items: start;
+    align-items: stretch;
   }
 
   .plan {
     position: relative;
     display: flex;
     flex-direction: column;
+    height: 100%;
     padding: clamp(24px, 2.6vw, 34px);
     border-radius: var(--l-r-xl);
     border: 1px solid var(--l-line);
@@ -105,10 +108,18 @@
     box-shadow: var(--l-shadow-warm);
   }
 
+  /* Шапка карточки: название + бейдж в одном ряду, бейдж в потоке */
+  .plan__head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
   .plan__badge {
-    position: absolute;
-    top: clamp(24px, 2.6vw, 34px);
-    right: clamp(24px, 2.6vw, 34px);
+    position: static;
+    flex: none;
+    white-space: nowrap;
     font-size: var(--l-fs-label);
     letter-spacing: 0.02em;
     padding: 5px 11px;
@@ -124,10 +135,13 @@
   .plan__name {
     font-size: var(--l-fs-h3);
     font-weight: 600;
+    /* Резерв под 2 строки: длинное название с бейджем переносится,
+       без резерва CTA в соседних карточках уезжают по вертикали */
+    min-height: 2lh;
   }
   .plan__desc {
     margin-top: 8px;
-    min-height: 3em;
+    min-height: 2lh;
     color: var(--l-text-mut);
     font-size: var(--l-fs-sm);
   }
@@ -153,6 +167,8 @@
   }
 
   .plan__features {
+    /* Растягивает нижнюю часть карточки: карточки одной высоты, CTA на одном уровне */
+    flex: 1;
     list-style: none;
     margin: 24px 0 0;
     padding: 22px 0 0;
@@ -233,6 +249,7 @@
       margin-inline: auto;
       width: 100%;
     }
+    .plan__name,
     .plan__desc {
       min-height: 0;
     }

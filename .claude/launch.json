@@ -8,6 +8,22 @@
       "port": 3001
     },
     {
+      "name": "landing-preview",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "exec",
+        "nuxt",
+        "dev",
+        "apps/landing",
+        "--dotenv",
+        ".env.development",
+        "--host",
+        "localhost"
+      ],
+      "port": 3001,
+      "autoPort": true
+    },
+    {
       "name": "dev",
       "runtimeExecutable": "pnpm",
       "runtimeArgs": ["dev"],
