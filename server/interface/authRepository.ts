@@ -7,6 +7,7 @@ export interface AuthUserRecord {
   telegramUsername: string | null;
   displayName: string | null;
   role: UserRole;
+  onboarding: Record<string, unknown>;
   emailVerifiedAt: Date | null;
   deletedAt: Date | null;
   createdAt: Date;

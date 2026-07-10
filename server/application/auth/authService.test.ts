@@ -53,6 +53,7 @@ function createRepository() {
         telegramUsername: null,
         displayName: email,
         role: 'user',
+        onboarding: {},
         emailVerifiedAt: new Date('2026-06-28T10:01:00.000Z'),
         createdAt: new Date('2026-06-28T10:01:00.000Z'),
         updatedAt: new Date('2026-06-28T10:01:00.000Z'),

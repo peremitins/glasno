@@ -2,6 +2,14 @@ import { z } from 'zod';
 
 export const UserRoleDto = z.enum(['user', 'admin']);
 
+export const AuthUserOnboardingDto = z
+  .object({
+    interviewExplainSelection: z.boolean().default(false),
+  })
+  .default({
+    interviewExplainSelection: false,
+  });
+
 export const AuthUserDto = z.object({
   id: z.string(),
   email: z.string().email().nullable(),
@@ -9,6 +17,7 @@ export const AuthUserDto = z.object({
   telegramUsername: z.string().nullable(),
   displayName: z.string().nullable(),
   role: UserRoleDto,
+  onboarding: AuthUserOnboardingDto,
   emailVerifiedAt: z.string().nullable(),
   createdAt: z.string(),
 });
@@ -61,6 +70,7 @@ export const DeleteAccountResponseDto = z.object({
 });
 
 export type UserRole = z.infer<typeof UserRoleDto>;
+export type AuthUserOnboarding = z.infer<typeof AuthUserOnboardingDto>;
 export type AuthUser = z.infer<typeof AuthUserDto>;
 export type AuthMeResponse = z.infer<typeof AuthMeResponseDto>;
 export type EmailLoginStartRequest = z.infer<

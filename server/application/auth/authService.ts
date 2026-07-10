@@ -241,6 +241,11 @@ export function toAuthUserDto(user: AuthUserRecord): AuthUser {
     telegramUsername: user.telegramUsername,
     displayName: user.displayName,
     role: user.role,
+    onboarding: {
+      interviewExplainSelection: Boolean(
+        user.onboarding.interviewExplainSelection
+      ),
+    },
     emailVerifiedAt: user.emailVerifiedAt?.toISOString() ?? null,
     createdAt: user.createdAt.toISOString(),
   };
