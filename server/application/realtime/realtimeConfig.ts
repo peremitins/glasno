@@ -1,10 +1,12 @@
 import {
   buildInterviewerGenderInstruction,
+  getInterviewerGender,
   type InterviewerGender,
 } from '@/shared/interviewerVoice';
 import type {
   CandidateDifficulty,
   CandidatePersona,
+  InterviewerFaceId,
   InterviewTrainingMode,
 } from '@/shared/dto';
 
@@ -21,6 +23,45 @@ interface RuntimeRealtimeContext {
   vacancyTitle?: string | null;
   companyName?: string | null;
   currentQuestion?: string | null;
+}
+
+interface RealtimeContextSource {
+  session: {
+    id: string;
+    trainingMode?: InterviewTrainingMode | null;
+    role?: string | null;
+    level?: string | null;
+    interviewerMode?: string | null;
+    interviewerFaceId?: InterviewerFaceId | null;
+    candidatePersona?: CandidatePersona | null;
+    candidateDifficulty?: CandidateDifficulty | null;
+    candidateNotes?: string | null;
+    vacancyTitle?: string | null;
+    companyName?: string | null;
+  };
+  currentTurn?: { question?: string | null } | null;
+}
+
+// Общий контекст для создания сессии (/api/realtime/session) и SDP-обмена
+// (/api/realtime/session/sdp): второй эндпоинт восстанавливает те же
+// инструкции по interview state сам, не доверяя конфигу от клиента.
+export function buildRealtimeContextFromState(
+  state: RealtimeContextSource
+): RuntimeRealtimeContext {
+  return {
+    sessionId: state.session.id,
+    trainingMode: state.session.trainingMode,
+    role: state.session.role,
+    level: state.session.level,
+    interviewerMode: state.session.interviewerMode,
+    interviewerGender: getInterviewerGender(state.session.interviewerFaceId),
+    candidatePersona: state.session.candidatePersona,
+    candidateDifficulty: state.session.candidateDifficulty,
+    candidateNotes: state.session.candidateNotes,
+    vacancyTitle: state.session.vacancyTitle,
+    companyName: state.session.companyName,
+    currentQuestion: state.currentTurn?.question ?? '',
+  };
 }
 
 interface RealtimeOptions {

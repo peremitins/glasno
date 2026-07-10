@@ -32,6 +32,10 @@ export interface RealtimeVoiceClientOptions {
   // сбрасывает idle-таймер до момента, когда интервьюер замолчит.
   onAssistantAudioActivity?: () => void;
   onPlaybackBlocked?: (error: unknown) => void;
+  // SDP-обмен идёт через наш бэкенд (/api/realtime/session/sdp — AI-relay),
+  // а не напрямую в OpenAI из браузера: прямой вызов упирается в гео-блок
+  // из РФ. Обязателен для startRealtimeWebrtcClient.
+  exchangeSdp?: (offerSdp: string) => Promise<string>;
 }
 
 export async function startRealtimeWebrtcClient(
@@ -43,6 +47,9 @@ export async function startRealtimeWebrtcClient(
   }
   if (!navigator.mediaDevices?.getUserMedia) {
     throw new Error('Браузер не поддерживает захват микрофона');
+  }
+  if (!options.exchangeSdp) {
+    throw new Error('Realtime SDP exchange is not configured');
   }
 
   const peerConnection = new RTCPeerConnection();
@@ -161,29 +168,12 @@ export async function startRealtimeWebrtcClient(
     throw new Error('Realtime voice offer SDP is empty');
   }
 
-  // GA Realtime API: SDP-обмен идёт на /v1/realtime/calls (beta /v1/realtime отключён).
-  const sdpResponse = await fetch(
-    `https://api.openai.com/v1/realtime/calls?model=${encodeURIComponent(session.model)}`,
-    {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${session.clientSecret}`,
-        'Content-Type': 'application/sdp',
-      },
-      body: localDescription.sdp,
-    }
-  );
-
-  if (!sdpResponse.ok) {
-    const detail = await sdpResponse.text().catch(() => '');
-    throw new Error(
-      `Realtime SDP failed: ${sdpResponse.status}${detail ? ` — ${detail}` : ''}`
-    );
-  }
-
+  // GA Realtime API: SDP-обмен идёт на /v1/realtime/calls (beta /v1/realtime
+  // отключён), но через наш бэкенд и AI-relay, а не напрямую из браузера.
+  const answerSdp = await options.exchangeSdp(localDescription.sdp);
   await peerConnection.setRemoteDescription({
     type: 'answer',
-    sdp: await sdpResponse.text(),
+    sdp: answerSdp,
   });
 
   function stop() {

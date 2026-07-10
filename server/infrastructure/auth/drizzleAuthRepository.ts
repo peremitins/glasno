@@ -27,11 +27,17 @@ function mapUser(row: UserRow): AuthUserRecord {
     telegramUsername: row.telegramUsername,
     displayName: row.displayName,
     role: row.role as UserRole,
+    onboarding: normalizeOnboardingRecord(row.onboarding),
     emailVerifiedAt: row.emailVerifiedAt,
     deletedAt: row.deletedAt,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
+}
+
+function normalizeOnboardingRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
 }
 
 function mapAuthSession(row: AuthSessionRow): AuthSessionRecord {

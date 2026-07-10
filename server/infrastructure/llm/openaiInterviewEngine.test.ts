@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildConverseInstruction,
+  buildConverseUserText,
   extractResponsesText,
   normalizeSampleAnswerHint,
   normalizeQuestionHintDetails,
   parseJsonObject,
 } from './openaiInterviewEngine';
+import type { ConverseParams } from '@/server/interface/interviewEngine';
 
 describe('openai interview engine helpers', () => {
   it('extracts text from every Responses API output content block', () => {
@@ -96,11 +98,95 @@ describe('openai interview engine helpers', () => {
     const instruction = buildConverseInstruction({
       trainingMode: 'interviewer',
       interviewerMode: 'neutral',
-    } as any);
+      metadata: {},
+    });
 
     expect(instruction).toContain('Ты — AI-кандидат Гласно');
     expect(instruction).toContain('Пользователь проводит интервью');
     expect(instruction).toContain('отвечай как кандидат');
     expect(instruction).not.toContain('отвечать ВМЕСТО кандидата');
+  });
+
+  it('adds previous main questions without answers to live dialogue context', () => {
+    const session: ConverseParams['session'] = {
+      id: 'session_1',
+      anonymousSessionId: 'anon_1',
+      userId: null,
+      trainingMode: 'candidate',
+      source: 'profession',
+      role: 'Product Manager',
+      level: 'senior',
+      questionCount: 3,
+      language: 'ru',
+      interviewerMode: 'neutral',
+      interviewerAvatarId: 'neutral-pro',
+      status: 'running',
+      companyName: 'Acme',
+      vacancyTitle: 'Senior PM',
+      vacancyRaw: null,
+      vacancyUrl: null,
+      resumeRaw: null,
+      metadata: {},
+      createdAt: new Date('2026-07-09T10:00:00.000Z'),
+    };
+    const currentTurn: ConverseParams['turn'] = {
+      id: 'turn_3',
+      sessionId: 'session_1',
+      index: 3,
+      kind: 'main',
+      question: 'Как вы запускали сложный продукт?',
+      answerTranscript: null,
+      followUpForTurnId: null,
+      metadata: null,
+      answeredAt: null,
+      createdAt: new Date('2026-07-09T10:03:00.000Z'),
+    };
+    const turns: ConverseParams['turns'] = [
+      {
+        id: 'turn_1',
+        sessionId: 'session_1',
+        index: 1,
+        kind: 'main',
+        question: 'Почему вы хотите эту роль?',
+        answerTranscript: 'Ответ не должен уходить в этот блок.',
+        followUpForTurnId: null,
+        metadata: null,
+        answeredAt: new Date('2026-07-09T10:01:00.000Z'),
+        createdAt: new Date('2026-07-09T10:01:00.000Z'),
+      },
+      {
+        id: 'turn_2',
+        sessionId: 'session_1',
+        index: 2,
+        kind: 'clarification',
+        question: 'Какой именно продукт?',
+        answerTranscript: 'Уточнение тоже не нужно.',
+        followUpForTurnId: 'turn_1',
+        metadata: null,
+        answeredAt: new Date('2026-07-09T10:02:00.000Z'),
+        createdAt: new Date('2026-07-09T10:02:00.000Z'),
+      },
+      currentTurn,
+    ];
+
+    const text = buildConverseUserText({
+      session,
+      turn: currentTurn,
+      turns,
+      dialogue: [
+        {
+          role: 'user',
+          content: 'Я отвечал за go-to-market.',
+        },
+      ],
+      exchanges: 1,
+    });
+
+    expect(text).toContain('Предыдущие основные вопросы');
+    expect(text).toContain('1. Почему вы хотите эту роль?');
+    expect(text).not.toContain('Ответ не должен');
+    expect(text).not.toContain('Какой именно продукт?');
+    expect(text).toContain('Текущий вопрос: Как вы запускали сложный продукт?');
+    expect(text).toContain('Кандидат: Я отвечал за go-to-market.');
   });
 });

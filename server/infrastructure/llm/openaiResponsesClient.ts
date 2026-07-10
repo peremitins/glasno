@@ -134,6 +134,64 @@ export async function sendOpenAiResponsesRequest<T = unknown>(params: {
   }
 }
 
+const OPENAI_REALTIME_CALLS_URL = 'https://api.openai.com/v1/realtime/calls';
+
+// SDP-обмен для WebRTC realtime-voice: тот же relay, что и /v1/responses
+// (нужен для доступа из РФ), но relay поддерживает только этот путь и
+// /v1/responses — /v1/realtime/client_secrets он не проксирует.
+export async function sendOpenAiRealtimeCallRequest(params: {
+  sdp: string;
+  session: Record<string, unknown>;
+  timeoutMs?: number;
+  apiKey?: string;
+  env?: EnvMap;
+}): Promise<string> {
+  if (isRelayEnabled(params.env)) {
+    const request = buildRelayRequest({
+      path: '/v1/realtime/calls',
+      body: { sdp: params.sdp, session: params.session },
+      purpose: 'realtime_call',
+      env: params.env,
+    });
+
+    try {
+      return await $fetch<string, 'text'>(request.url, {
+        method: 'POST',
+        headers: request.headers,
+        timeout: params.timeoutMs ?? RELAY_DEFAULT_TIMEOUT_MS,
+        body: request.rawBody,
+        responseType: 'text',
+      });
+    } catch (err) {
+      throwProviderError(err, 'Не удалось запустить голосовой режим');
+    }
+  }
+
+  if (!params.apiKey) {
+    throw apiError('E_UPSTREAM', 'Провайдер голосового режима не настроен');
+  }
+
+  // Прямой вызов OpenAI (без relay): sdp+session одной multipart-формой —
+  // тот же контракт GA Realtime API, что использует и сам relay.
+  const form = new FormData();
+  form.set('sdp', params.sdp);
+  form.set('session', JSON.stringify(params.session));
+
+  try {
+    return await $fetch<string, 'text'>(OPENAI_REALTIME_CALLS_URL, {
+      method: 'POST',
+      timeout: params.timeoutMs,
+      headers: {
+        Authorization: `Bearer ${params.apiKey}`,
+      },
+      body: form,
+      responseType: 'text',
+    });
+  } catch (err) {
+    throwProviderError(err, 'Не удалось запустить голосовой режим');
+  }
+}
+
 function normalizeRelayUrl(value: string | undefined): string {
   const normalized = value?.trim().replace(/\/+$/u, '') ?? '';
   return normalized;

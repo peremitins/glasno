@@ -25,6 +25,8 @@ export interface EvaluateAnswerParams {
 export interface ConverseParams {
   session: InterviewSessionRecord;
   turn: InterviewTurnRecord;
+  // Все turns текущей сессии: для компактной ориентации без полного чата.
+  turns: InterviewTurnRecord[];
   // Полный диалог по текущему вопросу (последняя реплика — кандидата).
   dialogue: Array<{ role: 'user' | 'interviewer'; content: string }>;
   // Сколько реплик кандидата уже было по этому вопросу.

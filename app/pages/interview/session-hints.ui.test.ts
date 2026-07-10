@@ -102,6 +102,38 @@ describe('interview session hints panel', () => {
     );
   });
 
+  it('flushes pending realtime dialogue before sending a text reply', () => {
+    expect(source).toMatch(
+      /async function sendMessage\(\)[\s\S]*?await flushRealtimePersistence\(\);[\s\S]*?\/reply-stream/
+    );
+  });
+
+  it('sends mode bridge context through realtime response instructions', () => {
+    expect(source).toContain('buildRealtimeResponseCreateEvent');
+    expect(source).toContain('sendRealtimeResponseCreate');
+    expect(source).not.toContain("type: 'conversation.item.create'");
+    expect(source).not.toContain("role: 'system'");
+  });
+
+  it('does not restart an existing interview when voice mode connects', () => {
+    expect(source).toContain('hasPreviousMainQuestions');
+    expect(source).toContain('hasCurrentQuestionDialogue');
+    expect(source).toContain('isFreshInterviewStart');
+    expect(source).toContain(
+      'Пользователь включил голосовой режим в уже идущем интервью'
+    );
+    expect(source).toContain('Не говори, что интервью начинается сначала');
+  });
+
+  it('auto-scrolls realtime transcript growth like text streaming', () => {
+    expect(source).toMatch(
+      /appendContent\(messageId, delta\)[\s\S]*?scrollChatToBottom\('auto'\)/
+    );
+    expect(source).toMatch(
+      /replaceContent\(messageId, content\)[\s\S]*?scrollChatToBottom\('auto'\)/
+    );
+  });
+
   it('keeps realtime voice active when moving to the next question', () => {
     expect(source).toContain('isNextQuestionVoiceCommand');
     expect(source).toContain('isNextQuestionTransitionReply');

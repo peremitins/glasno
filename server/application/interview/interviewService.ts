@@ -415,10 +415,12 @@ export class InterviewService {
       at: new Date().toISOString(),
     });
     const exchanges = dialogue.filter((message) => message.role === 'user').length;
+    const turns = await this.deps.repository.listTurns(session.id);
 
     const { reply, suggestMoveOn } = await this.deps.engine.converse({
       session,
       turn,
+      turns,
       dialogue: dialogue.map((message) => ({
         role: message.role,
         content: message.content,
@@ -484,10 +486,12 @@ export class InterviewService {
       at: new Date().toISOString(),
     });
     const exchanges = dialogue.filter((message) => message.role === 'user').length;
+    const turns = await this.deps.repository.listTurns(session.id);
 
     const generator = this.deps.engine.converseStream({
       session,
       turn,
+      turns,
       dialogue: dialogue.map((message) => ({
         role: message.role,
         content: message.content,

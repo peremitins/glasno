@@ -10,13 +10,20 @@ export const TtsRequestDto = z.object({
   format: TtsFormatDto.default('mp3'),
 });
 
+export const RealtimeSessionTransportDto = z.enum(['webrtc', 'websocket']);
+
 export const RealtimeSessionRequestDto = z.object({
   sessionId: z.string().min(1),
+  // websocket — фоллбэк для Firefox: ephemeral-ключ он получает напрямую от
+  // OpenAI (AI-relay пока не проксирует /v1/realtime/client_secrets и WebSocket).
+  transport: RealtimeSessionTransportDto.default('webrtc'),
 });
 
 export const RealtimeSessionResponseDto = z.object({
   realtimeSessionId: z.string().min(1),
-  clientSecret: z.string().min(1),
+  // Заполняется только при transport=websocket. WebRTC обменивается SDP через
+  // /api/realtime/session/sdp (relay) и ephemeral-ключ ему не нужен.
+  clientSecret: z.string().min(1).nullable(),
   expiresAt: z.number().nullable(),
   model: z.string().min(1),
   voice: z.string().min(1),
@@ -24,6 +31,16 @@ export const RealtimeSessionResponseDto = z.object({
   idleTimeoutSeconds: z.number().int().positive(),
   remainingSeconds: z.number().int().nonnegative(),
   realtimeLimits: RealtimeSessionLimitsDto,
+});
+
+export const RealtimeSessionSdpRequestDto = z.object({
+  sessionId: z.string().min(1),
+  realtimeSessionId: z.string().min(1),
+  sdp: z.string().min(1),
+});
+
+export const RealtimeSessionSdpResponseDto = z.object({
+  sdp: z.string().min(1),
 });
 
 export const RealtimeSessionEndReasonDto = z.enum([
@@ -53,11 +70,20 @@ export const RealtimeSessionLifecycleResponseDto = z.object({
 
 export type TtsFormat = z.infer<typeof TtsFormatDto>;
 export type TtsRequest = z.infer<typeof TtsRequestDto>;
+export type RealtimeSessionTransport = z.infer<
+  typeof RealtimeSessionTransportDto
+>;
 export type RealtimeSessionRequest = z.infer<
   typeof RealtimeSessionRequestDto
 >;
 export type RealtimeSessionResponse = z.infer<
   typeof RealtimeSessionResponseDto
+>;
+export type RealtimeSessionSdpRequest = z.infer<
+  typeof RealtimeSessionSdpRequestDto
+>;
+export type RealtimeSessionSdpResponse = z.infer<
+  typeof RealtimeSessionSdpResponseDto
 >;
 export type RealtimeSessionEndReason = z.infer<
   typeof RealtimeSessionEndReasonDto

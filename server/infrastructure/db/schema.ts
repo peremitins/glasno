@@ -23,6 +23,7 @@ export const users = pgTable('users', {
   email: text('email').unique(),
   displayName: text('display_name'),
   role: text('role').default('user').notNull(),
+  onboarding: jsonb('onboarding').notNull().default({}),
   emailVerifiedAt: timestamp('email_verified_at', { withTimezone: true }),
   deletedAt: timestamp('deleted_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
