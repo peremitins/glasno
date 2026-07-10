@@ -59,8 +59,7 @@
   // Серверная правда: пакеты доступны при любом активном платном тарифе
   // (Pro или разовый доступ), см. accessService.canBuyMore.
   const packsLocked = computed(
-    () =>
-      !(status.value?.realtimeVoice.canBuyMore || status.value?.unlimited)
+    () => !(status.value?.realtimeVoice.canBuyMore || status.value?.unlimited)
   );
 
   // --- Блок «Текущий доступ» (по образцу Mentala) ---------------------
@@ -488,17 +487,6 @@
                   : t('pricing.currentPlan')
               }}
             </span>
-            <!-- Прозрачность автопродления: предупреждаем ДО оплаты. -->
-            <p
-              v-if="plan.interval === 'month' && plan.isCheckoutEnabled"
-              class="plan-note"
-            >
-              {{
-                t('pricing.autoRenewDisclosure', {
-                  amount: formatPrice(plan.priceRub),
-                })
-              }}
-            </p>
           </div>
         </article>
       </template>

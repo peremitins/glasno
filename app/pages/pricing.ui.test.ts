@@ -8,7 +8,6 @@ const messages = JSON.parse(
   pricing: {
     minutePacksSubtitle: string;
     packsNeedPlan: string;
-    autoRenewDisclosure: string;
   };
   paywall: { minutesDescription: string };
 };
@@ -27,7 +26,9 @@ describe('pricing page loading state', () => {
     expect(source).toContain('status-skeleton');
     expect(source).toContain('plans-skeleton');
     expect(source).toContain('v-if="statusInitialPending"');
-    expect(source).toContain('v-if="plansInitialPending || statusInitialPending"');
+    expect(source).toContain(
+      'v-if="plansInitialPending || statusInitialPending"'
+    );
     expect(source).toMatch(
       /:disabled="\s*Boolean\(checkoutPlanId\)\s*\|\|\s*statusPending\s*\|\|\s*status\?\.needsAuthForCheckout\s*"/
     );
@@ -39,9 +40,7 @@ describe('pricing page loading state', () => {
 
 describe('pricing plan affordances', () => {
   it('renders feature lists with Radix checkmarks and accent tokens', () => {
-    expect(source).toContain(
-      "import { CheckIcon } from '@radix-icons/vue'"
-    );
+    expect(source).toContain("import { CheckIcon } from '@radix-icons/vue'");
     expect(source).toMatch(
       /<li v-for="feature in plan\.features"[^>]*>\s*<CheckIcon class="feature-check"/
     );
@@ -58,16 +57,6 @@ describe('pricing plan affordances', () => {
   it('locks minute packs using the server permission flag', () => {
     expect(source).toMatch(
       /const packsLocked = computed\(\s*\(\) =>\s*!\(\s*status\.value\?\.realtimeVoice\.canBuyMore\s*\|\|\s*status\.value\?\.unlimited\s*\)\s*\);/
-    );
-  });
-
-  it('shows the renewal disclosure under the monthly checkout CTA', () => {
-    expect(source).toMatch(
-      /v-if="plan\.interval === 'month' && plan\.isCheckoutEnabled"\s*class="plan-note"/
-    );
-    expect(source).toContain("t('pricing.autoRenewDisclosure'");
-    expect(messages.pricing.autoRenewDisclosure).toBe(
-      'Автопродление: спишем {amount} ₽ через месяц. Отмена в один клик.'
     );
   });
 
