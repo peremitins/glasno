@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildRealtimeContextFromState,
   buildRealtimeInstructions,
   buildRealtimeSessionPayload,
 } from './realtimeConfig';
@@ -83,5 +84,60 @@ describe('realtimeConfig', () => {
       },
     });
     expect(payload.session.instructions).toContain('Product Manager');
+  });
+
+  it('builds the realtime context from interview state, deriving gender from the face id', () => {
+    const state = {
+      session: {
+        id: 'session_1',
+        trainingMode: 'candidate' as const,
+        role: 'Product Manager',
+        level: 'senior',
+        interviewerMode: 'strict',
+        interviewerFaceId: 'female-neutral' as const,
+        candidatePersona: 'anxious' as const,
+        candidateDifficulty: 'challenging' as const,
+        candidateNotes: 'Второй раунд собеседования.',
+        vacancyTitle: 'Senior Product Manager',
+        companyName: 'Glasno',
+      },
+      currentTurn: {
+        question: 'Расскажите о запуске сложного продукта.',
+      },
+    };
+
+    expect(buildRealtimeContextFromState(state)).toEqual({
+      sessionId: 'session_1',
+      trainingMode: 'candidate',
+      role: 'Product Manager',
+      level: 'senior',
+      interviewerMode: 'strict',
+      interviewerGender: 'female',
+      candidatePersona: 'anxious',
+      candidateDifficulty: 'challenging',
+      candidateNotes: 'Второй раунд собеседования.',
+      vacancyTitle: 'Senior Product Manager',
+      companyName: 'Glasno',
+      currentQuestion: 'Расскажите о запуске сложного продукта.',
+    });
+  });
+
+  it('falls back to an empty current question when there is no active turn', () => {
+    const state = {
+      session: {
+        id: 'session_2',
+        role: null,
+        level: null,
+        interviewerMode: 'neutral',
+        vacancyTitle: null,
+        companyName: null,
+      },
+      currentTurn: null,
+    };
+
+    expect(buildRealtimeContextFromState(state).currentQuestion).toBe('');
+    expect(buildRealtimeContextFromState(state).interviewerGender).toBe(
+      'male'
+    );
   });
 });

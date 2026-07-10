@@ -5,6 +5,7 @@ import {
 } from '@/shared/dto';
 import { resolveOpenAiConfig } from '@/server/application/config/openaiConfig';
 import {
+  buildRealtimeContextFromState,
   buildRealtimeSessionPayload,
   resolveRealtimeConfig,
 } from '@/server/application/realtime/realtimeConfig';
@@ -14,14 +15,16 @@ import {
   endRealtimeVoiceSession,
   startRealtimeVoiceSession,
 } from '@/server/application/realtime/realtimeVoiceSessionService';
-import {
-  getInterviewerGender,
-  resolveRealtimeVoiceForFace,
-} from '@/shared/interviewerVoice';
+import { resolveRealtimeVoiceForFace } from '@/shared/interviewerVoice';
 import { apiError } from '@/server/utils/errors';
 import { defineApiHandler } from '@/server/utils/handler';
 import { readDto } from '@/server/utils/validate';
 
+// WebSocket-фоллбэк (Firefox) получает ephemeral-ключ напрямую от OpenAI:
+// AI-relay пока не проксирует /v1/realtime/client_secrets и WebSocket (см.
+// .docs/DEPLOY.md, «Риски / что проверить после первого деплоя»). WebRTC
+// (основной транспорт) секрет не запрашивает — SDP обменивается через
+// /api/realtime/session/sdp, который уже ходит в OpenAI через relay.
 const OPENAI_REALTIME_CLIENT_SECRETS_URL =
   'https://api.openai.com/v1/realtime/client_secrets';
 
@@ -31,22 +34,24 @@ export default defineApiHandler(async (event) => {
     throw apiError('E_AUTH', 'Сессия не инициализирована');
   }
 
+  const input = await readDto(event, RealtimeSessionRequestDto);
   const runtimeConfig = useRuntimeConfig(event);
   const { apiKey } = resolveOpenAiConfig(runtimeConfig);
-  if (!apiKey) {
+  if (input.transport === 'websocket' && !apiKey) {
     throw apiError('E_UPSTREAM', 'Провайдер голосового режима не настроен');
   }
 
-  const input = await readDto(event, RealtimeSessionRequestDto);
   const interviewService = createInterviewService(event);
   const state = await interviewService.getState({
     anonymousSessionId: session.id,
     userId: session.userId ?? null,
     sessionId: input.sessionId,
   });
-  const currentTurn = state.currentTurn;
-  if (!currentTurn) {
-    throw apiError('E_CONFLICT', 'Нет активного вопроса для голосового режима');
+  if (!state.currentTurn) {
+    throw apiError(
+      'E_CONFLICT',
+      'Нет активного вопроса для голосового режима'
+    );
   }
 
   const realtimeConfig = {
@@ -67,21 +72,27 @@ export default defineApiHandler(async (event) => {
     remainingSeconds: billingStatus.realtimeVoice.remainingMinutes * 60,
     unlimited: billingStatus.unlimited,
   });
+
+  const baseResponse = {
+    realtimeSessionId: realtimeSession.id,
+    model: realtimeConfig.model,
+    voice: realtimeConfig.voice,
+    maxDurationSeconds: realtimeSession.maxDurationSeconds,
+    idleTimeoutSeconds: realtimeSession.idleTimeoutSeconds,
+    remainingSeconds: realtimeSession.remainingSeconds,
+    realtimeLimits: state.session.realtimeLimits,
+  };
+
+  if (input.transport !== 'websocket') {
+    return RealtimeSessionResponseDto.parse({
+      ...baseResponse,
+      clientSecret: null,
+      expiresAt: null,
+    });
+  }
+
   const payload = buildRealtimeSessionPayload(
-    {
-      sessionId: state.session.id,
-      trainingMode: state.session.trainingMode,
-      role: state.session.role,
-      level: state.session.level,
-      interviewerMode: state.session.interviewerMode,
-      interviewerGender: getInterviewerGender(state.session.interviewerFaceId),
-      candidatePersona: state.session.candidatePersona,
-      candidateDifficulty: state.session.candidateDifficulty,
-      candidateNotes: state.session.candidateNotes,
-      vacancyTitle: state.session.vacancyTitle,
-      companyName: state.session.companyName,
-      currentQuestion: currentTurn.question,
-    },
+    buildRealtimeContextFromState(state),
     realtimeConfig
   );
 
@@ -104,20 +115,14 @@ export default defineApiHandler(async (event) => {
     }
 
     return RealtimeSessionResponseDto.parse({
-      realtimeSessionId: realtimeSession.id,
+      ...baseResponse,
       clientSecret,
       expiresAt:
         typeof response?.client_secret?.expires_at === 'number'
           ? response.client_secret.expires_at
           : typeof response?.expires_at === 'number'
             ? response.expires_at
-          : null,
-      model: realtimeConfig.model,
-      voice: realtimeConfig.voice,
-      maxDurationSeconds: realtimeSession.maxDurationSeconds,
-      idleTimeoutSeconds: realtimeSession.idleTimeoutSeconds,
-      remainingSeconds: realtimeSession.remainingSeconds,
-      realtimeLimits: state.session.realtimeLimits,
+            : null,
     });
   } catch (error: any) {
     await endRealtimeVoiceSession({
