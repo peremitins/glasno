@@ -10,3 +10,4 @@ export * from './dashboard';
 export * from './questionBank';
 export * from './billing';
 export * from './learningTerms';
+export * from './onboarding';

@@ -42,6 +42,8 @@
   import MicPermissionDeniedDialog from '@/app/components/mic/MicPermissionDeniedDialog.vue';
   import GlassSkeletonStack from '@/app/components/design/GlassSkeletonStack.vue';
   import ButtonLoader from '@/app/components/design/ButtonLoader.vue';
+  import InterviewExplainSelectionOnboardingModal from '@/app/components/onboarding/InterviewExplainSelectionOnboardingModal.vue';
+  import { useInterviewExplainSelectionOnboarding } from '@/app/composables/useInterviewExplainSelectionOnboarding';
   import {
     RealtimeInterviewChatAdapter,
     REALTIME_QUESTION_ANNOUNCEMENT_KIND,
@@ -84,6 +86,15 @@
   const micPermissionGate = useMicPermissionGate();
   const audioPermissionGate = useAudioPermissionGate();
   const cameraPermissionGate = useCameraPermissionGate();
+  const {
+    showInterviewExplainSelectionOnboarding,
+    canShowInterviewExplainSelectionOnboarding,
+    interviewExplainSelectionOnboardingPending,
+    interviewExplainSelectionOnboardingError,
+    scheduleInterviewExplainSelectionOnboarding,
+    closeInterviewExplainSelectionOnboarding,
+    completeInterviewExplainSelectionOnboarding,
+  } = useInterviewExplainSelectionOnboarding();
 
   const answer = ref('');
   const errorMessage = ref('');
@@ -225,6 +236,9 @@
     )
   );
   const isDone = computed(() => state.value?.session.status === 'done');
+  const canOfferInterviewExplainSelectionOnboarding = computed(
+    () => Boolean(state.value && currentTurn.value && !isDone.value)
+  );
   const isLastQuestion = computed(() => {
     const session = state.value?.session;
     if (!session || isDone.value) return false;
@@ -386,6 +400,17 @@
     if (!el) return;
     el.scrollTo({ top: el.scrollHeight, behavior });
   }
+
+  watch(
+    [
+      canOfferInterviewExplainSelectionOnboarding,
+      canShowInterviewExplainSelectionOnboarding,
+    ],
+    ([ready]) => {
+      scheduleInterviewExplainSelectionOnboarding(ready);
+    },
+    { immediate: true }
+  );
 
   watch(
     () => conversationMessages.value.length,
@@ -2000,6 +2025,13 @@
       :open="cameraPermissionGate.showCameraDeniedModal.value"
       :mode="cameraPermissionGate.dialogMode.value"
       @update:open="cameraPermissionGate.setCameraDeniedModalOpen"
+    />
+    <InterviewExplainSelectionOnboardingModal
+      :open="showInterviewExplainSelectionOnboarding"
+      :pending="interviewExplainSelectionOnboardingPending"
+      :error-message="interviewExplainSelectionOnboardingError"
+      @close="closeInterviewExplainSelectionOnboarding"
+      @complete="completeInterviewExplainSelectionOnboarding"
     />
   </div>
 </template>
