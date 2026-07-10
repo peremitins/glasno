@@ -2,6 +2,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import type {
   RealtimeSessionEndReason,
   RealtimeSessionResponse,
+  RealtimeSessionSdpResponse,
 } from '@/shared/dto';
 import { CSRF_COOKIE_NAME } from '@/shared/constants';
 import {
@@ -59,16 +60,33 @@ export function useRealtimeVoiceSession(options: {
 
     realtimeVoiceUi.setStatus('connecting');
     try {
+      const transport = shouldUseRealtimeWebsocketTransport()
+        ? 'websocket'
+        : 'webrtc';
       const session = await api<RealtimeSessionResponse>(
         '/api/realtime/session',
         {
           method: 'POST',
-          body: { sessionId: options.sessionId },
+          body: { sessionId: options.sessionId, transport },
         }
       );
       realtimeSession.value = session;
       scheduleSessionTimers(session);
       client.value = await startRealtimeVoiceClient(session, {
+        async exchangeSdp(offerSdp) {
+          const result = await api<RealtimeSessionSdpResponse>(
+            '/api/realtime/session/sdp',
+            {
+              method: 'POST',
+              body: {
+                sessionId: options.sessionId,
+                realtimeSessionId: session.realtimeSessionId,
+                sdp: offerSdp,
+              },
+            }
+          );
+          return result.sdp;
+        },
         onEvent(event) {
           handleRealtimeTransportEvent(event);
           options.onEvent?.(event);

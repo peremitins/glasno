@@ -7,7 +7,9 @@ const files = [
   'server/infrastructure/llm/openaiLearningTermsEngine.ts',
   'server/infrastructure/llm/openaiImageTextExtractor.ts',
   'server/api/realtime/session.post.ts',
+  'server/api/realtime/session/sdp.post.ts',
   'server/api/tts/openai.post.ts',
+  'server/infrastructure/llm/openaiResponsesClient.ts',
 ];
 
 describe('provider-facing error copy', () => {
