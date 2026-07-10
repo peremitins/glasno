@@ -2,6 +2,11 @@ import { describe, expect, it, vi } from 'vitest';
 import { AuthService } from './authService';
 import { hashEmail, hashEmailCode, normalizeEmail } from './authCrypto';
 import { AuthSessionService } from './authSessionService';
+import { sendLoginCodeEmail } from './emailSender';
+
+vi.mock('./emailSender', () => ({
+  sendLoginCodeEmail: vi.fn().mockResolvedValue(true),
+}));
 
 function createRepository() {
   const users: any[] = [];
@@ -151,6 +156,59 @@ describe('AuthService', () => {
       { anonymousSessionId: 'anon_1', userId: 'user_1' },
     ]);
     expect(repository.codes[0].consumedAt).toBeInstanceOf(Date);
+
+    vi.useRealTimers();
+  });
+
+  it('uses configured test login code for allowlisted email without sending mail', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-28T10:00:00.000Z'));
+    vi.mocked(sendLoginCodeEmail).mockClear();
+
+    const repository = createRepository();
+    const sessionService = new AuthSessionService({
+      repository: repository as any,
+      sessionSecret: 'session-secret',
+    });
+    const service = new AuthService({
+      repository: repository as any,
+      sessionService,
+      authEmailCodeSecret: 'code-secret',
+      emailHashPepper: 'email-pepper',
+      telegramBotToken: '',
+      testLoginEmails: ['externalreview@glasno.test'],
+      testLoginCode: '123456',
+    });
+
+    const started = await service.startEmailLogin({
+      email: ' ExternalReview@Glasno.Test ',
+    });
+
+    expect(started).toMatchObject({ ok: true });
+    expect(started.devCode).toBeUndefined();
+    expect(sendLoginCodeEmail).not.toHaveBeenCalled();
+    expect(repository.codes[0]).toMatchObject({
+      emailHash: hashEmail('externalreview@glasno.test', 'email-pepper'),
+      codeHash: hashEmailCode(
+        'externalreview@glasno.test',
+        '123456',
+        'code-secret'
+      ),
+    });
+
+    const verified = await service.verifyEmailLogin({
+      email: 'externalreview@glasno.test',
+      code: '123456',
+      anonymousSessionId: 'anon_review',
+    });
+
+    expect(verified.user).toMatchObject({
+      email: 'externalreview@glasno.test',
+      role: 'user',
+    });
+    expect(repository.migrated).toEqual([
+      { anonymousSessionId: 'anon_review', userId: 'user_1' },
+    ]);
 
     vi.useRealTimers();
   });
