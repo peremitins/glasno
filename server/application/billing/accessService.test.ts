@@ -139,6 +139,7 @@ describe('BillingAccessService', () => {
       paidInterviewsRemaining: 1,
       activePlanId: 'single_prep',
       allowedSessionGoals: ['quick', 'standard', 'deep'],
+      realtimeVoice: { canBuyMore: true },
     });
 
     const used = new BillingAccessService({
@@ -153,6 +154,24 @@ describe('BillingAccessService', () => {
     ).resolves.toMatchObject({
       canCreateInterview: false,
       paidInterviewsRemaining: 0,
+    });
+  });
+
+  it('stacks interview entitlements from two active one-time purchases', async () => {
+    const service = new BillingAccessService({
+      repository: createRepository({
+        sessionsUsed: 2,
+        sessionsSince: 1,
+        subscriptionPlanIds: ['single_prep', 'single_prep'],
+      }),
+    });
+
+    await expect(
+      service.getStatus({ anonymousSessionId: 'anon_1', userId: 'user_1' })
+    ).resolves.toMatchObject({
+      canCreateInterview: true,
+      paidInterviewsRemaining: 1,
+      allowedSessionGoals: ['quick', 'standard', 'deep'],
     });
   });
 
@@ -186,7 +205,7 @@ describe('BillingAccessService', () => {
     });
   });
 
-  it('does not offer minute packs without an active subscription', async () => {
+  it('does not offer minute packs without an active paid plan', async () => {
     const service = new BillingAccessService({
       repository: createRepository({
         sessionsUsed: 0,
@@ -203,6 +222,110 @@ describe('BillingAccessService', () => {
       service.getStatus({ anonymousSessionId: 'anon_1', userId: 'user_1' })
     ).resolves.toMatchObject({
       realtimeVoice: { canBuyMore: false },
+    });
+  });
+
+  it('keeps admin unlimited while returning real plan and billing data', async () => {
+    const repository = createRepository({
+      subscriptionPlanIds: ['pro_monthly'],
+    });
+    repository.findActiveSubscriptionsByUserId.mockResolvedValue([
+      {
+        id: 'sub_1',
+        userId: 'admin_1',
+        planId: 'pro_monthly',
+        status: 'active',
+        provider: 'yookassa',
+        providerPaymentId: 'pay_1',
+        currentPeriodEnd: new Date('2026-08-10T10:00:00.000Z'),
+        autoRenew: true,
+        nextChargeAt: new Date('2026-08-10T10:00:00.000Z'),
+        lastChargeAttemptAt: null,
+        lastChargeError: 'Предыдущая попытка отклонена',
+        createdAt: new Date('2026-07-10T10:00:00.000Z'),
+        updatedAt: new Date('2026-07-10T10:00:00.000Z'),
+      },
+    ]);
+    repository.findPaymentMethodByUserId.mockResolvedValue({
+      id: 'method_1',
+      userId: 'admin_1',
+      provider: 'yookassa',
+      providerPaymentMethodId: 'pm_1',
+      status: 'active',
+      methodType: 'bank_card',
+      title: 'Банковская карта *4242',
+      cardBrand: 'Visa',
+      cardLast4: '4242',
+      cardExpiryMonth: '12',
+      cardExpiryYear: '30',
+      createdAt: new Date('2026-07-10T10:00:00.000Z'),
+    });
+    const service = new BillingAccessService({ repository });
+
+    await expect(
+      service.getStatus({
+        anonymousSessionId: 'anon_admin',
+        userId: 'admin_1',
+        role: 'admin',
+      })
+    ).resolves.toMatchObject({
+      unlimited: true,
+      canCreateInterview: true,
+      hasActiveSubscription: true,
+      activePlanId: 'pro_monthly',
+      subscriptionExpiresAt: '2026-08-10T10:00:00.000Z',
+      billing: {
+        autoRenew: true,
+        nextChargeAt: '2026-08-10T10:00:00.000Z',
+        nextChargeAmountRub: 990,
+        lastChargeError: 'Предыдущая попытка отклонена',
+        paymentMethod: {
+          title: 'Банковская карта *4242',
+          cardBrand: 'Visa',
+          cardLast4: '4242',
+        },
+      },
+      realtimeVoice: { canBuyMore: true },
+    });
+    expect(repository.countOwnerSessions).not.toHaveBeenCalled();
+  });
+
+  it('keeps minute packs enabled by the admin access contract', async () => {
+    const service = new BillingAccessService({
+      repository: createRepository(),
+    });
+
+    await expect(
+      service.getStatus({
+        anonymousSessionId: 'anon_admin',
+        userId: null,
+        role: 'admin',
+      })
+    ).resolves.toMatchObject({
+      unlimited: true,
+      realtimeVoice: { canBuyMore: true },
+    });
+  });
+
+  it('returns an active one-time plan for admin without dropping unlimited access', async () => {
+    const repository = createRepository({
+      subscriptionPlanIds: ['single_prep'],
+    });
+    const service = new BillingAccessService({ repository });
+
+    await expect(
+      service.getStatus({
+        anonymousSessionId: 'anon_admin',
+        userId: 'user_1',
+        role: 'admin',
+      })
+    ).resolves.toMatchObject({
+      unlimited: true,
+      hasActiveSubscription: false,
+      activePlanId: 'single_prep',
+      activePlanName: 'Разовая подготовка',
+      subscriptionExpiresAt: '2026-07-28T10:00:00.000Z',
+      realtimeVoice: { canBuyMore: true },
     });
   });
 });

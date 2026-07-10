@@ -46,6 +46,8 @@ export function createAuthService(event: H3Event) {
     exposeDevCode: process.env.NODE_ENV !== 'production',
     adminEmails: parseCsvEnv(process.env.ADMIN_EMAILS),
     adminTelegramIds: parseCsvEnv(process.env.ADMIN_TELEGRAM_IDS),
+    testLoginEmails: parseCsvEnv(process.env.AUTH_TEST_LOGIN_EMAILS),
+    testLoginCode: process.env.AUTH_TEST_LOGIN_CODE || '',
   });
 }
 

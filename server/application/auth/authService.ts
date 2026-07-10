@@ -49,6 +49,9 @@ export class AuthService {
       // Allowlist для авто-выдачи роли admin при входе.
       adminEmails?: string[];
       adminTelegramIds?: string[];
+      // Allowlist тестовых входов: фиксированный код без отправки письма.
+      testLoginEmails?: string[];
+      testLoginCode?: string;
     }
   ) {}
 
@@ -58,7 +61,8 @@ export class AuthService {
     this.assertEmailSecrets();
 
     const email = normalizeEmail(params.email);
-    const code = generateNumericCode(6);
+    const testLoginCode = this.resolveTestLoginCode(email);
+    const code = testLoginCode ?? generateNumericCode(6);
     const expiresAt = new Date(Date.now() + EMAIL_CODE_TTL_MS);
 
     await this.deps.repository.createEmailLoginCode({
@@ -67,8 +71,10 @@ export class AuthService {
       expiresAt,
     });
 
-    // Отправляем код на почту (не фатально: в dev код также виден на экране).
-    await sendLoginCodeEmail(email, code);
+    if (!testLoginCode) {
+      // Отправляем код на почту (не фатально: в dev код также виден на экране).
+      await sendLoginCodeEmail(email, code);
+    }
 
     return {
       ok: true,
@@ -107,7 +113,7 @@ export class AuthService {
 
     await this.deps.repository.consumeEmailLoginCode(codeRecord.id);
     const user = await this.deps.repository.upsertEmailUser(email);
-    return this.finishLogin(user, params.anonymousSessionId);
+    return this.finishLogin(user);
   }
 
   async verifyTelegramLogin(params: {
@@ -135,7 +141,7 @@ export class AuthService {
       displayName: displayName || params.payload.username || null,
     });
 
-    return this.finishLogin(user, params.anonymousSessionId);
+    return this.finishLogin(user);
   }
 
   async createMagicLoginToken(
@@ -172,7 +178,7 @@ export class AuthService {
         telegramId: record.telegramId,
       }));
 
-    return this.finishLogin(user, params.anonymousSessionId);
+    return this.finishLogin(user);
   }
 
   async deleteAccount(userId: string): Promise<DeleteAccountResponse> {
@@ -186,15 +192,7 @@ export class AuthService {
     return { ok: true };
   }
 
-  private async finishLogin(
-    user: AuthUserRecord,
-    anonymousSessionId: string
-  ): Promise<AuthLoginResult> {
-    await this.deps.repository.migrateAnonymousSessionsToUser(
-      anonymousSessionId,
-      user.id
-    );
-
+  private async finishLogin(user: AuthUserRecord): Promise<AuthLoginResult> {
     const promoted = await this.ensureAdminRole(user);
 
     const createdSession = await this.deps.sessionService.createForUser(
@@ -230,6 +228,16 @@ export class AuthService {
     if (!this.deps.emailHashPepper) {
       throw apiError('E_UPSTREAM', 'EMAIL_HASH_PEPPER не задан');
     }
+  }
+
+  private resolveTestLoginCode(email: string): string | null {
+    const testLoginCode = this.deps.testLoginCode?.trim();
+    if (!testLoginCode || !/^\d{6}$/.test(testLoginCode)) return null;
+
+    const testLoginEmails = (this.deps.testLoginEmails ?? []).map((item) =>
+      normalizeEmail(item)
+    );
+    return testLoginEmails.includes(email) ? testLoginCode : null;
   }
 }
 

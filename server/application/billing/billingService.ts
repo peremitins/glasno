@@ -9,9 +9,11 @@ import type {
   BillingOwner,
   BillingRepository,
   PaymentOrderRecord,
+  SubscriptionRecord,
 } from '@/server/interface/billingRepository';
 import { BillingAccessService } from './accessService';
 import {
+  BILLING_PLANS,
   getBillingPlan,
   getPaidBillingPlan,
   getPublicBillingPlans,
@@ -31,6 +33,9 @@ import {
 // Не чаще одной попытки автосписания раз в 6 часов (анти-даблчардж +
 // щадящие ретраи при ошибке карты).
 const AUTO_RENEW_RETRY_AFTER_MS = 6 * 60 * 60 * 1000;
+const AUTO_RENEW_PLAN_IDS = BILLING_PLANS.filter(
+  (plan) => plan.kind === 'subscription' && plan.priceRub > 0
+).map((plan) => plan.id);
 
 export interface BillingServiceConfig {
   yookassa: YooKassaConfig;
@@ -70,21 +75,22 @@ export class BillingService {
 
     const plan = getPaidBillingPlan(params.planId);
 
-    // Пакеты минут — расходник к активному тарифу: без подписки они
-    // бесполезны (нельзя создавать интервью), поэтому покупку блокируем.
+    // Пакеты минут — расходник к активному платному тарифу (подписка или
+    // разовый доступ): без него они бесполезны (нельзя создавать интервью),
+    // поэтому покупку блокируем.
     if (plan.requiresActiveSubscription) {
       const activeSubscriptions =
         await this.deps.repository.findActiveSubscriptionsByUserId(
           params.userId
         );
-      const hasBaseSubscription = activeSubscriptions.some(
-        (subscription) =>
-          getBillingPlan(subscription.planId).kind === 'subscription'
-      );
-      if (!hasBaseSubscription) {
+      const hasPaidAccess = activeSubscriptions.some((subscription) => {
+        const kind = getBillingPlan(subscription.planId).kind;
+        return kind === 'subscription' || kind === 'one_time';
+      });
+      if (!hasPaidAccess) {
         throw apiError(
           'E_FORBIDDEN',
-          'Пакеты минут доступны при активном тарифе Pro. Сначала подключите тариф.'
+          'Пакеты минут доступны только при активном платном тарифе'
         );
       }
     }
@@ -291,10 +297,16 @@ export class BillingService {
         cardExpiryYear: remote.card?.expiry_year ?? null,
       });
       // Карта появилась — включаем автопродление активной подписки.
-      await this.deps.repository.setSubscriptionAutoRenew({
-        userId,
-        autoRenew: true,
-      });
+      const subscriptionIds = await this.findActiveRecurringSubscriptionIds(
+        userId
+      );
+      if (subscriptionIds.length > 0) {
+        await this.deps.repository.setSubscriptionAutoRenew({
+          userId,
+          autoRenew: true,
+          subscriptionIds,
+        });
+      }
       return;
     }
 
@@ -324,6 +336,7 @@ export class BillingService {
     if (!params.userId) {
       throw apiError('E_AUTH', 'Войдите в профиль');
     }
+    let subscriptionIds: string[] | undefined;
     if (params.enabled) {
       const method = await this.deps.repository.findPaymentMethodByUserId(
         params.userId
@@ -334,30 +347,93 @@ export class BillingService {
           'Сначала привяжите карту — автопродление списывает оплату с неё'
         );
       }
+      subscriptionIds = await this.findActiveRecurringSubscriptionIds(
+        params.userId
+      );
+      if (subscriptionIds.length === 0) return;
     }
     await this.deps.repository.setSubscriptionAutoRenew({
       userId: params.userId,
       autoRenew: params.enabled,
+      ...(subscriptionIds ? { subscriptionIds } : {}),
     });
   }
 
-  // Автопродление (по образцу Mentala: списание запускается опортунистически
-  // при обращении пользователя к биллинг-статусу, без отдельного крона).
+  private async findActiveRecurringSubscriptionIds(
+    userId: string
+  ): Promise<string[]> {
+    const active =
+      await this.deps.repository.findActiveSubscriptionsByUserId(userId);
+    return active
+      .filter(
+        (subscription) =>
+          getBillingPlan(subscription.planId).kind === 'subscription'
+      )
+      .map((subscription) => subscription.id);
+  }
+
+  // Автопродление при обращении пользователя к биллинг-статусу (по образцу
+  // Mentala). Работает как бэкап к фоновому обходу runAutoRenewalSweep.
   // Безопасно вызывать часто: claim-паттерн не даст списать дважды.
   async maybeRunAutoRenewal(userId: string | null | undefined): Promise<void> {
     if (!userId) return;
     const now = new Date();
-    const subscriptions =
-      await this.deps.repository.findActiveSubscriptionsByUserId(userId, now);
-    const due = subscriptions.find(
-      (subscription) =>
-        subscription.autoRenew &&
-        subscription.nextChargeAt &&
-        subscription.nextChargeAt <= now &&
-        getBillingPlan(subscription.planId).kind === 'subscription'
-    );
-    if (!due) return;
+    const [due] = await this.deps.repository.listSubscriptionsDueForCharge({
+      userId,
+      now,
+      retryAfterMs: AUTO_RENEW_RETRY_AFTER_MS,
+      limit: 1,
+      planIds: AUTO_RENEW_PLAN_IDS,
+    });
+    if (!due || getBillingPlan(due.planId).kind !== 'subscription') return;
 
+    await this.chargeSubscription(due, now);
+  }
+
+  // Фоновый обход подписок, которым пора автосписание (вызывается из
+  // воркера/интервала). Ошибка по одной подписке не прерывает остальные.
+  async runAutoRenewalSweep(params?: {
+    limit?: number;
+    now?: Date;
+  }): Promise<{ processed: number; failed: number }> {
+    const now = params?.now ?? new Date();
+    const due = await this.deps.repository.listSubscriptionsDueForCharge({
+      now,
+      retryAfterMs: AUTO_RENEW_RETRY_AFTER_MS,
+      limit: params?.limit ?? 50,
+      planIds: AUTO_RENEW_PLAN_IDS,
+    });
+
+    let processed = 0;
+    let failed = 0;
+    for (const subscription of due) {
+      try {
+        if (getBillingPlan(subscription.planId).kind !== 'subscription') {
+          continue;
+        }
+        await this.chargeSubscription(subscription, now);
+        processed += 1;
+      } catch (err) {
+        failed += 1;
+        console.error('[billing] renewal sweep item failed', {
+          subscriptionId: subscription.id,
+          err,
+        });
+      }
+    }
+    if (processed > 0 || failed > 0) {
+      console.info('[billing] renewal sweep done', { processed, failed });
+    }
+    return { processed, failed };
+  }
+
+  // Одна попытка автосписания по подписке. Claim-паттерн гарантирует,
+  // что параллельные вызовы (крон + опортунистический) не спишут дважды.
+  private async chargeSubscription(
+    due: SubscriptionRecord,
+    now: Date
+  ): Promise<void> {
+    const userId = due.userId;
     const claimed = await this.deps.repository.claimSubscriptionForCharge({
       subscriptionId: due.id,
       retryAfterMs: AUTO_RENEW_RETRY_AFTER_MS,
@@ -490,6 +566,39 @@ export class BillingService {
     });
 
     if (paymentOk) {
+      // Пакет минут не должен жить дольше самого доступа: пользователю
+      // только с разовым тарифом обрезаем срок пакета концом этого доступа.
+      // Подписчикам оставляем полные periodDays — их период продлится
+      // автосписанием.
+      let maxExpiresAt: Date | null = null;
+      if (plan.kind === 'addon') {
+        const now = new Date();
+        const activeSubscriptions =
+          await this.deps.repository.findActiveSubscriptionsByUserId(
+            order.userId,
+            now
+          );
+        const hasBaseSubscription = activeSubscriptions.some(
+          (subscription) =>
+            getBillingPlan(subscription.planId).kind === 'subscription'
+        );
+        if (!hasBaseSubscription) {
+          const oneTimeEnds = activeSubscriptions
+            .filter(
+              (subscription) =>
+                getBillingPlan(subscription.planId).kind === 'one_time'
+            )
+            .map((subscription) => subscription.currentPeriodEnd.getTime());
+          if (oneTimeEnds.length > 0) {
+            maxExpiresAt = new Date(
+              Math.min(
+                addDaysTo(now, plan.periodDays).getTime(),
+                Math.max(...oneTimeEnds)
+              )
+            );
+          }
+        }
+      }
       // Идемпотентно: заказ блокируется в транзакции, повторный вызов
       // (вебхук + поллинг) доступ второй раз не выдаст.
       const savedMethod =
@@ -514,6 +623,7 @@ export class BillingService {
           realtimeVoiceMinutes: plan.realtimeVoiceMinutes,
         },
         paymentMethod: savedMethod,
+        maxExpiresAt,
       });
     }
 
@@ -573,4 +683,10 @@ function buildBindingReturnUrl(appUrl: string): string {
   const url = new URL('/pricing', `${appUrl.replace(/\/$/, '')}/`);
   url.searchParams.set('binding', 'return');
   return url.toString();
+}
+
+function addDaysTo(date: Date, days: number): Date {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
 }

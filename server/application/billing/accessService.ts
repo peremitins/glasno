@@ -3,6 +3,7 @@ import { apiError } from '@/server/utils/errors';
 import type {
   BillingOwner,
   BillingRepository,
+  PaymentMethodRecord,
   SubscriptionRecord,
 } from '@/server/interface/billingRepository';
 import {
@@ -34,26 +35,49 @@ export class BillingAccessService {
   ) {}
 
   async getStatus(owner: BillingOwner): Promise<BillingStatusResponse> {
-    // Admin — безлимит, лимиты не считаем.
+    // Admin — безлимит, лимиты не считаем. Но реальный billing-блок
+    // (карта, автопродление) возвращаем: админ должен видеть и тестировать
+    // привязку карты и автосписания как обычный пользователь.
     if (owner.role === 'admin') {
+      const [subscriptions, paymentMethod] = await Promise.all([
+        owner.userId
+          ? this.deps.repository.findActiveSubscriptionsByUserId(owner.userId)
+          : Promise.resolve([]),
+        owner.userId
+          ? this.deps.repository.findPaymentMethodByUserId(owner.userId)
+          : Promise.resolve(null),
+      ]);
+      const plans = toActivePlans(subscriptions);
+      const subscriptionPlans = plans.filter(
+        (item) => item.plan.kind === 'subscription'
+      );
+      const primaryPlan =
+        [...plans].sort(
+          (a, b) => b.plan.priority - a.plan.priority
+        )[0] ?? null;
       return {
         freeSessionsLimit: FREE_SESSIONS_LIMIT,
         freeSessionsUsed: 0,
         canCreateInterview: true,
         allowedSessionGoals: ALL_SESSION_GOALS,
         paidInterviewsRemaining: null,
-        hasActiveSubscription: false,
+        hasActiveSubscription: subscriptionPlans.length > 0,
         unlimited: true,
-        activePlanId: null,
-        activePlanName: null,
-        subscriptionExpiresAt: null,
-        billing: null,
-        needsAuthForCheckout: false,
+        activePlanId: primaryPlan?.plan.id ?? null,
+        activePlanName: primaryPlan?.plan.name ?? null,
+        subscriptionExpiresAt:
+          primaryPlan?.subscription.currentPeriodEnd.toISOString() ?? null,
+        billing: buildBillingInfo({
+          userId: owner.userId,
+          subscriptionPlans,
+          paymentMethod,
+        }),
+        needsAuthForCheckout: !owner.userId,
         realtimeVoice: {
           includedMinutes: 999_999,
           usedMinutes: 0,
           remainingMinutes: 999_999,
-          canBuyMore: false,
+          canBuyMore: true,
         },
       };
     }
@@ -76,10 +100,7 @@ export class BillingAccessService {
           : Promise.resolve(null),
       ]);
 
-    const plans: ActivePlan[] = subscriptions.map((subscription) => ({
-      subscription,
-      plan: getBillingPlan(subscription.planId),
-    }));
+    const plans = toActivePlans(subscriptions);
     const subscriptionPlans = plans.filter(
       (item) => item.plan.kind === 'subscription'
     );
@@ -125,37 +146,11 @@ export class BillingAccessService {
     const remainingMinutes = Math.floor(minuteBalance.remainingSeconds / 60);
     const usedMinutes = Math.max(0, includedMinutes - remainingMinutes);
 
-    // Информация об автопродлении (по образцу Mentala): когда и сколько
-    // спишется, с какой карты, была ли ошибка последнего списания.
-    // Блок возвращается ЛЮБОМУ авторизованному пользователю — UI показывает
-    // «Привязать карту», когда карты нет.
-    const renewalSubscription = subscriptionPlans.find(
-      (item) => item.subscription.autoRenew
-    );
-    const activePaymentMethod =
-      paymentMethod?.status === 'active' ? paymentMethod : null;
-    const billing = owner.userId
-      ? {
-          autoRenew: Boolean(renewalSubscription),
-          nextChargeAt:
-            renewalSubscription?.subscription.nextChargeAt?.toISOString() ??
-            null,
-          nextChargeAmountRub: renewalSubscription
-            ? renewalSubscription.plan.priceRub
-            : null,
-          lastChargeError:
-            renewalSubscription?.subscription.lastChargeError ?? null,
-          paymentMethod: activePaymentMethod
-            ? {
-                title: activePaymentMethod.title,
-                cardBrand: activePaymentMethod.cardBrand,
-                cardLast4: activePaymentMethod.cardLast4,
-                cardExpiryMonth: activePaymentMethod.cardExpiryMonth,
-                cardExpiryYear: activePaymentMethod.cardExpiryYear,
-              }
-            : null,
-        }
-      : null;
+    const billing = buildBillingInfo({
+      userId: owner.userId,
+      subscriptionPlans,
+      paymentMethod,
+    });
 
     return {
       freeSessionsLimit: FREE_SESSIONS_LIMIT,
@@ -175,8 +170,9 @@ export class BillingAccessService {
         includedMinutes,
         usedMinutes,
         remainingMinutes,
-        // Пакеты минут продаются только при активной подписке.
-        canBuyMore: Boolean(owner.userId) && hasActiveSubscription,
+        // Пакеты минут продаются при любом активном платном тарифе
+        // (подписка или разовый доступ).
+        canBuyMore: Boolean(owner.userId) && plans.length > 0,
       },
     };
   }
@@ -207,4 +203,46 @@ export class BillingAccessService {
     }
     return status;
   }
+}
+
+function toActivePlans(subscriptions: SubscriptionRecord[]): ActivePlan[] {
+  return subscriptions.map((subscription) => ({
+    subscription,
+    plan: getBillingPlan(subscription.planId),
+  }));
+}
+
+// Информация об автопродлении (по образцу Mentala): когда и сколько
+// спишется, с какой карты, была ли ошибка последнего списания.
+// Блок возвращается ЛЮБОМУ авторизованному пользователю — UI показывает
+// «Привязать карту», когда карты нет.
+function buildBillingInfo(params: {
+  userId: string | null | undefined;
+  subscriptionPlans: ActivePlan[];
+  paymentMethod: PaymentMethodRecord | null;
+}): BillingStatusResponse['billing'] {
+  if (!params.userId) return null;
+  const renewalSubscription = params.subscriptionPlans.find(
+    (item) => item.subscription.autoRenew
+  );
+  const activePaymentMethod =
+    params.paymentMethod?.status === 'active' ? params.paymentMethod : null;
+  return {
+    autoRenew: Boolean(renewalSubscription),
+    nextChargeAt:
+      renewalSubscription?.subscription.nextChargeAt?.toISOString() ?? null,
+    nextChargeAmountRub: renewalSubscription
+      ? renewalSubscription.plan.priceRub
+      : null,
+    lastChargeError: renewalSubscription?.subscription.lastChargeError ?? null,
+    paymentMethod: activePaymentMethod
+      ? {
+          title: activePaymentMethod.title,
+          cardBrand: activePaymentMethod.cardBrand,
+          cardLast4: activePaymentMethod.cardLast4,
+          cardExpiryMonth: activePaymentMethod.cardExpiryMonth,
+          cardExpiryYear: activePaymentMethod.cardExpiryYear,
+        }
+      : null,
+  };
 }

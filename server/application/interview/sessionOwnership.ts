@@ -14,12 +14,12 @@ export function assertOwnedInterviewSession<T extends OwnedInterviewSessionLike>
   if (!session) {
     throw apiError('E_NOT_FOUND', 'Интервью не найдено');
   }
+  const ownedByUser = params.userId && session.userId === params.userId;
   const ownedByAnonymousSession =
+    !params.userId &&
+    !session.userId &&
     session.anonymousSessionId === params.anonymousSessionId;
-  const ownedByUser = Boolean(
-    params.userId && session.userId === params.userId
-  );
-  if (!ownedByAnonymousSession && !ownedByUser) {
+  if (!ownedByUser && !ownedByAnonymousSession) {
     throw apiError('E_FORBIDDEN', 'Нет доступа к этому интервью');
   }
   return session;

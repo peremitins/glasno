@@ -127,6 +127,9 @@ export interface BillingRepository {
       cardExpiryMonth?: string | null;
       cardExpiryYear?: string | null;
     } | null;
+    // Верхняя граница срока действия минут (для addon-пакетов: не дольше
+    // конца активного разового доступа покупателя).
+    maxExpiresAt?: Date | null;
     now?: Date;
   }): Promise<FulfillPaidOrderResult>;
   findPaymentMethodByUserId(userId: string): Promise<PaymentMethodRecord | null>;
@@ -151,8 +154,21 @@ export interface BillingRepository {
   setSubscriptionAutoRenew(params: {
     userId: string;
     autoRenew: boolean;
+    // При включении application-слой передаёт только реальные subscription-
+    // записи. При выключении undefined означает сбросить все записи владельца.
+    subscriptionIds?: string[];
     now?: Date;
   }): Promise<void>;
+  // Подписки, которым пора автосписание (для фонового обхода): только
+  // переданные subscription planIds, active, autoRenew, nextChargeAt <= now,
+  // с учётом троттлинга повторных попыток.
+  listSubscriptionsDueForCharge(params: {
+    userId?: string;
+    planIds: string[];
+    now?: Date;
+    retryAfterMs: number;
+    limit?: number;
+  }): Promise<SubscriptionRecord[]>;
   // Атомарно «забирает» подписку на попытку автосписания (claim):
   // возвращает null, если списание уже выполняется/недавно было.
   claimSubscriptionForCharge(params: {
