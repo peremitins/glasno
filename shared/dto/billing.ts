@@ -72,6 +72,12 @@ export const BillingStatusResponseDto = z.object({
 
 export const BillingCheckoutRequestDto = z.object({
   planId: z.string().min(1),
+  gift: z
+    .object({
+      recipientEmail: z.string().trim().toLowerCase().email().max(254),
+      senderName: z.string().trim().min(1).max(80),
+    })
+    .optional(),
 });
 
 export const BillingCheckoutResponseDto = z.object({
@@ -91,6 +97,56 @@ export const BillingPaymentStatusResponseDto = z.object({
   hasActiveSubscription: z.boolean(),
   subscriptionExpiresAt: z.string().nullable(),
   shouldContinuePolling: z.boolean(),
+  purchaseType: z.enum(['self', 'gift']).default('self'),
+  gift: z
+    .object({
+      recipientEmailMasked: z.string(),
+      status: z.enum([
+        'pending_payment',
+        'ready',
+        'claimed',
+        'canceled',
+        'expired',
+      ]),
+      claimExpiresAt: z.string().nullable(),
+      notificationStatus: z.enum(['pending', 'sending', 'sent', 'failed']),
+    })
+    .nullable()
+    .default(null),
+});
+
+export const BillingPaymentHistoryGiftDto = z.object({
+  id: z.string(),
+  recipientEmailMasked: z.string(),
+  status: z.enum([
+    'pending_payment',
+    'ready',
+    'claimed',
+    'canceled',
+    'expired',
+  ]),
+  claimExpiresAt: z.string().nullable(),
+  claimedAt: z.string().nullable(),
+  notificationStatus: z.enum(['pending', 'sending', 'sent', 'failed']),
+});
+
+export const BillingPaymentHistoryItemDto = z.object({
+  id: z.string(),
+  planId: z.string(),
+  planName: z.string(),
+  planKind: BillingPlanKindDto,
+  amountRub: z.number().int().nonnegative(),
+  currency: z.literal('RUB'),
+  provider: z.string(),
+  status: z.string(),
+  createdAt: z.string(),
+  operationId: z.string().nullable(),
+  gift: BillingPaymentHistoryGiftDto.nullable(),
+});
+
+export const BillingPaymentHistoryResponseDto = z.object({
+  items: z.array(BillingPaymentHistoryItemDto),
+  nextCursor: z.string().nullable(),
 });
 
 export const BillingWebhookResponseDto = z.object({
@@ -125,4 +181,10 @@ export type BillingCheckoutResponse = z.infer<
 >;
 export type BillingPaymentStatusResponse = z.infer<
   typeof BillingPaymentStatusResponseDto
+>;
+export type BillingPaymentHistoryItem = z.infer<
+  typeof BillingPaymentHistoryItemDto
+>;
+export type BillingPaymentHistoryResponse = z.infer<
+  typeof BillingPaymentHistoryResponseDto
 >;

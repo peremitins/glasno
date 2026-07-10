@@ -8,6 +8,7 @@ import type {
 } from '@/server/interface/billingRepository';
 import {
   ALL_SESSION_GOALS,
+  BILLING_PLANS,
   FREE_ALLOWED_SESSION_GOALS,
   FREE_SESSIONS_LIMIT,
   getBillingPlan,
@@ -30,11 +31,31 @@ export class BillingAccessService {
         | 'findActiveSubscriptionsByUserId'
         | 'getRealtimeMinuteBalance'
         | 'findPaymentMethodByUserId'
+        | 'findUserEmail'
+        | 'claimReadyGiftsByEmail'
       >;
     }
   ) {}
 
   async getStatus(owner: BillingOwner): Promise<BillingStatusResponse> {
+    if (owner.userId) {
+      const email = await this.deps.repository.findUserEmail(owner.userId);
+      if (email) {
+        await this.deps.repository.claimReadyGiftsByEmail({
+          recipientEmail: email.trim().toLowerCase(),
+          beneficiaryUserId: owner.userId,
+          plans: BILLING_PLANS.filter(
+            (plan) => plan.priceRub > 0 && plan.kind !== 'addon'
+          ).map((plan) => ({
+            id: plan.id,
+            kind: plan.kind,
+            periodDays: plan.periodDays,
+            realtimeVoiceMinutes: plan.realtimeVoiceMinutes,
+          })),
+        });
+      }
+    }
+
     // Admin — безлимит, лимиты не считаем. Но реальный billing-блок
     // (карта, автопродление) возвращаем: админ должен видеть и тестировать
     // привязку карты и автосписания как обычный пользователь.

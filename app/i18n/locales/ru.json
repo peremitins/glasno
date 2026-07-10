@@ -61,7 +61,14 @@
     "progressCompletedShort": "готово",
     "progressAverageShort": "средний",
     "planTitle": "Pro план",
-    "planHint": "Разблокируйте безлимитные интервью и расширенные отчёты."
+    "planHint": "Разблокируйте безлимитные интервью и расширенные отчёты.",
+    "giftAction": "Подарить",
+    "shareAction": "Поделиться",
+    "shareTitle": "Гласно: тренажёр собеседований",
+    "shareText": "Попробуй Гласно. Здесь можно отрепетировать собеседование по своей вакансии и получить разбор ответов.",
+    "shareShared": "Готово — выберите, кому отправить",
+    "shareCopied": "Текст и ссылка скопированы",
+    "shareFailed": "Не удалось поделиться. Скопируйте адрес glasno.app"
   },
   "nav": {
     "dashboard": "Главная",
@@ -745,7 +752,52 @@
     "enableRenewConfirmTitle": "Включить автопродление?",
     "enableRenewConfirmText": "В конце оплаченного периода тариф продлится автоматически со списанием с привязанной карты. Отключить можно в любой момент.",
     "disableRenewConfirmTitle": "Отключить автопродление?",
-    "disableRenewConfirmText": "Списаний больше не будет. Доступ к тарифу сохранится до {date}, после чего перейдёте на бесплатный план."
+    "disableRenewConfirmText": "Списаний больше не будет. Все возможности тарифа останутся доступны до {date}.",
+    "giftToFriend": "Подарить другу",
+    "checkoutLabel": "Оформление",
+    "summaryLabel": "Сумма и параметры оплаты",
+    "period30Days": "30 дней",
+    "period7Days": "7 дней",
+    "minutesAmount": "{minutes} минут",
+    "giftSwitchHint": "Доступ привяжется к email получателя",
+    "giftEmailLabel": "Email друга",
+    "giftEmailPlaceholder": "friend{'@'}example.com",
+    "giftEmailError": "Введите корректный email получателя",
+    "giftSenderNameLabel": "Имя отправителя",
+    "giftSenderNamePlaceholder": "Например, Николай",
+    "giftSenderNameError": "Укажите имя отправителя",
+    "checkoutProvider": "Карта, СБП и другие способы через YooKassa",
+    "checkoutCta": "Оплатить {amount} ₽",
+    "giftCheckoutCta": "Подарить за {amount} ₽",
+    "giftDisclosure": "После оплаты отправим письмо. Полный срок начнётся при первом входе по указанному email. Активировать подарок нужно в течение 6 месяцев. Повторных списаний не будет.",
+    "oneTimeDisclosure": "Разовая оплата без автоматических списаний.",
+    "giftPaymentReady": "Подарок оформлен для {email}. Письмо будет отправлено автоматически.",
+    "giftReceived": "Подарок активирован. Полный оплаченный срок уже начался.",
+    "historyLabel": "Платежи",
+    "historyTitle": "История платежей",
+    "historySubtitle": "Покупки тарифов, пакетов минут и подарков",
+    "historyEmptyTitle": "Платежей пока нет",
+    "historyEmpty": "После первой покупки здесь появятся сумма, дата и статус операции.",
+    "historyLoadMore": "Показать ещё",
+    "historyGiftFor": "Подарок для {email}",
+    "historyStatus": {
+      "succeeded": "Оплачен",
+      "pending": "Обрабатывается",
+      "canceled": "Отменён",
+      "failed": "Ошибка"
+    },
+    "historyGiftStatus": {
+      "pending_payment": "Ожидает оплаты",
+      "ready": "Ожидает входа получателя",
+      "claimed": "Активирован",
+      "canceled": "Платёж отменён",
+      "expired": "Срок активации истёк"
+    },
+    "historyEmailStatus": {
+      "sent": "Письмо отправлено",
+      "pending": "Отправляем письмо",
+      "failed": "Письмо не доставлено, подарок доступен по этому email"
+    }
   },
   "billing": {
     "free": "Free",
@@ -810,6 +862,7 @@
     }
   },
   "common": {
+    "close": "Закрыть",
     "soon": "Скоро",
     "loading": "Загружаем...",
     "empty": "Пока пусто",

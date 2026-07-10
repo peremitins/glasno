@@ -47,10 +47,29 @@ function createRepository(
       }
     ),
     findPaymentMethodByUserId: vi.fn().mockResolvedValue(null),
+    findUserEmail: vi.fn().mockResolvedValue('friend@example.com'),
+    claimReadyGiftsByEmail: vi.fn().mockResolvedValue([]),
   };
 }
 
 describe('BillingAccessService', () => {
+  it('claims gifts for the verified email before resolving paid access', async () => {
+    const repository = createRepository();
+    const service = new BillingAccessService({ repository });
+
+    await service.getStatus({
+      anonymousSessionId: 'anon_1',
+      userId: 'user_1',
+    });
+
+    expect(repository.claimReadyGiftsByEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        recipientEmail: 'friend@example.com',
+        beneficiaryUserId: 'user_1',
+      })
+    );
+  });
+
   it('allows the first anonymous interview', async () => {
     const service = new BillingAccessService({
       repository: createRepository({ sessionsUsed: 0 }),

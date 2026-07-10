@@ -11,8 +11,9 @@ export default defineApiHandler(async (event) => {
   const service = createBillingService(event);
   const checkout = await service.createCheckout({
     userId: event.context.session?.userId,
+    role: event.context.session?.role,
     planId: input.planId,
+    gift: input.gift,
   });
   return BillingCheckoutResponseDto.parse(checkout);
 });
-

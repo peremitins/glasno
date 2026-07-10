@@ -63,6 +63,52 @@ export interface PaymentOrderRecord {
   updatedAt: Date;
 }
 
+export type GiftEntitlementStatus =
+  | 'pending_payment'
+  | 'ready'
+  | 'claimed'
+  | 'canceled'
+  | 'expired';
+
+export type GiftNotificationStatus =
+  | 'pending'
+  | 'sending'
+  | 'sent'
+  | 'failed';
+
+export interface GiftEntitlementRecord {
+  id: string;
+  orderId: string;
+  purchaserUserId: string;
+  recipientEmail: string;
+  senderName: string | null;
+  planId: string;
+  status: GiftEntitlementStatus;
+  paidAt: Date | null;
+  claimExpiresAt: Date | null;
+  claimedAt: Date | null;
+  claimedByUserId: string | null;
+  notificationStatus: GiftNotificationStatus;
+  notificationAttempts: number;
+  notificationNextAttemptAt: Date | null;
+  notificationSentAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface GiftPaymentOrderResult {
+  order: PaymentOrderRecord;
+  gift: GiftEntitlementRecord;
+}
+
+export interface PaymentOrderHistoryPage {
+  items: Array<{
+    order: PaymentOrderRecord;
+    gift: GiftEntitlementRecord | null;
+  }>;
+  nextCursor: string | null;
+}
+
 export interface CreatePaymentOrderInput {
   userId: string;
   planId: string;
@@ -210,6 +256,52 @@ export interface BillingRepository {
     }
   ): Promise<number>;
   createPaymentOrder(input: CreatePaymentOrderInput): Promise<PaymentOrderRecord>;
+  createGiftPaymentOrder(input: {
+    purchaserUserId: string;
+    recipientEmail: string;
+    senderName: string;
+    planId: string;
+    amountRub: number;
+    currency: 'RUB';
+    metadata: Record<string, unknown>;
+  }): Promise<GiftPaymentOrderResult>;
+  findGiftEntitlementByOrderId(
+    orderId: string
+  ): Promise<GiftEntitlementRecord | null>;
+  markGiftOrderPaid(params: {
+    orderId: string;
+    providerPaymentId: string;
+    paidAt?: Date;
+    claimExpiresAt: Date;
+  }): Promise<GiftEntitlementRecord | null>;
+  cancelGiftOrder(params: {
+    orderId: string;
+    now?: Date;
+  }): Promise<void>;
+  claimReadyGiftsByEmail(params: {
+    recipientEmail: string;
+    beneficiaryUserId: string;
+    plans: FulfillPlanInput[];
+    now?: Date;
+  }): Promise<GiftEntitlementRecord[]>;
+  listPaymentOrdersByUserId(params: {
+    userId: string;
+    cursor?: string | null;
+    limit?: number;
+  }): Promise<PaymentOrderHistoryPage>;
+  claimGiftNotifications(params: {
+    now?: Date;
+    limit?: number;
+  }): Promise<GiftEntitlementRecord[]>;
+  markGiftNotificationSent(params: {
+    giftId: string;
+    now?: Date;
+  }): Promise<void>;
+  markGiftNotificationFailed(params: {
+    giftId: string;
+    nextAttemptAt: Date | null;
+    now?: Date;
+  }): Promise<void>;
   findPaymentOrderById(id: string): Promise<PaymentOrderRecord | null>;
   findPaymentOrderByProviderPaymentId(
     providerPaymentId: string

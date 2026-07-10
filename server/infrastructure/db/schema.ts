@@ -143,25 +143,99 @@ export const questionBank = pgTable('question_bank', {
 });
 
 // Платёжные заказы YooKassa.
-export const paymentOrders = pgTable('payment_orders', {
-  id: uuid('id').defaultRandom().primaryKey(),
-  userId: uuid('user_id')
-    .references(() => users.id)
-    .notNull(),
-  planId: text('plan_id').notNull(),
-  provider: text('provider').default('yookassa').notNull(),
-  providerPaymentId: text('provider_payment_id'),
-  status: text('status').default('pending').notNull(),
-  amountRub: integer('amount_rub').notNull(),
-  currency: text('currency').default('RUB').notNull(),
-  confirmationUrl: text('confirmation_url'),
-  metadata: jsonb('metadata'),
-  // Момент выдачи доступа по оплаченному заказу. Используется как
-  // идемпотентный флаг: вебхук и поллинг checkout-status не выдадут доступ дважды.
-  fulfilledAt: timestamp('fulfilled_at', { withTimezone: true }),
-  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
-});
+export const paymentOrders = pgTable(
+  'payment_orders',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    userId: uuid('user_id')
+      .references(() => users.id)
+      .notNull(),
+    planId: text('plan_id').notNull(),
+    provider: text('provider').default('yookassa').notNull(),
+    providerPaymentId: text('provider_payment_id'),
+    status: text('status').default('pending').notNull(),
+    amountRub: integer('amount_rub').notNull(),
+    currency: text('currency').default('RUB').notNull(),
+    confirmationUrl: text('confirmation_url'),
+    metadata: jsonb('metadata'),
+    // Для обычной покупки это момент выдачи доступа, для подарка — момент
+    // создания оплаченного entitlement. Оба пути используют поле как
+    // идемпотентный флаг вебхука и checkout-status.
+    fulfilledAt: timestamp('fulfilled_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index('payment_orders_user_id_created_at_idx').on(
+      table.userId,
+      table.createdAt,
+      table.id
+    ),
+  ]
+);
+
+// Оплаченный подарок закрепляется за email и начинает действовать только
+// после подтверждённого входа получателя. Email хранится нормализованным.
+export const giftEntitlements = pgTable(
+  'gift_entitlements',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    orderId: uuid('order_id')
+      .references(() => paymentOrders.id)
+      .notNull(),
+    purchaserUserId: uuid('purchaser_user_id')
+      .references(() => users.id)
+      .notNull(),
+    recipientEmail: text('recipient_email').notNull(),
+    // Nullable только для совместимости с подарками, созданными до появления
+    // подписи. Все новые checkout-запросы требуют имя отправителя.
+    senderName: text('sender_name'),
+    planId: text('plan_id').notNull(),
+    status: text('status').default('pending_payment').notNull(),
+    paidAt: timestamp('paid_at', { withTimezone: true }),
+    claimExpiresAt: timestamp('claim_expires_at', { withTimezone: true }),
+    claimedAt: timestamp('claimed_at', { withTimezone: true }),
+    claimedByUserId: uuid('claimed_by_user_id').references(() => users.id),
+    notificationStatus: text('notification_status')
+      .default('pending')
+      .notNull(),
+    notificationAttempts: integer('notification_attempts')
+      .default(0)
+      .notNull(),
+    notificationNextAttemptAt: timestamp('notification_next_attempt_at', {
+      withTimezone: true,
+    }),
+    notificationSentAt: timestamp('notification_sent_at', {
+      withTimezone: true,
+    }),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex('gift_entitlements_order_id_uq').on(table.orderId),
+    index('gift_entitlements_recipient_status_expiry_idx').on(
+      table.recipientEmail,
+      table.status,
+      table.claimExpiresAt
+    ),
+    index('gift_entitlements_purchaser_created_at_idx').on(
+      table.purchaserUserId,
+      table.createdAt
+    ),
+    index('gift_entitlements_notification_queue_idx').on(
+      table.notificationStatus,
+      table.notificationNextAttemptAt
+    ),
+  ]
+);
 
 // Гранты доступа после успешной оплаты.
 export const userSubscriptions = pgTable(

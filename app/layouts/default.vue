@@ -6,21 +6,34 @@
     DoubleArrowRightIcon,
     GearIcon,
     HomeIcon,
+    MagicWandIcon,
     MoonIcon,
     PersonIcon,
     PlusCircledIcon,
+    Share1Icon,
     SunIcon,
   } from '@radix-icons/vue';
-  import { computed, defineComponent, useSlots } from 'vue';
+  import {
+    computed,
+    defineComponent,
+    onBeforeUnmount,
+    ref,
+    useSlots,
+  } from 'vue';
   import { useI18n } from 'vue-i18n';
   import AuroraField from '@/app/components/design/AuroraField.vue';
+  import { shareServiceContent } from '@/app/composables/useShareService';
   import type { DashboardSummaryResponse } from '@/shared/dto';
 
   const { t } = useI18n();
   const api = useAPI();
+  const runtimeConfig = useRuntimeConfig();
   const slots = useSlots();
   const { theme, toggleTheme } = useDesignPreferences();
   const isSidebarCollapsed = useLocalStorage('glasno-sidebar-collapsed', false);
+  const sharePending = ref(false);
+  const shareFeedback = ref('');
+  let shareFeedbackTimer: ReturnType<typeof setTimeout> | null = null;
   const { data: layoutSummary } = await useAsyncData(
     'layout-dashboard-summary',
     async () => {
@@ -56,6 +69,39 @@
     { to: '/pricing', key: 'pricing', icon: BarChartIcon },
     { to: '/profile', key: 'profile', icon: PersonIcon },
   ];
+
+  async function shareService() {
+    if (sharePending.value) return;
+    sharePending.value = true;
+    shareFeedback.value = '';
+    try {
+      const result = await shareServiceContent({
+        title: t('layout.shareTitle'),
+        text: t('layout.shareText'),
+        url: runtimeConfig.public.landingUrl,
+        imageUrl: '/brand/logo.png',
+      });
+      if (result === 'shared') {
+        shareFeedback.value = t('layout.shareShared');
+      } else if (result === 'copied') {
+        shareFeedback.value = t('layout.shareCopied');
+      } else if (result === 'failed') {
+        shareFeedback.value = t('layout.shareFailed');
+      }
+      if (shareFeedback.value) {
+        if (shareFeedbackTimer) clearTimeout(shareFeedbackTimer);
+        shareFeedbackTimer = setTimeout(() => {
+          shareFeedback.value = '';
+        }, 4200);
+      }
+    } finally {
+      sharePending.value = false;
+    }
+  }
+
+  onBeforeUnmount(() => {
+    if (shareFeedbackTimer) clearTimeout(shareFeedbackTimer);
+  });
 </script>
 
 <template>
@@ -76,7 +122,7 @@
               width="44"
               height="44"
               aria-hidden="true"
-            />
+            >
           </span>
           <span class="brand-text">{{ t('app.name') }}</span>
         </NuxtLink>
@@ -103,7 +149,7 @@
 
       <nav class="nav" aria-label="Основная навигация">
         <NuxtLink
-          v-for="item in nav"
+          v-for="item in nav.slice(0, 4)"
           :key="item.to"
           v-tooltip="isSidebarCollapsed ? t(`nav.${item.key}`) : undefined"
           :to="item.to"
@@ -119,6 +165,42 @@
             :class="{ 'nav-label--collapsed': isSidebarCollapsed }"
             >{{ t(`nav.${item.key}`) }}</span
           >
+        </NuxtLink>
+        <NuxtLink
+          v-tooltip="isSidebarCollapsed ? t('layout.giftAction') : undefined"
+          to="/pricing?checkout=gift&plan=pro_monthly"
+          class="nav-item nav-action"
+          :aria-label="t('layout.giftAction')"
+        >
+          <span class="nav-ico" aria-hidden="true">
+            <MagicWandIcon />
+          </span>
+          <span class="nav-label">{{ t('layout.giftAction') }}</span>
+        </NuxtLink>
+        <button
+          v-tooltip="isSidebarCollapsed ? t('layout.shareAction') : undefined"
+          type="button"
+          class="nav-item nav-action"
+          :aria-label="t('layout.shareAction')"
+          :disabled="sharePending"
+          @click="shareService"
+        >
+          <span class="nav-ico" aria-hidden="true">
+            <Share1Icon />
+          </span>
+          <span class="nav-label">{{ t('layout.shareAction') }}</span>
+        </button>
+        <NuxtLink
+          v-tooltip="isSidebarCollapsed ? t('nav.profile') : undefined"
+          to="/profile"
+          class="nav-item"
+          active-class="nav-item--active"
+          :aria-label="t('nav.profile')"
+        >
+          <span class="nav-ico" aria-hidden="true">
+            <PersonIcon />
+          </span>
+          <span class="nav-label">{{ t('nav.profile') }}</span>
         </NuxtLink>
       </nav>
 
@@ -153,6 +235,15 @@
         </div>
 
         <div class="toolbar">
+          <button
+            type="button"
+            class="icon-button share-toolbar-action"
+            :aria-label="t('layout.shareAction')"
+            :disabled="sharePending"
+            @click="shareService"
+          >
+            <Share1Icon aria-hidden="true" />
+          </button>
           <button
             type="button"
             class="icon-button"
@@ -193,6 +284,13 @@
         <small>{{ t(`nav.${item.key}`) }}</small>
       </NuxtLink>
       <NuxtLink
+        to="/pricing?checkout=gift&plan=pro_monthly"
+        class="bottom-item"
+      >
+        <MagicWandIcon aria-hidden="true" />
+        <small>{{ t('layout.giftAction') }}</small>
+      </NuxtLink>
+      <NuxtLink
         to="/profile"
         class="bottom-item"
         active-class="bottom-item--active"
@@ -201,6 +299,10 @@
         <small>{{ t('nav.profile') }}</small>
       </NuxtLink>
     </nav>
+
+    <p v-if="shareFeedback" class="share-feedback" aria-live="polite">
+      {{ shareFeedback }}
+    </p>
   </div>
 </template>
 
@@ -312,6 +414,19 @@
   .nav {
     display: grid;
     gap: 6px;
+  }
+
+  .nav-action {
+    width: 100%;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .nav-action:disabled,
+  .icon-button:disabled {
+    cursor: wait;
+    opacity: 0.6;
   }
 
   .nav-item {
@@ -631,6 +746,27 @@
     display: none;
   }
 
+  .share-toolbar-action {
+    display: none;
+  }
+
+  .share-feedback {
+    position: fixed;
+    right: 18px;
+    bottom: 18px;
+    z-index: 240;
+    max-width: min(360px, calc(100vw - 36px));
+    margin: 0;
+    padding: 12px 16px;
+    border: 1px solid var(--glass-border-strong);
+    border-radius: var(--radius-sm);
+    background: var(--surface-solid);
+    box-shadow: var(--shadow-panel);
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 700;
+  }
+
   @media (max-width: 1365px) {
     .layout-shell {
       grid-template-columns: 1fr;
@@ -639,6 +775,10 @@
 
     .sidebar {
       display: none;
+    }
+
+    .share-toolbar-action {
+      display: grid;
     }
 
     .topbar {
@@ -696,6 +836,11 @@
     .bottom-item--active {
       background: var(--surface-raised);
       color: var(--text-primary);
+    }
+
+    .share-feedback {
+      right: 14px;
+      bottom: calc(max(14px, env(safe-area-inset-bottom)) + 76px);
     }
   }
 

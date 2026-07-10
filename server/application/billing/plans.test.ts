@@ -72,6 +72,9 @@ describe('billing plans', () => {
       expect(pack.interval).toBe('once');
       expect(pack.isCheckoutEnabled).toBe(true);
       expect(pack.requiresActiveSubscription).toBe(true);
+      expect(pack.features).toContain(
+        'Не сгорают, пока активен платный тариф'
+      );
     }
   });
 

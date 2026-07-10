@@ -1,8 +1,10 @@
 import type {
   BillingCheckoutResponse,
+  BillingPaymentHistoryResponse,
   BillingPaymentStatusResponse,
   BillingPlansResponse,
   BillingStatusResponse,
+  UserRole,
 } from '@/shared/dto';
 import { apiError } from '@/server/utils/errors';
 import type {
@@ -29,6 +31,8 @@ import {
   getYooKassaPaymentMethod,
   type YooKassaConfig,
 } from './yookassaClient';
+import { GiftNotificationService } from './giftNotificationService';
+import { sendGiftNotificationEmail } from './giftEmailSender';
 
 // Не чаще одной попытки автосписания раз в 6 часов (анти-даблчардж +
 // щадящие ретраи при ошибке карты).
@@ -44,6 +48,7 @@ export interface BillingServiceConfig {
 
 export class BillingService {
   private readonly access: BillingAccessService;
+  private readonly giftNotifications: GiftNotificationService;
 
   constructor(
     private readonly deps: {
@@ -53,6 +58,11 @@ export class BillingService {
   ) {
     this.access = new BillingAccessService({
       repository: deps.repository,
+    });
+    this.giftNotifications = new GiftNotificationService({
+      repository: deps.repository,
+      sendEmail: sendGiftNotificationEmail,
+      appUrl: deps.config.appUrl,
     });
   }
 
@@ -64,9 +74,82 @@ export class BillingService {
     return this.access.getStatus(owner);
   }
 
+  async claimGiftsForUser(params: {
+    userId: string;
+    email: string;
+  }): Promise<number> {
+    const claimed = await this.deps.repository.claimReadyGiftsByEmail({
+      recipientEmail: params.email.trim().toLowerCase(),
+      beneficiaryUserId: params.userId,
+      plans: BILLING_PLANS.filter(
+        (plan) => plan.priceRub > 0 && plan.kind !== 'addon'
+      ).map((plan) => ({
+        id: plan.id,
+        kind: plan.kind,
+        periodDays: plan.periodDays,
+        realtimeVoiceMinutes: plan.realtimeVoiceMinutes,
+      })),
+    });
+    return claimed.length;
+  }
+
+  async runGiftNotificationSweep(params?: { limit?: number; now?: Date }) {
+    return await this.giftNotifications.runSweep(params);
+  }
+
+  async getPaymentHistory(params: {
+    userId: string | null | undefined;
+    cursor?: string | null;
+    limit?: number;
+  }): Promise<BillingPaymentHistoryResponse> {
+    if (!params.userId) {
+      throw apiError('E_AUTH', 'Для просмотра платежей войдите в профиль');
+    }
+    const page = await this.deps.repository.listPaymentOrdersByUserId({
+      userId: params.userId,
+      cursor: params.cursor,
+      limit: params.limit,
+    });
+    return {
+      items: page.items.map(({ order, gift }) => {
+        let plan;
+        try {
+          plan = getBillingPlan(order.planId);
+        } catch {
+          plan = null;
+        }
+        return {
+          id: order.id,
+          planId: order.planId,
+          planName: plan?.name ?? order.planId,
+          planKind: plan?.kind ?? 'subscription',
+          amountRub: order.amountRub,
+          currency: order.currency,
+          provider: order.provider,
+          status: order.status,
+          createdAt: order.createdAt.toISOString(),
+          operationId: order.providerPaymentId,
+          gift: gift
+            ? {
+                id: gift.id,
+                recipientEmailMasked: maskEmail(gift.recipientEmail),
+                status: effectiveGiftStatus(gift.status, gift.claimExpiresAt),
+                claimExpiresAt: gift.claimExpiresAt?.toISOString() ?? null,
+                claimedAt: gift.claimedAt?.toISOString() ?? null,
+                notificationStatus: gift.notificationStatus,
+              }
+            : null,
+        };
+      }),
+      nextCursor: page.nextCursor,
+    };
+  }
+
   async createCheckout(params: {
     userId: string | null | undefined;
+    role?: UserRole | null;
     planId: string;
+    gift?: { recipientEmail: string; senderName: string };
   }): Promise<BillingCheckoutResponse> {
     if (!params.userId) {
       throw apiError('E_AUTH', 'Для оплаты войдите в профиль');
@@ -74,6 +157,24 @@ export class BillingService {
     this.requireYooKassaConfig();
 
     const plan = getPaidBillingPlan(params.planId);
+    const recipientEmail = params.gift?.recipientEmail.trim().toLowerCase();
+    const senderName = params.gift?.senderName?.trim();
+
+    if (recipientEmail && !senderName) {
+      throw apiError('E_VALIDATION', 'Укажите имя отправителя подарка');
+    }
+
+    if (recipientEmail && plan.kind === 'addon') {
+      throw apiError(
+        'E_VALIDATION',
+        'Подарить можно только тариф или разовую подготовку'
+      );
+    }
+
+    const email = await this.deps.repository.findUserEmail(params.userId);
+    if (recipientEmail && email?.trim().toLowerCase() === recipientEmail) {
+      throw apiError('E_VALIDATION', 'Для себя выберите обычную покупку');
+    }
 
     // Пакеты минут — расходник к активному платному тарифу (подписка или
     // разовый доступ): без него они бесполезны (нельзя создавать интервью),
@@ -87,7 +188,7 @@ export class BillingService {
         const kind = getBillingPlan(subscription.planId).kind;
         return kind === 'subscription' || kind === 'one_time';
       });
-      if (!hasPaidAccess) {
+      if (!hasPaidAccess && params.role !== 'admin') {
         throw apiError(
           'E_FORBIDDEN',
           'Пакеты минут доступны только при активном платном тарифе'
@@ -95,21 +196,38 @@ export class BillingService {
       }
     }
 
-    const order = await this.deps.repository.createPaymentOrder({
-      userId: params.userId,
-      planId: plan.id,
-      amountRub: plan.priceRub,
-      currency: 'RUB',
-      metadata: {
-        userId: params.userId,
-        planId: plan.id,
-      },
-    });
+    const order = recipientEmail
+      ? (
+          await this.deps.repository.createGiftPaymentOrder({
+            purchaserUserId: params.userId,
+            recipientEmail,
+            senderName: senderName!,
+            planId: plan.id,
+            amountRub: plan.priceRub,
+            currency: 'RUB',
+            metadata: {
+              userId: params.userId,
+              planId: plan.id,
+              gift: true,
+            },
+          })
+        ).order
+      : await this.deps.repository.createPaymentOrder({
+          userId: params.userId,
+          planId: plan.id,
+          amountRub: plan.priceRub,
+          currency: 'RUB',
+          metadata: {
+            userId: params.userId,
+            planId: plan.id,
+          },
+        });
 
     // Чек 54-ФЗ: передаём receipt, если у пользователя указан email
     // (паттерн Mentala: без email платёж уходит без чека из кода).
-    const email = await this.deps.repository.findUserEmail(params.userId);
-    const description = `Гласно ${plan.name}`;
+    const description = recipientEmail
+      ? `Гласно ${plan.name}, подарок`
+      : `Гласно ${plan.name}`;
 
     try {
       const payment = await createYooKassaPayment({
@@ -122,6 +240,7 @@ export class BillingService {
           orderId: order.id,
           userId: params.userId,
           planId: plan.id,
+          ...(recipientEmail ? { gift: 'true' } : {}),
         },
         receipt: email
           ? buildYooKassaReceipt({
@@ -131,7 +250,7 @@ export class BillingService {
             })
           : undefined,
         // Подписки: просим YooKassa сохранить карту для автопродления.
-        savePaymentMethod: plan.kind === 'subscription',
+        savePaymentMethod: plan.kind === 'subscription' && !recipientEmail,
       });
       const confirmationUrl = getYooKassaConfirmationUrl(payment);
       await this.deps.repository.updatePaymentOrder({
@@ -151,6 +270,9 @@ export class BillingService {
         id: order.id,
         status: 'failed',
       });
+      if (recipientEmail) {
+        await this.deps.repository.cancelGiftOrder({ orderId: order.id });
+      }
       if (err && typeof err === 'object' && 'data' in err) {
         throw apiError('E_UPSTREAM', 'YooKassa отклонила создание платежа');
       }
@@ -565,7 +687,17 @@ export class BillingService {
       },
     });
 
-    if (paymentOk) {
+    const isGift = order.metadata?.gift === true;
+
+    if (paymentOk && isGift) {
+      const paidAt = new Date();
+      await this.deps.repository.markGiftOrderPaid({
+        orderId: order.id,
+        providerPaymentId: verified.id,
+        paidAt,
+        claimExpiresAt: addMonthsTo(paidAt, 6),
+      });
+    } else if (paymentOk) {
       // Пакет минут не должен жить дольше самого доступа: пользователю
       // только с разовым тарифом обрезаем срок пакета концом этого доступа.
       // Подписчикам оставляем полные periodDays — их период продлится
@@ -625,6 +757,14 @@ export class BillingService {
         paymentMethod: savedMethod,
         maxExpiresAt,
       });
+    } else if (
+      isGift &&
+      (verified.status === 'canceled' || verified.status === 'failed')
+    ) {
+      await this.deps.repository.cancelGiftOrder({
+        orderId: order.id,
+        now: new Date(),
+      });
     }
 
     return await this.buildCheckoutStatus({
@@ -649,8 +789,12 @@ export class BillingService {
     shouldContinuePolling: boolean;
     userId: string;
   }): Promise<BillingPaymentStatusResponse> {
-    const activeSubscription =
-      await this.deps.repository.findActiveSubscriptionByUserId(params.userId);
+    const [activeSubscription, gift] = await Promise.all([
+      this.deps.repository.findActiveSubscriptionByUserId(params.userId),
+      params.order
+        ? this.deps.repository.findGiftEntitlementByOrderId(params.order.id)
+        : Promise.resolve(null),
+    ]);
 
     return {
       provider: 'yookassa',
@@ -664,6 +808,15 @@ export class BillingService {
       subscriptionExpiresAt:
         activeSubscription?.currentPeriodEnd.toISOString() ?? null,
       shouldContinuePolling: params.shouldContinuePolling,
+      purchaseType: gift ? 'gift' : 'self',
+      gift: gift
+        ? {
+            recipientEmailMasked: maskEmail(gift.recipientEmail),
+            status: effectiveGiftStatus(gift.status, gift.claimExpiresAt),
+            claimExpiresAt: gift.claimExpiresAt?.toISOString() ?? null,
+            notificationStatus: gift.notificationStatus,
+          }
+        : null,
     };
   }
 }
@@ -689,4 +842,26 @@ function addDaysTo(date: Date, days: number): Date {
   const next = new Date(date);
   next.setDate(next.getDate() + days);
   return next;
+}
+
+function addMonthsTo(date: Date, months: number): Date {
+  const next = new Date(date);
+  next.setMonth(next.getMonth() + months);
+  return next;
+}
+
+function maskEmail(email: string): string {
+  const [local = '', domain = ''] = email.split('@');
+  if (!domain) return '***';
+  return `${local.slice(0, 2)}***@${domain}`;
+}
+
+function effectiveGiftStatus(
+  status: 'pending_payment' | 'ready' | 'claimed' | 'canceled' | 'expired',
+  claimExpiresAt: Date | null
+) {
+  if (status === 'ready' && claimExpiresAt && claimExpiresAt <= new Date()) {
+    return 'expired' as const;
+  }
+  return status;
 }

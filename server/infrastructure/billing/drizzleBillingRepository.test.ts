@@ -100,6 +100,12 @@ describe('DrizzleBillingRepository', () => {
         subscriptionId: 'subscription_existing',
       }),
     });
+    expect(harness.updates).toContainEqual({
+      table: schema.realtimeMinuteGrants,
+      values: expect.objectContaining({
+        expiresAt: new Date('2026-08-04T10:00:00.000Z'),
+      }),
+    });
   });
 
   it('does not enable auto-renewal without explicit subscription ids', async () => {
@@ -116,12 +122,59 @@ describe('DrizzleBillingRepository', () => {
 
     expect(harness.updates).toEqual([]);
   });
+
+  it('claims a ready gift for the verified email and grants access to the recipient', async () => {
+    const harness = createDbHarness({ gift: true });
+    database.getDb.mockReturnValue(harness.db);
+    const repository = new DrizzleBillingRepository();
+
+    await expect(
+      repository.claimReadyGiftsByEmail({
+        recipientEmail: 'friend@example.com',
+        beneficiaryUserId: 'recipient_1',
+        plans: [
+          {
+            id: 'pro_monthly',
+            kind: 'subscription',
+            periodDays: 30,
+            realtimeVoiceMinutes: 60,
+          },
+        ],
+        now: NOW,
+      })
+    ).resolves.toEqual([
+      expect.objectContaining({
+        id: 'gift_1',
+        status: 'claimed',
+        claimedByUserId: 'recipient_1',
+      }),
+    ]);
+
+    expect(harness.inserts).toContainEqual({
+      table: schema.userSubscriptions,
+      values: expect.objectContaining({
+        userId: 'recipient_1',
+        planId: 'pro_monthly',
+        autoRenew: false,
+      }),
+    });
+    expect(harness.updates).toContainEqual({
+      table: schema.giftEntitlements,
+      values: expect.objectContaining({
+        status: 'claimed',
+        claimedByUserId: 'recipient_1',
+        claimedAt: NOW,
+      }),
+    });
+  });
 });
 
-function createDbHarness(params?: { existingPlanId?: string }) {
+function createDbHarness(params?: { existingPlanId?: string; gift?: boolean }) {
   const orderRow = {
     id: 'order_second',
     userId: 'user_1',
+    planId: params?.gift ? 'pro_monthly' : 'single_prep',
+    providerPaymentId: params?.gift ? 'payment_gift' : 'payment_second',
     fulfilledAt: null,
   };
   const existingOneTime = {
@@ -142,6 +195,25 @@ function createDbHarness(params?: { existingPlanId?: string }) {
   const selectedTables: unknown[] = [];
   const inserts: Array<{ table: unknown; values: unknown }> = [];
   const updates: Array<{ table: unknown; values: unknown }> = [];
+  const giftRow = {
+    id: 'gift_1',
+    orderId: 'order_second',
+    purchaserUserId: 'user_1',
+    recipientEmail: 'friend@example.com',
+    senderName: 'Николай',
+    planId: 'pro_monthly',
+    status: 'ready',
+    paidAt: NOW,
+    claimExpiresAt: new Date('2027-01-01T10:00:00.000Z'),
+    claimedAt: null,
+    claimedByUserId: null,
+    notificationStatus: 'pending',
+    notificationAttempts: 0,
+    notificationNextAttemptAt: NOW,
+    notificationSentAt: null,
+    createdAt: NOW,
+    updatedAt: NOW,
+  };
 
   class SelectBuilder {
     private table: unknown;
@@ -160,10 +232,23 @@ function createDbHarness(params?: { existingPlanId?: string }) {
       return this;
     }
 
+    then<TResult1 = unknown[], TResult2 = never>(
+      onfulfilled?: ((value: unknown[]) => TResult1 | PromiseLike<TResult1>) | null,
+      onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null
+    ) {
+      return Promise.resolve(this.rows()).then(onfulfilled, onrejected);
+    }
+
+    private rows() {
+      if (this.table === schema.paymentOrders) return [orderRow];
+      if (this.table === schema.giftEntitlements) {
+        return params?.gift ? [giftRow] : [];
+      }
+      return params?.existingPlanId ? [existingOneTime] : [];
+    }
+
     async limit() {
-      return this.table === schema.paymentOrders
-        ? [orderRow]
-        : [existingOneTime];
+      return this.rows();
     }
   }
 
