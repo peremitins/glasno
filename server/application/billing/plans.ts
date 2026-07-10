@@ -9,7 +9,7 @@ export interface BillingPlanConfig extends BillingPlan {
   includedInterviews: number | null;
   // Какие форматы интервью открывает тариф.
   allowedSessionGoals: SessionGoalAccess[];
-  // Требуется ли активный тариф-подписка для покупки (пакеты минут).
+  // Требуется ли активный платный тариф для покупки (пакеты минут).
   requiresActiveSubscription: boolean;
   // Показывать ли тариф в публичном списке (legacy-тарифы скрываем,
   // но продолжаем корректно обслуживать уже выданные гранты).
@@ -30,16 +30,18 @@ export const BILLING_PLANS: BillingPlanConfig[] = [
   {
     id: 'free',
     name: 'Бесплатно',
-    description: 'Попробуйте формат: короткое интервью и разбор без оплаты.',
+    // ВАЖНО: описания и features тарифов вручную синхронизированы с лендингом
+    // (apps/landing/composables/useLandingContent.ts). Меняешь здесь — поправь там.
+    description: 'Попробуйте формат без оплаты.',
     priceRub: 0,
     currency: 'RUB',
     interval: 'once',
     kind: 'subscription',
     realtimeVoiceMinutes: 0,
     features: [
-      '1 быстрое интервью (5–7 минут, ~3 вопроса)',
-      'Ответы текстом или голосом (диктовка)',
-      'Разбор с оценками и рекомендациями',
+      '1 быстрое интервью на 5–7 минут',
+      'Ответы голосом или текстом',
+      'Разбор с оценкой и рекомендациями',
     ],
     badge: null,
     isHighlighted: false,
@@ -54,8 +56,7 @@ export const BILLING_PLANS: BillingPlanConfig[] = [
   {
     id: 'single_prep',
     name: 'Разовая подготовка',
-    description:
-      'Собеседование уже назначено? Одна живая репетиция голосом и подробный разбор.',
+    description: 'Одна серьёзная репетиция перед конкретным интервью.',
     priceRub: 399,
     currency: 'RUB',
     interval: 'once',
@@ -66,9 +67,9 @@ export const BILLING_PLANS: BillingPlanConfig[] = [
     realtimeVoiceMinutes: 30,
     features: [
       '1 интервью любой длины и глубины',
-      '30 минут живого голосового интервью с AI',
-      'Подробный отчёт: оценки, ошибки, рекомендации, PDF',
-      'Доступ на 7 дней, без автопродления',
+      '30 минут живого голосового интервью',
+      'Подробный разбор и PDF-отчёт',
+      'Докупка минут',
     ],
     badge: 'Собес на носу',
     isHighlighted: false,
@@ -83,17 +84,17 @@ export const BILLING_PLANS: BillingPlanConfig[] = [
   {
     id: 'pro_monthly',
     name: 'Pro',
-    description: 'Для активного поиска: тренируйтесь без ограничений 30 дней.',
+    description: 'Для активного поиска и регулярной практики.',
     priceRub: 990,
     currency: 'RUB',
     interval: 'month',
     kind: 'subscription',
     realtimeVoiceMinutes: 60,
     features: [
-      'Интервью без ограничений: любые форматы и глубина',
-      '60 минут голосового интервью с AI в месяц',
-      'Подробные отчёты, PDF и история прогресса',
-      'Докупка минут пакетами, автопродление отключается в 1 клик',
+      'Интервью без ограничений',
+      '60 минут живого голосового интервью',
+      'История прогресса и разборы в PDF',
+      'Докупка минут, отмена автопродления в один клик',
     ],
     badge: 'Оптимально',
     isHighlighted: true,
@@ -118,10 +119,7 @@ export const BILLING_PLANS: BillingPlanConfig[] = [
     interval: 'month',
     kind: 'subscription',
     realtimeVoiceMinutes: 100,
-    features: [
-      'Всё из Pro',
-      '100 минут живого голосового интервью с AI',
-    ],
+    features: ['Всё из Pro', '100 минут живого голосового интервью с AI'],
     badge: null,
     isHighlighted: false,
     isCheckoutEnabled: false,
@@ -133,7 +131,8 @@ export const BILLING_PLANS: BillingPlanConfig[] = [
     priority: 30,
   },
   // Пакеты минут realtime voice. Не тарифы, а расходники: показываются
-  // отдельным блоком и требуют активную подписку (Pro / Career Pack).
+  // отдельным блоком и требуют активный платный тариф (подписка или
+  // разовый доступ); срок пакета не превышает срок самого доступа.
   {
     id: 'realtime_pack_30',
     name: '+30 минут голоса',
@@ -145,8 +144,8 @@ export const BILLING_PLANS: BillingPlanConfig[] = [
     realtimeVoiceMinutes: 30,
     features: [
       '+30 минут голосового интервью',
-      'Действуют 30 дней с момента покупки',
-      'Нужен активный тариф Pro',
+      'Действуют до 30 дней — в пределах срока доступа',
+      'Нужен активный платный тариф',
     ],
     badge: null,
     isHighlighted: false,
@@ -168,9 +167,9 @@ export const BILLING_PLANS: BillingPlanConfig[] = [
     kind: 'addon',
     realtimeVoiceMinutes: 60,
     features: [
-      '+60 минут голосового интервью',
-      'Действуют 30 дней с момента покупки',
-      'Нужен активный тариф Pro',
+      '+60 минут живого голосового интервью',
+      'Действуют до 30 дней — в пределах срока доступа',
+      'Нужен активный платный тариф',
     ],
     badge: 'Популярный',
     isHighlighted: false,
@@ -193,8 +192,8 @@ export const BILLING_PLANS: BillingPlanConfig[] = [
     realtimeVoiceMinutes: 120,
     features: [
       '+120 минут голосового интервью',
-      'Действуют 30 дней с момента покупки',
-      'Нужен активный тариф Pro',
+      'Действуют до 30 дней — в пределах срока доступа',
+      'Нужен активный платный тариф',
     ],
     badge: 'Выгодно',
     isHighlighted: false,

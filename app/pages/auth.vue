@@ -13,9 +13,7 @@
   import { useAuthStore } from '@/app/stores/auth';
   import {
     normalizeEmailCode,
-    resolveAuthMode,
     resolveSafeNextPath,
-    type AuthMode,
   } from '@/app/utils/authFlow';
 
   definePageMeta({ layout: false });
@@ -24,8 +22,9 @@
   const auth = useAuthStore();
   const route = useRoute();
   const { theme, toggleTheme } = useDesignPreferences();
+  const termsOfServiceUrl = 'https://glasno.app/legal/terms-of-service-ru.html';
+  const privacyPolicyUrl = 'https://glasno.app/legal/privacy-policy-ru.html';
 
-  const mode = ref<AuthMode>(resolveAuthMode(route.query.mode));
   const step = ref<'form' | 'code'>('form');
   const email = ref('');
   const code = ref('');
@@ -39,28 +38,17 @@
   let expiryTimer: ReturnType<typeof setInterval> | null = null;
 
   const authTitle = computed(() =>
-    step.value === 'code'
-      ? t('auth.verifyTitle')
-      : mode.value === 'signup'
-      ? t('auth.signupTitle')
-      : t('auth.signinTitle')
+    step.value === 'code' ? t('auth.verifyTitle') : t('auth.signinTitle')
   );
 
   const authSubtitle = computed(() =>
     step.value === 'code'
       ? t('auth.verifySubtitle', { email: codeEmail.value })
-      : mode.value === 'signup'
-      ? t('auth.signupSubtitle')
       : t('auth.signinSubtitle')
   );
 
   function nextPath(): string {
     return resolveSafeNextPath(route.query.next);
-  }
-
-  function setMode(nextMode: AuthMode) {
-    mode.value = nextMode;
-    localError.value = '';
   }
 
   function startCountdowns() {
@@ -104,10 +92,7 @@
     if (!normalizedEmail) return;
     authAction.value = 'email';
     try {
-      const res =
-        mode.value === 'signup'
-          ? await auth.startEmailRegistration(normalizedEmail)
-          : await auth.startEmailLogin(normalizedEmail);
+      const res = await auth.startEmailLogin(normalizedEmail);
       devCode.value = res.devCode ?? '';
       codeEmail.value = normalizedEmail;
       code.value = '';
@@ -156,9 +141,8 @@
     }
   }
 
-  function resetToForm(nextMode = mode.value) {
+  function resetToForm() {
     step.value = 'form';
-    mode.value = nextMode;
     code.value = '';
     devCode.value = '';
     localError.value = '';
@@ -212,25 +196,6 @@
           </div>
         </header>
 
-        <div v-if="step === 'form'" class="auth-tabs" role="tablist">
-          <button
-            type="button"
-            class="auth-tab"
-            :class="{ 'auth-tab--active': mode === 'signin' }"
-            @click="setMode('signin')"
-          >
-            {{ t('auth.tabs.signin') }}
-          </button>
-          <button
-            type="button"
-            class="auth-tab"
-            :class="{ 'auth-tab--active': mode === 'signup' }"
-            @click="setMode('signup')"
-          >
-            {{ t('auth.tabs.signup') }}
-          </button>
-        </div>
-
         <form
           v-if="step === 'form'"
           class="auth-form"
@@ -268,9 +233,7 @@
                 'button-loader-content--loading': authAction === 'email',
               }"
             >
-              {{
-                mode === 'signup' ? t('auth.createAccount') : t('auth.getCode')
-              }}
+              {{ t('auth.getCode') }}
               <span class="primary-action__icon" aria-hidden="true">
                 <ArrowRightIcon />
               </span>
@@ -358,20 +321,19 @@
               <ArrowLeftIcon aria-hidden="true" />
               {{ t('auth.changeEmail') }}
             </button>
-            <button
-              type="button"
-              @click="resetToForm(mode === 'signin' ? 'signup' : 'signin')"
-            >
-              {{
-                mode === 'signin'
-                  ? t('auth.switchToSignup')
-                  : t('auth.switchToSignin')
-              }}
-            </button>
           </div>
         </form>
 
-        <p class="legal">{{ t('auth.legal') }}</p>
+        <p class="legal">
+          {{ t('auth.legalPrefix') }}
+          <a :href="termsOfServiceUrl" target="_blank" rel="noopener noreferrer">
+            {{ t('auth.termsLink') }}
+          </a>
+          {{ t('auth.legalBetween') }}
+          <a :href="privacyPolicyUrl" target="_blank" rel="noopener noreferrer">
+            {{ t('auth.privacyLink') }}
+          </a>{{ t('auth.legalSuffix') }}
+        </p>
       </article>
     </section>
   </main>
@@ -530,7 +492,6 @@
     align-items: flex-start;
   }
 
-  .auth-tabs,
   .font-row {
     display: grid;
     gap: 7px;
@@ -538,37 +499,6 @@
     border: 1px solid var(--glass-border);
     border-radius: var(--radius-md);
     background: var(--surface-soft);
-  }
-
-  .auth-tabs {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    margin-bottom: 18px;
-  }
-
-  .auth-tab {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-height: 42px;
-    border: 0;
-    border-radius: 12px;
-    background: transparent;
-    color: var(--text-secondary);
-    cursor: pointer;
-    font-weight: 800;
-    font-size: 14px;
-    transition: background var(--motion-fast) var(--ease-out),
-      color var(--motion-fast) var(--ease-out);
-  }
-
-  .auth-tab:hover {
-    color: var(--text-primary);
-  }
-
-  .auth-tab--active {
-    background: var(--button-bg);
-    color: var(--button-text);
-    box-shadow: var(--button-shadow);
   }
 
   .auth-form,
@@ -717,6 +647,12 @@
     color: var(--text-muted);
     font-size: 12px;
     line-height: 1.5;
+  }
+
+  .legal a {
+    color: var(--text-primary);
+    text-decoration: underline;
+    text-underline-offset: 2px;
   }
 
   @media (max-width: 920px) {

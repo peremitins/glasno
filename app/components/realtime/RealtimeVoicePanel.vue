@@ -46,8 +46,10 @@ const callFeedback = useRealtimeVoiceCallFeedback({
 // бейдж ⭐, клик открывает пейволл вместо запуска сессии.
 const billing = useBillingStatus();
 const paywallOpen = ref(false);
+// Докупка минут доступна при любом активном платном тарифе (Pro или
+// разовый доступ) — иначе показываем выбор тарифов.
 const paywallMode = computed(() =>
-  billing.hasActiveSubscription.value ? 'minutes' : 'plans'
+  billing.canBuyMinutes.value ? 'minutes' : 'plans'
 );
 const isLocked = computed(
   () => billing.realtimeLocked.value && !realtimeVoice.isActive.value

@@ -1,6 +1,7 @@
 <script setup lang="ts">
   import { computed, onMounted, ref } from 'vue';
   import { useI18n } from 'vue-i18n';
+  import { CheckIcon } from '@radix-icons/vue';
   import GlassSkeletonStack from '@/app/components/design/GlassSkeletonStack.vue';
   import ButtonLoader from '@/app/components/design/ButtonLoader.vue';
   import ConfirmModal from '@/app/components/design/ConfirmModal.vue';
@@ -55,8 +56,11 @@
   const minutePacks = computed(() =>
     (plansData.value?.plans || []).filter((plan) => plan.kind === 'addon')
   );
+  // Серверная правда: пакеты доступны при любом активном платном тарифе
+  // (Pro или разовый доступ), см. accessService.canBuyMore.
   const packsLocked = computed(
-    () => !status.value?.hasActiveSubscription && !status.value?.unlimited
+    () =>
+      !(status.value?.realtimeVoice.canBuyMore || status.value?.unlimited)
   );
 
   // --- Блок «Текущий доступ» (по образцу Mentala) ---------------------
@@ -448,7 +452,8 @@
           </div>
           <ul class="features">
             <li v-for="feature in plan.features" :key="feature">
-              {{ feature }}
+              <CheckIcon class="feature-check" aria-hidden="true" />
+              <span>{{ feature }}</span>
             </li>
           </ul>
           <div class="plan-cta">
@@ -483,6 +488,17 @@
                   : t('pricing.currentPlan')
               }}
             </span>
+            <!-- Прозрачность автопродления: предупреждаем ДО оплаты. -->
+            <p
+              v-if="plan.interval === 'month' && plan.isCheckoutEnabled"
+              class="plan-note"
+            >
+              {{
+                t('pricing.autoRenewDisclosure', {
+                  amount: formatPrice(plan.priceRub),
+                })
+              }}
+            </p>
           </div>
         </article>
       </template>
@@ -519,7 +535,8 @@
           </div>
           <ul class="features">
             <li v-for="feature in pack.features" :key="feature">
-              {{ feature }}
+              <CheckIcon class="feature-check" aria-hidden="true" />
+              <span>{{ feature }}</span>
             </li>
           </ul>
           <div class="plan-cta">
@@ -738,7 +755,8 @@
     display: grid;
     gap: 8px;
     margin: 0;
-    padding-left: 18px;
+    padding: 0;
+    list-style: none;
     color: var(--text-muted);
     font-size: 14px;
     line-height: 1.45;
@@ -747,13 +765,31 @@
     align-content: start;
   }
 
-  .features li::marker {
+  .features li {
+    display: flex;
+    align-items: flex-start;
+    gap: 9px;
+  }
+
+  .feature-check {
+    flex: 0 0 auto;
+    width: 16px;
+    height: 16px;
+    margin-top: 2px;
     color: var(--accent);
   }
 
   .plan-cta {
     margin-top: auto;
     display: grid;
+    gap: 8px;
+  }
+
+  .plan-note {
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.4;
+    text-align: center;
   }
 
   .plan-cta .primary-action,

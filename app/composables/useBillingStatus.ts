@@ -35,6 +35,11 @@ export function useBillingStatus() {
   const hasActiveSubscription = computed(
     () => Boolean(status.value?.hasActiveSubscription)
   );
+  // Можно докупать пакеты минут: активен любой платный тариф
+  // (подписка или разовый доступ).
+  const canBuyMinutes = computed(
+    () => Boolean(status.value?.realtimeVoice.canBuyMore)
+  );
   const unlimited = computed(() => Boolean(status.value?.unlimited));
   // Realtime voice заблокирован: минуты кончились (или их не было).
   const realtimeLocked = computed(
@@ -51,6 +56,7 @@ export function useBillingStatus() {
     ensureLoaded,
     remainingRealtimeMinutes,
     hasActiveSubscription,
+    canBuyMinutes,
     unlimited,
     realtimeLocked,
   };

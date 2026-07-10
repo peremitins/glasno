@@ -76,7 +76,7 @@
               width="44"
               height="44"
               aria-hidden="true"
-            >
+            />
           </span>
           <span class="brand-text">{{ t('app.name') }}</span>
         </NuxtLink>

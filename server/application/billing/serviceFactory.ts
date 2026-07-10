@@ -2,8 +2,21 @@ import type { H3Event } from 'h3';
 import { BillingService } from './billingService';
 import { DrizzleBillingRepository } from '@/server/infrastructure/billing/drizzleBillingRepository';
 
+// Минимально необходимый срез runtime-конфига: фабрику вызывают и хендлеры
+// (с event), и Nitro-плагин фонового воркера (без event).
+interface BillingRuntimeConfig {
+  yookassaShopId?: unknown;
+  yookassaSecretKey?: unknown;
+  public: { appUrl?: unknown };
+}
+
 export function createBillingService(event: H3Event): BillingService {
-  const config = useRuntimeConfig(event);
+  return createBillingServiceFromConfig(useRuntimeConfig(event));
+}
+
+export function createBillingServiceFromConfig(
+  config: BillingRuntimeConfig
+): BillingService {
   return new BillingService({
     repository: new DrizzleBillingRepository(),
     config: {

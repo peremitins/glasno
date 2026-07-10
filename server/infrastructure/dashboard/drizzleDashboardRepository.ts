@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNotNull, or } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, isNull } from 'drizzle-orm';
 import { getDb, schema } from '@/server/infrastructure/db/client';
 import type {
   DashboardRepository,
@@ -15,12 +15,12 @@ import type {
 
 function ownerWhere(owner: BillingOwner) {
   if (owner.userId) {
-    return or(
-      eq(schema.interviewSessions.userId, owner.userId),
-      eq(schema.interviewSessions.anonymousSessionId, owner.anonymousSessionId)
-    );
+    return eq(schema.interviewSessions.userId, owner.userId);
   }
-  return eq(schema.interviewSessions.anonymousSessionId, owner.anonymousSessionId);
+  return and(
+    isNull(schema.interviewSessions.userId),
+    eq(schema.interviewSessions.anonymousSessionId, owner.anonymousSessionId)
+  );
 }
 
 export class DrizzleDashboardRepository implements DashboardRepository {
