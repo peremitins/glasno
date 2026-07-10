@@ -1,10 +1,12 @@
 <script setup lang="ts">
-  import { computed, onMounted, ref } from 'vue';
+  import { computed, onMounted, ref, watch } from 'vue';
   import { useI18n } from 'vue-i18n';
   import { CheckIcon } from '@radix-icons/vue';
   import GlassSkeletonStack from '@/app/components/design/GlassSkeletonStack.vue';
   import ButtonLoader from '@/app/components/design/ButtonLoader.vue';
   import ConfirmModal from '@/app/components/design/ConfirmModal.vue';
+  import BillingCheckoutModal from '@/app/components/billing/BillingCheckoutModal.vue';
+  import PaymentHistory from '@/app/components/billing/PaymentHistory.vue';
   import type {
     BillingBindCardResponseDto,
     BillingCheckoutResponse,
@@ -17,8 +19,20 @@
   const { t } = useI18n();
   const api = useAPI();
   const route = useRoute();
+  const router = useRouter();
 
   const checkoutPlanId = ref('');
+  const selectedPlanId = ref('');
+  const giftMode = ref(false);
+  const recipientEmail = ref('');
+  const senderName = ref('');
+  const recipientEmailError = ref('');
+  const senderNameError = ref('');
+  const checkoutError = ref('');
+  const checkoutModalOpen = ref(false);
+  const paymentHistoryRef = ref<InstanceType<typeof PaymentHistory> | null>(
+    null
+  );
   const errorMessage = ref('');
   const paymentStatusMessage = ref('');
   const paymentStatusPending = ref(false);
@@ -38,6 +52,7 @@
 
   const returnNoticeVisible = computed(() => route.query.payment === 'return');
   const bindingReturnVisible = computed(() => route.query.binding === 'return');
+  const giftReceivedVisible = computed(() => route.query.gift === 'received');
   const returnOrderId = computed(() =>
     typeof route.query.orderId === 'string' ? route.query.orderId : ''
   );
@@ -55,6 +70,11 @@
   );
   const minutePacks = computed(() =>
     (plansData.value?.plans || []).filter((plan) => plan.kind === 'addon')
+  );
+  const selectedPlan = computed(() =>
+    (plansData.value?.plans || []).find(
+      (plan) => plan.id === selectedPlanId.value
+    ) ?? null
   );
   // Серверная правда: пакеты доступны при любом активном платном тарифе
   // (Pro или разовый доступ), см. accessService.canBuyMore.
@@ -97,30 +117,112 @@
     }).format(new Date(value));
   }
 
-  async function checkout(planId: string) {
+  async function startCheckout(input: {
+    planId: string;
+    gift?: { recipientEmail: string; senderName: string };
+  }) {
+    const planId = input.planId;
     if (checkoutPlanId.value) return;
     checkoutPlanId.value = planId;
-    errorMessage.value = '';
+    checkoutError.value = '';
     try {
       const response = await api<BillingCheckoutResponse>(
         '/api/billing/checkout',
         {
           method: 'POST',
-          body: { planId },
+          body: input,
         }
       );
       window.location.href = response.confirmationUrl;
     } catch (err) {
       if (err && typeof err === 'object' && 'data' in err) {
         const data = (err as { data?: { error?: { message?: string } } }).data;
-        errorMessage.value = data?.error?.message || t('pricing.error');
+        checkoutError.value = data?.error?.message || t('pricing.error');
       } else {
-        errorMessage.value = t('pricing.error');
+        checkoutError.value = t('pricing.error');
       }
     } finally {
       checkoutPlanId.value = '';
     }
   }
+
+  function selectPlan(planId: string, mode: 'self' | 'gift' = 'self') {
+    const plan = (plansData.value?.plans || []).find(
+      (item) => item.id === planId
+    );
+    if (!plan) return;
+    selectedPlanId.value = planId;
+    giftMode.value = mode === 'gift' && plan.kind !== 'addon';
+    recipientEmailError.value = '';
+    senderNameError.value = '';
+    checkoutError.value = '';
+    checkoutModalOpen.value = true;
+  }
+
+  async function submitCheckout() {
+    if (!selectedPlan.value) return;
+    const normalizedEmail = recipientEmail.value.trim().toLowerCase();
+    const normalizedSenderName = senderName.value.trim();
+    if (
+      giftMode.value && selectedPlan.value.kind !== 'addon' &&
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)
+    ) {
+      recipientEmailError.value = t('pricing.giftEmailError');
+      return;
+    }
+    if (
+      giftMode.value &&
+      selectedPlan.value.kind !== 'addon' &&
+      !normalizedSenderName
+    ) {
+      senderNameError.value = t('pricing.giftSenderNameError');
+      return;
+    }
+    recipientEmailError.value = '';
+    senderNameError.value = '';
+    await startCheckout({
+      planId: selectedPlan.value.id,
+      gift: giftMode.value && selectedPlan.value.kind !== 'addon'
+        ? {
+            recipientEmail: normalizedEmail,
+            senderName: normalizedSenderName,
+          }
+        : undefined,
+    });
+  }
+
+  async function updateCheckoutModalOpen(value: boolean) {
+    checkoutModalOpen.value = value;
+    if (value || !route.query.checkout) return;
+    const query = { ...route.query };
+    delete query.checkout;
+    delete query.plan;
+    await router.replace({ query });
+  }
+
+  watch(
+    [
+      () => route.query.checkout,
+      () => route.query.plan,
+      () => plansData.value,
+    ],
+    ([checkoutMode, requestedPlan]) => {
+      if (checkoutMode !== 'gift' || !plansData.value) return;
+      const requestedPlanId =
+        typeof requestedPlan === 'string' ? requestedPlan : 'pro_monthly';
+      const plan =
+        mainPlans.value.find(
+          (item) =>
+            item.id === requestedPlanId && item.isCheckoutEnabled
+        ) ??
+        mainPlans.value.find(
+          (item) => item.id === 'pro_monthly' && item.isCheckoutEnabled
+        ) ??
+        mainPlans.value.find((item) => item.isCheckoutEnabled);
+      if (plan) selectPlan(plan.id, 'gift');
+    },
+    { immediate: true }
+  );
 
   // Привязка карты без платежа: бэкенд создаёт payment_method в YooKassa
   // и отдаёт confirmationUrl — редиректим пользователя на подтверждение.
@@ -251,8 +353,21 @@
         const paymentStatus = await fetchCheckoutStatus();
         await refreshStatus();
 
+        if (
+          paymentStatus.purchaseType === 'gift' &&
+          paymentStatus.paid &&
+          paymentStatus.gift
+        ) {
+          paymentStatusMessage.value = t('pricing.giftPaymentReady', {
+            email: paymentStatus.gift.recipientEmailMasked,
+          });
+          await paymentHistoryRef.value?.refresh();
+          return;
+        }
+
         if (paymentStatus.hasActiveSubscription) {
           paymentStatusMessage.value = t('pricing.paymentActivated');
+          await paymentHistoryRef.value?.refresh();
           return;
         }
 
@@ -299,7 +414,7 @@
       <div class="status-main">
         <p class="panel-label">{{ t('pricing.current') }}</p>
         <h2>{{ currentPlanLabel }}</h2>
-        <p v-if="status?.hasActiveSubscription" class="status-line">
+        <p v-if="status?.activePlanId" class="status-line">
           {{
             t('pricing.activeUntil', {
               date: formatDate(status.subscriptionExpiresAt),
@@ -371,7 +486,7 @@
           <button
             v-if="billingInfo.autoRenew"
             type="button"
-            class="secondary-action secondary-action--compact"
+            class="secondary-action secondary-action--compact action-danger"
             :disabled="cardActionPending"
             @click="confirmAction = 'disableRenew'"
           >
@@ -416,13 +531,22 @@
       {{ paymentStatusMessage || t('pricing.returnNotice') }}
     </p>
     <p
+      v-if="giftReceivedVisible"
+      class="notice glass-frame glass-alert glass-alert--accent"
+    >
+      {{ t('pricing.giftReceived') }}
+    </p>
+    <p
       v-if="errorMessage"
       class="error glass-frame glass-alert glass-alert--danger"
     >
       {{ errorMessage }}
     </p>
 
-    <section class="plans">
+    <section
+      id="plans"
+      class="plans"
+    >
       <GlassSkeletonStack
         v-if="plansInitialPending || statusInitialPending"
         class="plans-skeleton"
@@ -457,7 +581,10 @@
           </ul>
           <div class="plan-cta">
             <button
-              v-if="plan.isCheckoutEnabled"
+              v-if="
+                plan.isCheckoutEnabled &&
+                !(status?.activePlanId === 'pro_monthly' && plan.id === 'single_prep')
+              "
               class="primary-action primary-action--compact button-loader-host"
               type="button"
               :disabled="
@@ -465,7 +592,7 @@
                 statusPending ||
                 status?.needsAuthForCheckout
               "
-              @click="checkout(plan.id)"
+              @click="selectPlan(plan.id)"
             >
               <ButtonLoader v-if="checkoutPlanId === plan.id" />
               <span
@@ -537,7 +664,7 @@
                 status?.needsAuthForCheckout ||
                 packsLocked
               "
-              @click="checkout(pack.id)"
+              @click="selectPlan(pack.id)"
             >
               <ButtonLoader v-if="checkoutPlanId === pack.id" />
               <span
@@ -553,6 +680,29 @@
         </article>
       </div>
     </section>
+
+    <PaymentHistory
+      v-if="status && !status.needsAuthForCheckout"
+      ref="paymentHistoryRef"
+    />
+
+    <BillingCheckoutModal
+      :open="checkoutModalOpen"
+      :plan="selectedPlan"
+      :gift="giftMode"
+      :recipient-email="recipientEmail"
+      :sender-name="senderName"
+      :recipient-email-error="recipientEmailError"
+      :sender-name-error="senderNameError"
+      :checkout-error="checkoutError"
+      :pending="Boolean(checkoutPlanId)"
+      @update:open="updateCheckoutModalOpen"
+      @update:gift="giftMode = $event"
+      @update:recipient-email="recipientEmail = $event"
+      @update:sender-name="senderName = $event"
+      @clear-error="recipientEmailError = ''; senderNameError = ''; checkoutError = ''"
+      @submit="submitCheckout"
+    />
 
     <ConfirmModal
       v-if="confirmContent"
@@ -633,7 +783,7 @@
   }
 
   .status-line--error {
-    color: var(--danger, #f87171);
+    color: var(--danger);
   }
 
   .status-actions {
@@ -648,12 +798,17 @@
     justify-self: start;
   }
 
+  .action-danger {
+    color: var(--danger);
+  }
+
   /* --- Сетка тарифов -------------------------------------------------- */
   .plans {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: clamp(12px, 1.6vw, 16px);
     align-items: stretch;
+    scroll-margin-top: 18px;
   }
 
   .status-skeleton,
@@ -831,6 +986,7 @@
     .status {
       grid-template-columns: 1fr;
     }
+
   }
 
   @media (max-width: 640px) {
@@ -838,5 +994,6 @@
     .primary-action {
       width: 100%;
     }
+
   }
 </style>

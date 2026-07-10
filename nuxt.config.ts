@@ -144,6 +144,8 @@ export default defineNuxtConfig({
       appName: 'Гласно',
       apiBase: '/api',
       appUrl: process.env.NUXT_PUBLIC_APP_URL || 'http://localhost:3000',
+      landingUrl:
+        process.env.NUXT_PUBLIC_LANDING_SITE_URL || 'https://glasno.app',
       speechDefaultEngine:
         process.env.NUXT_PUBLIC_SPEECH_DEFAULT_ENGINE || 'webspeech',
       featureTtsEnabled: process.env.NUXT_FEATURE_TTS_ENABLED === 'true',

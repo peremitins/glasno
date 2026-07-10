@@ -95,6 +95,18 @@ function createRepository(order = createOrder()) {
     }),
     debitRealtimeSeconds: vi.fn().mockResolvedValue(undefined),
     createPaymentOrder: vi.fn(),
+    createGiftPaymentOrder: vi.fn(),
+    findGiftEntitlementByOrderId: vi.fn().mockResolvedValue(null),
+    markGiftOrderPaid: vi.fn().mockResolvedValue(null),
+    cancelGiftOrder: vi.fn().mockResolvedValue(undefined),
+    claimReadyGiftsByEmail: vi.fn().mockResolvedValue([]),
+    listPaymentOrdersByUserId: vi.fn().mockResolvedValue({
+      items: [],
+      nextCursor: null,
+    }),
+    claimGiftNotifications: vi.fn().mockResolvedValue([]),
+    markGiftNotificationSent: vi.fn().mockResolvedValue(undefined),
+    markGiftNotificationFailed: vi.fn().mockResolvedValue(undefined),
     findPaymentOrderById: vi.fn().mockResolvedValue(order),
     findPaymentOrderByProviderPaymentId: vi.fn().mockResolvedValue(order),
     findLatestPaymentOrderByUserId: vi.fn().mockResolvedValue(order),
@@ -186,6 +198,91 @@ describe('BillingService payment reconciliation', () => {
       },
       paymentMethod: null,
       maxExpiresAt: null,
+    });
+  });
+
+  it('marks a paid gift ready without granting access to the purchaser', async () => {
+    const order = createOrder({ metadata: { gift: true } });
+    const repository = createRepository(order);
+    const readyGift = {
+      id: 'gift_1',
+      orderId: 'order_1',
+      purchaserUserId: 'user_1',
+      recipientEmail: 'friend@example.com',
+      senderName: 'Николай',
+      planId: 'pro_monthly',
+      status: 'ready' as const,
+      paidAt: new Date('2026-07-01T10:00:00.000Z'),
+      claimExpiresAt: new Date('2027-01-01T10:00:00.000Z'),
+      claimedAt: null,
+      claimedByUserId: null,
+      notificationStatus: 'pending' as const,
+      notificationAttempts: 0,
+      notificationNextAttemptAt: new Date('2026-07-01T10:00:00.000Z'),
+      notificationSentAt: null,
+      createdAt: new Date('2026-07-01T10:00:00.000Z'),
+      updatedAt: new Date('2026-07-01T10:00:00.000Z'),
+    };
+    repository.markGiftOrderPaid.mockResolvedValue(readyGift);
+    repository.findGiftEntitlementByOrderId.mockResolvedValue(readyGift);
+    mockedGetYooKassaPayment.mockResolvedValue({
+      id: 'payment_1',
+      status: 'succeeded',
+      paid: true,
+      amountValue: '990.00',
+      currency: 'RUB',
+      metadata: { orderId: 'order_1' },
+      paymentMethod: null,
+    });
+    const service = createService(repository);
+
+    await expect(
+      service.reconcileYooKassaCheckout({
+        userId: 'user_1',
+        orderId: 'order_1',
+      })
+    ).resolves.toMatchObject({
+      paid: true,
+      hasActiveSubscription: false,
+      purchaseType: 'gift',
+      gift: {
+        recipientEmailMasked: 'fr***@example.com',
+        status: 'ready',
+        notificationStatus: 'pending',
+      },
+    });
+
+    expect(repository.markGiftOrderPaid).toHaveBeenCalledWith({
+      orderId: 'order_1',
+      providerPaymentId: 'payment_1',
+      paidAt: new Date('2026-07-01T10:00:00.000Z'),
+      claimExpiresAt: new Date('2027-01-01T10:00:00.000Z'),
+    });
+    expect(repository.fulfillPaidOrder).not.toHaveBeenCalled();
+  });
+
+  it('cancels the gift entitlement when YooKassa cancels payment', async () => {
+    const order = createOrder({ metadata: { gift: true } });
+    const repository = createRepository(order);
+    mockedGetYooKassaPayment.mockResolvedValue({
+      id: 'payment_1',
+      status: 'canceled',
+      paid: false,
+      amountValue: '990.00',
+      currency: 'RUB',
+      metadata: { orderId: 'order_1' },
+      paymentMethod: null,
+    });
+    const service = createService(repository);
+
+    await service.reconcileYooKassaCheckout({
+      userId: 'user_1',
+      orderId: 'order_1',
+    });
+
+    expect(repository.cancelGiftOrder).toHaveBeenCalledWith({
+      orderId: 'order_1',
+      now: new Date('2026-07-01T10:00:00.000Z'),
     });
   });
 
@@ -422,6 +519,58 @@ describe('BillingService payment reconciliation', () => {
   });
 });
 
+describe('BillingService payment history', () => {
+  it('maps gift state and preserves the repository cursor', async () => {
+    const repository = createRepository();
+    repository.listPaymentOrdersByUserId.mockResolvedValue({
+      items: [
+        {
+          order: createOrder({ status: 'succeeded' }),
+          gift: {
+            id: 'gift_1',
+            orderId: 'order_1',
+            purchaserUserId: 'user_1',
+            recipientEmail: 'friend@example.com',
+            senderName: 'Николай',
+            planId: 'pro_monthly',
+            status: 'ready',
+            paidAt: new Date('2026-07-01T10:00:00.000Z'),
+            claimExpiresAt: new Date('2027-01-01T10:00:00.000Z'),
+            claimedAt: null,
+            claimedByUserId: null,
+            notificationStatus: 'sent',
+            notificationAttempts: 1,
+            notificationNextAttemptAt: null,
+            notificationSentAt: new Date('2026-07-01T10:01:00.000Z'),
+            createdAt: new Date('2026-07-01T10:00:00.000Z'),
+            updatedAt: new Date('2026-07-01T10:01:00.000Z'),
+          },
+        },
+      ],
+      nextCursor: 'cursor_2',
+    });
+    const service = createService(repository);
+
+    await expect(
+      service.getPaymentHistory({ userId: 'user_1', cursor: null, limit: 20 })
+    ).resolves.toEqual({
+      items: [
+        expect.objectContaining({
+          id: 'order_1',
+          planName: 'Pro',
+          status: 'succeeded',
+          gift: expect.objectContaining({
+            recipientEmailMasked: 'fr***@example.com',
+            status: 'ready',
+            notificationStatus: 'sent',
+          }),
+        }),
+      ],
+      nextCursor: 'cursor_2',
+    });
+  });
+});
+
 describe('BillingService checkout guards', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -473,6 +622,36 @@ describe('BillingService checkout guards', () => {
     );
   });
 
+  it('allows an administrator to buy a minute pack without a paid subscription', async () => {
+    const repository = createRepository();
+    repository.createPaymentOrder.mockResolvedValue(
+      createOrder({ planId: 'realtime_pack_60', amountRub: 890 })
+    );
+    mockedCreateYooKassaPayment.mockResolvedValue({
+      id: 'payment_admin_addon_1',
+      status: 'pending',
+      confirmation: {
+        type: 'redirect',
+        confirmation_url:
+          'https://yookassa.test/payments/payment_admin_addon_1',
+      },
+    });
+    const service = createService(repository);
+
+    await expect(
+      service.createCheckout({
+        userId: 'admin_1',
+        role: 'admin',
+        planId: 'realtime_pack_60',
+      })
+    ).resolves.toEqual({
+      provider: 'yookassa',
+      orderId: 'order_1',
+      confirmationUrl:
+        'https://yookassa.test/payments/payment_admin_addon_1',
+    });
+  });
+
   it('requests payment-method saving for Pro auto-renewal by default', async () => {
     const repository = createRepository();
     repository.createPaymentOrder.mockResolvedValue(createOrder());
@@ -493,6 +672,142 @@ describe('BillingService checkout guards', () => {
         savePaymentMethod: true,
       })
     );
+  });
+
+  it('creates a gift checkout without saving a payment method or leaking recipient email to YooKassa metadata', async () => {
+    const repository = createRepository();
+    repository.createGiftPaymentOrder.mockResolvedValue({
+      order: createOrder({ metadata: { gift: true } }),
+      gift: {
+        id: 'gift_1',
+        orderId: 'order_1',
+        purchaserUserId: 'user_1',
+        recipientEmail: 'friend@example.com',
+        senderName: 'Николай',
+        planId: 'pro_monthly',
+        status: 'pending_payment',
+        paidAt: null,
+        claimExpiresAt: null,
+        claimedAt: null,
+        claimedByUserId: null,
+        notificationStatus: 'pending',
+        notificationAttempts: 0,
+        notificationNextAttemptAt: null,
+        notificationSentAt: null,
+        createdAt: new Date('2026-07-01T10:00:00.000Z'),
+        updatedAt: new Date('2026-07-01T10:00:00.000Z'),
+      },
+    });
+    mockedCreateYooKassaPayment.mockResolvedValue({
+      id: 'payment_gift_1',
+      status: 'pending',
+      confirmation: {
+        type: 'redirect',
+        confirmation_url: 'https://yookassa.test/payments/payment_gift_1',
+      },
+    });
+    const service = createService(repository);
+
+    await service.createCheckout({
+      userId: 'user_1',
+      planId: 'pro_monthly',
+      gift: { recipientEmail: 'friend@example.com', senderName: 'Николай' },
+    });
+
+    expect(repository.createGiftPaymentOrder).toHaveBeenCalledWith(
+      expect.objectContaining({
+        purchaserUserId: 'user_1',
+        recipientEmail: 'friend@example.com',
+        senderName: 'Николай',
+      })
+    );
+    expect(mockedCreateYooKassaPayment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        savePaymentMethod: false,
+        description: 'Гласно Pro, подарок',
+        metadata: {
+          orderId: 'order_1',
+          userId: 'user_1',
+          planId: 'pro_monthly',
+          gift: 'true',
+        },
+      })
+    );
+    expect(
+      mockedCreateYooKassaPayment.mock.calls[0]?.[0].metadata
+    ).not.toHaveProperty('recipientEmail');
+    expect(
+      mockedCreateYooKassaPayment.mock.calls[0]?.[0].metadata
+    ).not.toHaveProperty('senderName');
+  });
+
+  it('rejects gifting an addon', async () => {
+    const repository = createRepository();
+    const service = createService(repository);
+
+    await expect(
+      service.createCheckout({
+        userId: 'user_1',
+        planId: 'realtime_pack_60',
+        gift: { recipientEmail: 'friend@example.com', senderName: 'Николай' },
+      })
+    ).rejects.toMatchObject({
+      message: 'Подарить можно только тариф или разовую подготовку',
+    });
+  });
+
+  it('rejects gifting to the purchaser email', async () => {
+    const repository = createRepository();
+    const service = createService(repository);
+
+    await expect(
+      service.createCheckout({
+        userId: 'user_1',
+        planId: 'pro_monthly',
+        gift: { recipientEmail: 'USER@example.com', senderName: 'Николай' },
+      })
+    ).rejects.toMatchObject({
+      message: 'Для себя выберите обычную покупку',
+    });
+  });
+
+  it('cancels the pending gift when YooKassa checkout creation fails', async () => {
+    const repository = createRepository();
+    repository.createGiftPaymentOrder.mockResolvedValue({
+      order: createOrder({ metadata: { gift: true } }),
+      gift: {
+        id: 'gift_1',
+        orderId: 'order_1',
+        purchaserUserId: 'user_1',
+        recipientEmail: 'friend@example.com',
+        senderName: 'Николай',
+        planId: 'pro_monthly',
+        status: 'pending_payment',
+        paidAt: null,
+        claimExpiresAt: null,
+        claimedAt: null,
+        claimedByUserId: null,
+        notificationStatus: 'pending',
+        notificationAttempts: 0,
+        notificationNextAttemptAt: null,
+        notificationSentAt: null,
+        createdAt: new Date('2026-07-01T10:00:00.000Z'),
+        updatedAt: new Date('2026-07-01T10:00:00.000Z'),
+      },
+    });
+    mockedCreateYooKassaPayment.mockRejectedValue(new Error('network'));
+    const service = createService(repository);
+
+    await expect(
+      service.createCheckout({
+        userId: 'user_1',
+        planId: 'pro_monthly',
+        gift: { recipientEmail: 'friend@example.com', senderName: 'Николай' },
+      })
+    ).rejects.toThrow('network');
+    expect(repository.cancelGiftOrder).toHaveBeenCalledWith({
+      orderId: 'order_1',
+    });
   });
 
   it('rejects checkout of the legacy realtime_voice_60 plan', async () => {

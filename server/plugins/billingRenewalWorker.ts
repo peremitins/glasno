@@ -12,11 +12,26 @@ import { createBillingServiceFromConfig } from '@/server/application/billing/ser
 // не продлевался бы вовремя.
 export default defineNitroPlugin((nitroApp) => {
   if (import.meta.prerender) return;
-  // Kill-switch на случай инцидента с автосписаниями.
-  if (process.env.BILLING_RENEWAL_DISABLED === 'true') return;
-
   const config = useRuntimeConfig();
   const createService = () => createBillingServiceFromConfig(config);
+  const giftSweep = () => {
+    if (process.env.BILLING_GIFT_NOTIFICATIONS_DISABLED === 'true') return;
+    void createService()
+      .runGiftNotificationSweep()
+      .catch((err) => {
+        console.error('[billing] gift notification sweep failed', err);
+      });
+  };
+  const giftInitialTimer = setTimeout(giftSweep, 30 * 1000);
+  const giftTimer = setInterval(giftSweep, 5 * 60 * 1000);
+  nitroApp.hooks.hook('close', () => {
+    clearTimeout(giftInitialTimer);
+    clearInterval(giftTimer);
+  });
+
+  // Kill-switch автосписаний не должен останавливать письма о подарках.
+  if (process.env.BILLING_RENEWAL_DISABLED === 'true') return;
+
   const redisUrl = resolveRenewalRedisUrl(
     typeof config.redisUrl === 'string' ? config.redisUrl : null
   );
