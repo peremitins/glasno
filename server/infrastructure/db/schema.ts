@@ -238,6 +238,10 @@ export const giftEntitlements = pgTable(
 );
 
 // Гранты доступа после успешной оплаты.
+// Запись оплаченного доступа («Полный доступ» на срок). Одна строка на
+// пользователя: продление и повторная покупка обновляют её, а не создают
+// цепочку — так исключается сценарий «просроченная запись вечно кандидат
+// на автосписание» (ТЗ тарифы v2).
 export const userSubscriptions = pgTable(
   'user_subscriptions',
   {
@@ -250,23 +254,37 @@ export const userSubscriptions = pgTable(
     provider: text('provider').default('yookassa').notNull(),
     providerPaymentId: text('provider_payment_id'),
     currentPeriodEnd: timestamp('current_period_end', { withTimezone: true }).notNull(),
-    // Автопродление (по образцу Mentala): включается, когда YooKassa
-    // сохранила карту при оплате. next_charge_at = момент автосписания.
+    // Автопродление по умолчанию включено при покупке себе (выключено для
+    // подарков и когда карта не сохранилась). next_charge_at = момент
+    // автосписания = current_period_end.
     autoRenew: boolean('auto_renew').default(false).notNull(),
     nextChargeAt: timestamp('next_charge_at', { withTimezone: true }),
     lastChargeAttemptAt: timestamp('last_charge_attempt_at', {
       withTimezone: true,
     }),
     lastChargeError: text('last_charge_error'),
+    // Счётчик попыток текущего цикла списания: после MAX попыток
+    // автопродление выключается. Сбрасывается при успешном продлении.
+    chargeAttempts: integer('charge_attempts').default(0).notNull(),
+    // Условия продления фиксируются в момент покупки: изменение цен
+    // каталога не меняет цену уже обещанного продления.
+    renewalPlanId: text('renewal_plan_id'),
+    renewalAmountRub: integer('renewal_amount_rub'),
+    // Идемпотентность предуведомления о списании (одно на период).
+    renewalNoticeSentAt: timestamp('renewal_notice_sent_at', {
+      withTimezone: true,
+    }),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
-    // Один платёж YooKassa не может породить две подписки (защита от
+    // Один платёж YooKassa не может породить две записи доступа (защита от
     // гонки «вебхук + поллинг checkout-status»).
     uniqueIndex('user_subscriptions_provider_payment_id_uq').on(
       table.providerPaymentId
     ),
+    // Один базовый доступ на пользователя — инвариант модели v2.
+    uniqueIndex('user_subscriptions_user_id_uq').on(table.userId),
   ]
 );
 

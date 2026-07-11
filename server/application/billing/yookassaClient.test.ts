@@ -6,13 +6,12 @@ import {
 } from './yookassaClient';
 
 describe('yookassaClient helpers', () => {
-  it('builds redirect payment request with idempotence key and metadata', () => {
+  it('builds an embedded-widget payment request with idempotence key and metadata', () => {
     const request = buildYooKassaCreatePaymentRequest({
       shopId: '123456',
       secretKey: 'test_secret',
       idempotenceKey: 'payment_order_1',
       amountRub: 990,
-      returnUrl: 'https://glasno.test/pricing?payment=return',
       description: 'Гласно Pro',
       metadata: {
         orderId: 'payment_order_1',
@@ -28,8 +27,7 @@ describe('yookassaClient helpers', () => {
       amount: { value: '990.00', currency: 'RUB' },
       capture: true,
       confirmation: {
-        type: 'redirect',
-        return_url: 'https://glasno.test/pricing?payment=return',
+        type: 'embedded',
       },
       metadata: {
         orderId: 'payment_order_1',
@@ -37,6 +35,11 @@ describe('yookassaClient helpers', () => {
         planId: 'pro_monthly',
       },
     });
+    // return_url отдаёт фронт виджету, в теле создания платежа его нет.
+    expect(request.body).toMatchObject({ confirmation: { type: 'embedded' } });
+    expect(
+      (request.body as { confirmation: Record<string, unknown> }).confirmation
+    ).not.toHaveProperty('return_url');
   });
 
   it('requests saving the payment method for the first Pro payment', () => {
@@ -45,7 +48,6 @@ describe('yookassaClient helpers', () => {
       secretKey: 'test_secret',
       idempotenceKey: 'payment_order_pro',
       amountRub: 990,
-      returnUrl: 'https://glasno.test/pricing?payment=return',
       description: 'Гласно Pro',
       metadata: {
         orderId: 'payment_order_pro',

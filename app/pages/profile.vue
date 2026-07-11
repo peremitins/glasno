@@ -54,15 +54,22 @@
     () => billingPending.value && !billingStatus.value
   );
   const subscriptionDescription = computed(() => {
-    if (billingStatus.value?.hasActiveSubscription) {
-      return t('pricing.activeUntil', {
-        date: formatDate(billingStatus.value.subscriptionExpiresAt),
+    const billing = billingStatus.value;
+    if (billing?.activeAccess) {
+      return `${billing.activeAccess.planName} · ${t('pricing.activeUntil', {
+        date: formatDate(billing.activeAccess.expiresAt),
+      })}`;
+    }
+    if (billing?.lastAccessEndedAt) {
+      return t('pricing.accessExpiredAt', {
+        plan: billing.lastAccessPlanName ?? '',
+        date: formatDate(billing.lastAccessEndedAt),
       });
     }
 
     return t('pricing.freeUsed', {
-      used: billingStatus.value?.freeSessionsUsed ?? 0,
-      limit: billingStatus.value?.freeSessionsLimit ?? 1,
+      used: billing?.freeSessionsUsed ?? 0,
+      limit: billing?.freeSessionsLimit ?? 1,
     });
   });
 
@@ -198,7 +205,7 @@
           <p class="panel-label">{{ t('profile.sections.subscription') }}</p>
           <h3>
             {{
-              billingStatus?.hasActiveSubscription
+              billingStatus?.hasActivePaidAccess
                 ? t('billing.active')
                 : t('billing.inactive')
             }}
@@ -490,7 +497,7 @@
   .profile-card,
   .auth-panel {
     min-width: 0;
-    padding: clamp(8px, 2.2vw, 26px);
+    padding: clamp(15px, 2.2vw, 26px);
   }
 
   .profile-card {
@@ -856,7 +863,7 @@
   @media (max-width: 640px) {
     .profile-card,
     .auth-panel {
-      padding: 18px;
+      padding: clamp(15px, 2.2vw, 26px);
     }
 
     .profile-card__head {

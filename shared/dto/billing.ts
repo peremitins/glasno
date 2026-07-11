@@ -1,10 +1,8 @@
 import { z } from 'zod';
 
-export const BillingPlanIntervalDto = z.enum(['once', 'month']);
-// subscription — доступ на период (Pro, Career Pack);
-// one_time — разовый доступ (Разовая подготовка: 1 интервью);
-// addon — расходник (пакет минут realtime voice), требует активный тариф.
-export const BillingPlanKindDto = z.enum(['subscription', 'one_time', 'addon']);
+// pass — пропуск «Полный доступ» на срок (7–365 дней);
+// minute_pack — пакет минут realtime voice, требует активный пропуск.
+export const BillingPlanTypeDto = z.enum(['pass', 'minute_pack']);
 
 export const BillingPlanDto = z.object({
   id: z.string(),
@@ -12,8 +10,9 @@ export const BillingPlanDto = z.object({
   description: z.string(),
   priceRub: z.number().int().nonnegative(),
   currency: z.literal('RUB'),
-  interval: BillingPlanIntervalDto,
-  kind: BillingPlanKindDto.default('subscription'),
+  type: BillingPlanTypeDto,
+  // Срок действия доступа (для пропуска) или потолок жизни минут (для пакета).
+  durationDays: z.number().int().positive(),
   realtimeVoiceMinutes: z.number().int().nonnegative().default(0),
   features: z.array(z.string()),
   badge: z.string().nullable(),
@@ -36,7 +35,8 @@ export const BillingPaymentMethodDto = z.object({
   cardExpiryYear: z.string().nullable(),
 });
 
-// Автопродление: когда и сколько спишется (по образцу Mentala).
+// Автопродление: когда и сколько спишется. Сумма фиксируется в момент
+// покупки (renewalAmountRub записи доступа), а не берётся из каталога.
 export const BillingRenewalInfoDto = z.object({
   autoRenew: z.boolean(),
   nextChargeAt: z.string().nullable(),
@@ -45,21 +45,30 @@ export const BillingRenewalInfoDto = z.object({
   paymentMethod: BillingPaymentMethodDto.nullable(),
 });
 
+// Активный пропуск пользователя.
+export const BillingActiveAccessDto = z.object({
+  planId: z.string(),
+  planName: z.string(),
+  durationDays: z.number().int().positive(),
+  expiresAt: z.string(),
+});
+
 export const BillingStatusResponseDto = z.object({
   freeSessionsLimit: z.number().int().positive(),
   freeSessionsUsed: z.number().int().nonnegative(),
   canCreateInterview: z.boolean(),
-  // Какие форматы интервью доступны сейчас (free — только 'quick').
+  // Какие форматы интервью доступны сейчас (без пропуска — только 'quick').
   allowedSessionGoals: z.array(BillingSessionGoalAccessDto),
-  // Остаток оплаченных интервью для разового тарифа (null = безлимит/не применимо).
-  paidInterviewsRemaining: z.number().int().nonnegative().nullable().default(null),
-  hasActiveSubscription: z.boolean(),
+  // Есть активный оплаченный пропуск.
+  hasActivePaidAccess: z.boolean(),
+  // Автопродление включено на активном пропуске.
+  hasRecurringRenewal: z.boolean(),
   // true для admin: безлимитное использование без тарифа.
   unlimited: z.boolean().default(false),
-  activePlanId: z.string().nullable(),
-  // Человекочитаемое имя активного тарифа для UI.
-  activePlanName: z.string().nullable().default(null),
-  subscriptionExpiresAt: z.string().nullable(),
+  activeAccess: BillingActiveAccessDto.nullable().default(null),
+  // Последний завершившийся пропуск — для состояния «доступ закончился».
+  lastAccessEndedAt: z.string().nullable().default(null),
+  lastAccessPlanName: z.string().nullable().default(null),
   billing: BillingRenewalInfoDto.nullable().default(null),
   needsAuthForCheckout: z.boolean(),
   realtimeVoice: z.object({
@@ -72,6 +81,9 @@ export const BillingStatusResponseDto = z.object({
 
 export const BillingCheckoutRequestDto = z.object({
   planId: z.string().min(1),
+  // Автопродление по умолчанию включено; пользователь может снять галочку
+  // в чекауте. Для подарка сервер принудительно выключает.
+  autoRenew: z.boolean().default(true),
   gift: z
     .object({
       recipientEmail: z.string().trim().toLowerCase().email().max(254),
@@ -83,7 +95,10 @@ export const BillingCheckoutRequestDto = z.object({
 export const BillingCheckoutResponseDto = z.object({
   provider: z.literal('yookassa'),
   orderId: z.string(),
-  confirmationUrl: z.string().url(),
+  // Токен для встроенного виджета YooKassa (confirmation.type = embedded).
+  confirmationToken: z.string().min(1),
+  // Куда виджет вернёт пользователя после успешной оплаты.
+  returnUrl: z.string().url(),
 });
 
 export const BillingPaymentStatusResponseDto = z.object({
@@ -94,8 +109,8 @@ export const BillingPaymentStatusResponseDto = z.object({
   providerStatus: z.string().nullable(),
   paid: z.boolean(),
   providerVerified: z.boolean(),
-  hasActiveSubscription: z.boolean(),
-  subscriptionExpiresAt: z.string().nullable(),
+  hasActivePaidAccess: z.boolean(),
+  accessExpiresAt: z.string().nullable(),
   shouldContinuePolling: z.boolean(),
   purchaseType: z.enum(['self', 'gift']).default('self'),
   gift: z
@@ -134,7 +149,7 @@ export const BillingPaymentHistoryItemDto = z.object({
   id: z.string(),
   planId: z.string(),
   planName: z.string(),
-  planKind: BillingPlanKindDto,
+  planType: BillingPlanTypeDto,
   amountRub: z.number().int().nonnegative(),
   currency: z.literal('RUB'),
   provider: z.string(),
@@ -167,9 +182,9 @@ export const BillingSimpleResponseDto = z.object({
 
 export type BillingPaymentMethod = z.infer<typeof BillingPaymentMethodDto>;
 export type BillingRenewalInfo = z.infer<typeof BillingRenewalInfoDto>;
+export type BillingActiveAccess = z.infer<typeof BillingActiveAccessDto>;
 export type BillingAutoRenewRequest = z.infer<typeof BillingAutoRenewRequestDto>;
-export type BillingPlanInterval = z.infer<typeof BillingPlanIntervalDto>;
-export type BillingPlanKind = z.infer<typeof BillingPlanKindDto>;
+export type BillingPlanType = z.infer<typeof BillingPlanTypeDto>;
 export type BillingPlan = z.infer<typeof BillingPlanDto>;
 export type BillingPlansResponse = z.infer<typeof BillingPlansResponseDto>;
 export type BillingStatusResponse = z.infer<typeof BillingStatusResponseDto>;

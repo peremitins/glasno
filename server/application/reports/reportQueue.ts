@@ -1,4 +1,5 @@
 import { Queue, Worker, type Job } from 'bullmq';
+import { logRedisConnectionError } from '@/server/infrastructure/redis/redisClient';
 import type { ReportService } from './reportService';
 
 const QUEUE_NAME = 'glasno:reports';
@@ -26,6 +27,7 @@ function getQueue(redisUrl?: string | null) {
         maxRetriesPerRequest: null,
       },
     });
+    queue.on('error', (err) => logRedisConnectionError('report-queue', err));
   }
   return queue;
 }
@@ -78,7 +80,7 @@ export function createReportWorker(params: {
   redisUrl: string;
   createService: () => ReportService;
 }) {
-  return new Worker<ReportGenerationJob>(
+  const worker = new Worker<ReportGenerationJob>(
     QUEUE_NAME,
     async (job: Job<ReportGenerationJob>) => {
       const service = params.createService();
@@ -91,4 +93,6 @@ export function createReportWorker(params: {
       },
     }
   );
+  worker.on('error', (err) => logRedisConnectionError('report-worker', err));
+  return worker;
 }

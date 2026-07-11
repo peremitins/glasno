@@ -9,14 +9,17 @@ describe('billing gift DTO', () => {
   it('normalizes the recipient email in gift checkout', () => {
     expect(
       BillingCheckoutRequestDto.parse({
-        planId: 'pro_monthly',
+        planId: 'pass_30d',
         gift: {
           recipientEmail: '  Friend@Example.COM  ',
           senderName: '  Николай  ',
         },
       })
     ).toEqual({
-      planId: 'pro_monthly',
+      planId: 'pass_30d',
+      // Автопродление по умолчанию включено; для подарка сервер принудительно
+      // выключает его на этапе createCheckout.
+      autoRenew: true,
       gift: {
         recipientEmail: 'friend@example.com',
         senderName: 'Николай',
@@ -27,14 +30,14 @@ describe('billing gift DTO', () => {
   it('requires a non-empty sender name for a gift', () => {
     expect(() =>
       BillingCheckoutRequestDto.parse({
-        planId: 'pro_monthly',
+        planId: 'pass_30d',
         gift: { recipientEmail: 'friend@example.com', senderName: '   ' },
       })
     ).toThrow();
 
     expect(() =>
       BillingCheckoutRequestDto.parse({
-        planId: 'pro_monthly',
+        planId: 'pass_30d',
         gift: { recipientEmail: 'friend@example.com' },
       })
     ).toThrow();
@@ -43,7 +46,7 @@ describe('billing gift DTO', () => {
   it('rejects an invalid recipient email', () => {
     expect(() =>
       BillingCheckoutRequestDto.parse({
-        planId: 'pro_monthly',
+        planId: 'pass_30d',
         gift: { recipientEmail: 'not-an-email', senderName: 'Николай' },
       })
     ).toThrow();
@@ -59,8 +62,8 @@ describe('billing gift DTO', () => {
         providerStatus: 'succeeded',
         paid: true,
         providerVerified: true,
-        hasActiveSubscription: false,
-        subscriptionExpiresAt: null,
+        hasActivePaidAccess: false,
+        accessExpiresAt: null,
         shouldContinuePolling: false,
         purchaseType: 'gift',
         gift: {
@@ -78,10 +81,10 @@ describe('billing gift DTO', () => {
       items: [
         {
           id: 'order_1',
-          planId: 'pro_monthly',
-          planName: 'Pro',
-          planKind: 'subscription',
-          amountRub: 990,
+          planId: 'pass_30d',
+          planName: 'Полный доступ · 30 дн.',
+          planType: 'pass',
+          amountRub: 1190,
           currency: 'RUB',
           provider: 'yookassa',
           status: 'succeeded',

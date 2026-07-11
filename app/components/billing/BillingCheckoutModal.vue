@@ -1,49 +1,76 @@
 <script setup lang="ts">
-  import { computed, nextTick, ref, watch } from 'vue';
-  import {
-    Cross2Icon,
-    EnvelopeClosedIcon,
-    PersonIcon,
-  } from '@radix-icons/vue';
+  import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+  import { Cross2Icon, EnvelopeClosedIcon, PersonIcon } from '@radix-icons/vue';
   import { useI18n } from 'vue-i18n';
   import ButtonLoader from '@/app/components/design/ButtonLoader.vue';
+  import { useYookassaWidget } from '@/app/composables/useYookassaWidget';
   import type { BillingPlan } from '@/shared/dto';
 
   const props = defineProps<{
     open: boolean;
     plan: BillingPlan | null;
     gift: boolean;
+    autoRenew: boolean;
     recipientEmail: string;
     senderName: string;
     recipientEmailError?: string;
     senderNameError?: string;
     checkoutError?: string;
     pending?: boolean;
+    // Токен и return_url для встроенного виджета YooKassa. Пока пусты —
+    // показываем форму; как только приходят — переключаемся на виджет.
+    confirmationToken?: string;
+    returnUrl?: string;
   }>();
 
   const emit = defineEmits<{
     'update:open': [value: boolean];
     'update:gift': [value: boolean];
+    'update:autoRenew': [value: boolean];
     'update:recipientEmail': [value: string];
     'update:senderName': [value: string];
     clearError: [];
     submit: [];
+    // Вернуться от виджета к форме (например, после ошибки виджета).
+    back: [];
   }>();
 
   const { t } = useI18n();
   const emailInput = ref<HTMLInputElement | null>(null);
-  const giftAllowed = computed(() => props.plan?.kind !== 'addon');
+  const {
+    mount: mountWidget,
+    destroy: destroyWidget,
+  } = useYookassaWidget();
+
+  const showWidget = computed(() => Boolean(props.confirmationToken));
+  const giftAllowed = computed(() => props.plan?.type === 'pass');
   const displayGift = computed(() => props.gift && giftAllowed.value);
+  // Автопродление показываем только для пропуска себе: пакеты минут —
+  // разовые, подарок — всегда без автопродления.
+  const renewalAvailable = computed(
+    () => props.plan?.type === 'pass' && !displayGift.value
+  );
+  const renewalEnabled = computed(
+    () => renewalAvailable.value && props.autoRenew
+  );
   const periodLabel = computed(() => {
     if (!props.plan) return '';
-    if (props.plan.kind === 'addon') {
+    if (props.plan.type === 'minute_pack') {
       return t('pricing.minutesAmount', {
         minutes: props.plan.realtimeVoiceMinutes,
       });
     }
-    return props.plan.interval === 'month'
-      ? t('pricing.period30Days')
-      : t('pricing.period7Days');
+    return t('pricing.periodDays', { days: props.plan.durationDays });
+  });
+  // Дата следующего списания = конец покупаемого срока.
+  const nextChargeDate = computed(() => {
+    if (!props.plan || props.plan.type !== 'pass') return '';
+    const date = new Date();
+    date.setDate(date.getDate() + props.plan.durationDays);
+    return new Intl.DateTimeFormat('ru-RU', {
+      day: '2-digit',
+      month: 'long',
+    }).format(date);
   });
 
   function formatPrice(value: number) {
@@ -57,6 +84,11 @@
   function updateGift(event: Event) {
     const checked = (event.target as HTMLInputElement).checked;
     emit('update:gift', checked);
+    emit('clearError');
+  }
+
+  function updateAutoRenew(event: Event) {
+    emit('update:autoRenew', (event.target as HTMLInputElement).checked);
     emit('clearError');
   }
 
@@ -78,13 +110,34 @@
       emailInput.value?.focus();
     }
   );
+
+  // Как только пришёл токен, скрываем нашу оболочку и открываем нативное
+  // всплывающее окно YooKassa. Закрытие окна возвращает пользователя к форме.
+  watch(
+    () => [props.open, props.confirmationToken] as const,
+    async ([open, token]) => {
+      if (!open || !token || !props.returnUrl) {
+        destroyWidget();
+        return;
+      }
+      await mountWidget({
+        confirmationToken: token,
+        returnUrl: props.returnUrl,
+        modal: true,
+        onModalClose: () => emit('back'),
+        onError: () => emit('back'),
+      });
+    }
+  );
+
+  onBeforeUnmount(destroyWidget);
 </script>
 
 <template>
   <Teleport to="body">
     <Transition name="checkout-modal-fade">
       <div
-        v-if="open && plan"
+        v-if="open && plan && !showWidget"
         class="checkout-modal-overlay"
         role="dialog"
         aria-modal="true"
@@ -116,100 +169,125 @@
           </div>
 
           <label v-if="giftAllowed" class="gift-switch">
-            <span>
-              <strong>{{ t('pricing.giftToFriend') }}</strong>
-              <small>{{ t('pricing.giftSwitchHint') }}</small>
-            </span>
-            <input :checked="gift" type="checkbox" @change="updateGift">
-            <span class="gift-switch-control" aria-hidden="true" />
-          </label>
+              <span>
+                <strong>{{ t('pricing.giftToFriend') }}</strong>
+                <small>{{ t('pricing.giftSwitchHint') }}</small>
+              </span>
+              <input :checked="gift" type="checkbox" @change="updateGift">
+              <span class="gift-switch-control" aria-hidden="true" />
+            </label>
 
-          <div v-if="displayGift" class="gift-field">
-            <label for="gift-recipient-email">{{
-              t('pricing.giftEmailLabel')
-            }}</label>
-            <div class="input-shell">
-              <EnvelopeClosedIcon aria-hidden="true" />
+            <!-- Автопродление включено по умолчанию (ТЗ тарифы v2): явный
+               контрол с датой и суммой следующего списания, а не мелкая
+               подпись. Снятие галочки делает покупку разовой. -->
+            <label v-if="renewalAvailable" class="gift-switch">
+              <span>
+                <strong>{{ t('pricing.autoRenewSwitchLabel') }}</strong>
+                <small v-if="renewalEnabled">
+                  {{
+                    t('pricing.autoRenewSwitchHint', {
+                      date: nextChargeDate,
+                      amount: formatPrice(plan.priceRub),
+                    })
+                  }}
+                </small>
+                <small v-else>{{ t('pricing.autoRenewSwitchOffHint') }}</small>
+              </span>
               <input
-                id="gift-recipient-email"
-                ref="emailInput"
-                :value="recipientEmail"
-                type="email"
-                inputmode="email"
-                autocomplete="email"
-                autocapitalize="none"
-                spellcheck="false"
-                :placeholder="t('pricing.giftEmailPlaceholder')"
-                :aria-invalid="Boolean(recipientEmailError)"
-                required
-                @input="updateEmail"
+                :checked="autoRenew"
+                type="checkbox"
+                @change="updateAutoRenew"
               >
-            </div>
-            <small v-if="recipientEmailError" class="field-error">
-              {{ recipientEmailError }}
-            </small>
-          </div>
+              <span class="gift-switch-control" aria-hidden="true" />
+            </label>
 
-          <div v-if="displayGift" class="gift-field">
-            <label for="gift-sender-name">{{
-              t('pricing.giftSenderNameLabel')
-            }}</label>
-            <div class="input-shell">
-              <PersonIcon aria-hidden="true" />
-              <input
-                id="gift-sender-name"
-                :value="senderName"
-                type="text"
-                autocomplete="name"
-                maxlength="80"
-                :placeholder="t('pricing.giftSenderNamePlaceholder')"
-                :aria-invalid="Boolean(senderNameError)"
-                required
-                @input="updateSenderName"
-              >
+            <div v-if="displayGift" class="gift-field">
+              <label for="gift-recipient-email">{{
+                t('pricing.giftEmailLabel')
+              }}</label>
+              <div class="input-shell">
+                <EnvelopeClosedIcon aria-hidden="true" />
+                <input
+                  id="gift-recipient-email"
+                  ref="emailInput"
+                  :value="recipientEmail"
+                  type="email"
+                  inputmode="email"
+                  autocomplete="email"
+                  autocapitalize="none"
+                  spellcheck="false"
+                  :placeholder="t('pricing.giftEmailPlaceholder')"
+                  :aria-invalid="Boolean(recipientEmailError)"
+                  required
+                  @input="updateEmail"
+                >
+              </div>
+              <small v-if="recipientEmailError" class="field-error">
+                {{ recipientEmailError }}
+              </small>
             </div>
-            <small v-if="senderNameError" class="field-error">
-              {{ senderNameError }}
-            </small>
-          </div>
 
-          <p class="checkout-provider">{{ t('pricing.checkoutProvider') }}</p>
-          <p v-if="checkoutError" class="checkout-error" role="alert">
-            {{ checkoutError }}
-          </p>
-          <button
-            type="button"
-            class="primary-action button-loader-host checkout-submit"
-            :disabled="pending"
-            @click="emit('submit')"
-          >
-            <ButtonLoader v-if="pending" />
-            <span
-              class="button-loader-content"
-              :class="{ 'button-loader-content--loading': pending }"
+            <div v-if="displayGift" class="gift-field">
+              <label for="gift-sender-name">{{
+                t('pricing.giftSenderNameLabel')
+              }}</label>
+              <div class="input-shell">
+                <PersonIcon aria-hidden="true" />
+                <input
+                  id="gift-sender-name"
+                  :value="senderName"
+                  type="text"
+                  autocomplete="name"
+                  maxlength="80"
+                  :placeholder="t('pricing.giftSenderNamePlaceholder')"
+                  :aria-invalid="Boolean(senderNameError)"
+                  required
+                  @input="updateSenderName"
+                >
+              </div>
+              <small v-if="senderNameError" class="field-error">
+                {{ senderNameError }}
+              </small>
+            </div>
+
+            <p class="checkout-provider">{{ t('pricing.checkoutProvider') }}</p>
+            <p v-if="checkoutError" class="checkout-error" role="alert">
+              {{ checkoutError }}
+            </p>
+            <button
+              type="button"
+              class="primary-action button-loader-host checkout-submit"
+              :disabled="pending"
+              @click="emit('submit')"
             >
+              <ButtonLoader v-if="pending" />
+              <span
+                class="button-loader-content"
+                :class="{ 'button-loader-content--loading': pending }"
+              >
+                {{
+                  displayGift
+                    ? t('pricing.giftCheckoutCta', {
+                        amount: formatPrice(plan.priceRub),
+                      })
+                    : t('pricing.checkoutCta', {
+                        amount: formatPrice(plan.priceRub),
+                      })
+                }}
+              </span>
+            </button>
+            <p class="checkout-disclosure">
               {{
                 displayGift
-                  ? t('pricing.giftCheckoutCta', {
+                  ? t('pricing.giftDisclosure')
+                  : renewalEnabled
+                  ? t('pricing.autoRenewDisclosure', {
                       amount: formatPrice(plan.priceRub),
+                      date: nextChargeDate,
                     })
-                  : t('pricing.checkoutCta', {
-                      amount: formatPrice(plan.priceRub),
-                    })
+                  : t('pricing.oneTimeDisclosure')
               }}
-            </span>
-          </button>
-          <p class="checkout-disclosure">
-            {{
-              displayGift
-                ? t('pricing.giftDisclosure')
-                : plan.interval === 'month'
-                ? t('pricing.autoRenewDisclosure', {
-                    amount: formatPrice(plan.priceRub),
-                  })
-                : t('pricing.oneTimeDisclosure')
-            }}
-          </p>
+            </p>
         </section>
       </div>
     </Transition>
@@ -235,6 +313,7 @@
     max-height: min(720px, calc(100dvh - 32px));
     padding: clamp(20px, 4vw, 30px);
     overflow-y: auto;
+    overflow-x: hidden;
     background: var(--surface-solid);
   }
 
@@ -419,5 +498,6 @@
       max-height: calc(100dvh - 20px);
       border-radius: var(--radius-lg);
     }
+
   }
 </style>

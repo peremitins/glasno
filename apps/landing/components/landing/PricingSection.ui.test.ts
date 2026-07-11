@@ -8,47 +8,37 @@ const source = readFileSync(
 );
 
 describe('PricingSection', () => {
-  it('shows the approved Free, one-time and Pro offers', () => {
+  it('shows the three key full-access passes with prices from the approved grid', () => {
     const { pricing } = useLandingContent();
 
     expect(
-      pricing.plans.map(({ id, description, features }) => ({
-        id,
-        description,
-        features,
-      }))
+      pricing.plans.map(({ id, price, period }) => ({ id, price, period }))
     ).toEqual([
       {
-        id: 'free',
-        description: 'Попробуйте формат без оплаты.',
-        features: [
-          '1 быстрое интервью на 5–7 минут',
-          'Ответы голосом или текстом',
-          'Разбор с оценкой и рекомендациями',
-        ],
+        id: 'pass_7d',
+        price: '449 ₽',
+        period: '7 дней · 30 минут голоса',
       },
       {
-        id: 'single_prep',
-        description: 'Одна серьёзная репетиция перед конкретным интервью.',
-        features: [
-          '1 интервью любой длины и глубины',
-          '30 минут живого голосового интервью',
-          'Подробный разбор и PDF-отчёт',
-          'Докупка минут',
-        ],
+        id: 'pass_30d',
+        price: '1 190 ₽',
+        period: '30 дней · 60 минут голоса',
       },
       {
-        id: 'pro_monthly',
-        description: 'Для активного поиска и регулярной практики.',
-        features: [
-          'Интервью без ограничений',
-          '60 минут живого голосового интервью',
-          'История прогресса и разборы в PDF',
-          'Докупка минут',
-        ],
+        id: 'pass_90d',
+        price: '2 290 ₽',
+        period: '90 дней · 60 минут голоса',
       },
     ]);
-    expect(pricing.packsNote).toBe('Докупаются к Pro и Разовой подготовке.');
+    expect(pricing.plans[1]?.highlighted).toBe(true);
+    // Остальные сроки упомянуты отдельной строкой, автопродление раскрыто.
+    expect(pricing.plansNote).toContain('365 дней — 4 990 ₽');
+    expect(pricing.subtitle).toContain('Продлевается автоматически');
+    expect(pricing.packsNote).toBe(
+      'Пакеты минут докупаются к активному доступу.'
+    );
+    expect(source).toContain('pricing.plansNote');
+    expect(source).toContain(':lead="pricing.subtitle"');
   });
 
   it('keeps badges in the card header and stretches cards evenly', () => {

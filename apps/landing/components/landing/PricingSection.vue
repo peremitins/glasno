@@ -13,6 +13,7 @@
       <SectionHeading
         :eyebrow="pricing.eyebrow"
         :title="pricing.title"
+        :lead="pricing.subtitle"
         align="center"
       />
 
@@ -53,6 +54,8 @@
         </article>
       </div>
 
+      <p class="pricing__note" data-reveal>{{ pricing.plansNote }}</p>
+
       <div class="packs" data-reveal>
         <div class="packs__head">
           <strong>{{ pricing.packsLabel }}</strong>
@@ -85,6 +88,13 @@
     grid-template-columns: repeat(3, 1fr);
     gap: clamp(16px, 2vw, 24px);
     align-items: stretch;
+  }
+
+  .pricing__note {
+    margin: calc(-1 * clamp(24px, 3vw, 40px)) 0 0;
+    color: var(--l-text-mut);
+    font-size: 14px;
+    text-align: center;
   }
 
   .plan {
@@ -199,7 +209,7 @@
     align-items: center;
     justify-content: space-between;
     gap: 20px;
-    padding: clamp(20px, 2.4vw, 28px);
+    padding: clamp(15px, 2.2vw, 26px);
     border-radius: var(--l-r-lg);
     border: 1px dashed var(--l-line-hi);
   }

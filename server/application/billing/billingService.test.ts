@@ -6,10 +6,14 @@ import {
   getYooKassaPayment,
   getYooKassaPaymentMethod,
 } from './yookassaClient';
+import {
+  sendRenewalFailedEmail,
+  sendRenewalNoticeEmail,
+} from './renewalEmailSender';
 import type {
   BillingRepository,
+  PaidAccessRecord,
   PaymentOrderRecord,
-  SubscriptionRecord,
 } from '@/server/interface/billingRepository';
 
 vi.mock('./yookassaClient', async (importOriginal) => {
@@ -24,12 +28,19 @@ vi.mock('./yookassaClient', async (importOriginal) => {
   };
 });
 
+vi.mock('./renewalEmailSender', () => ({
+  sendRenewalNoticeEmail: vi.fn().mockResolvedValue(true),
+  sendRenewalFailedEmail: vi.fn().mockResolvedValue(true),
+}));
+
 const mockedGetYooKassaPayment = vi.mocked(getYooKassaPayment);
 const mockedGetYooKassaPaymentMethod = vi.mocked(getYooKassaPaymentMethod);
 const mockedCreateYooKassaPayment = vi.mocked(createYooKassaPayment);
 const mockedCreateYooKassaRecurringPayment = vi.mocked(
   createYooKassaRecurringPayment
 );
+const mockedSendRenewalNoticeEmail = vi.mocked(sendRenewalNoticeEmail);
+const mockedSendRenewalFailedEmail = vi.mocked(sendRenewalFailedEmail);
 
 function createOrder(
   overrides: Partial<PaymentOrderRecord> = {}
@@ -37,56 +48,74 @@ function createOrder(
   return {
     id: 'order_1',
     userId: 'user_1',
-    planId: 'pro_monthly',
+    planId: 'pass_30d',
     provider: 'yookassa',
     providerPaymentId: 'payment_1',
     status: 'pending',
-    amountRub: 990,
+    amountRub: 1190,
     currency: 'RUB',
     confirmationUrl: 'https://yookassa.test/payments/payment_1',
-    metadata: null,
+    metadata: { userId: 'user_1', planId: 'pass_30d', autoRenew: true },
     createdAt: new Date('2026-07-01T10:00:00.000Z'),
     updatedAt: new Date('2026-07-01T10:00:00.000Z'),
     ...overrides,
   };
 }
 
-function createSubscription(
-  overrides: Partial<SubscriptionRecord> = {}
-): SubscriptionRecord {
+function createAccess(
+  overrides: Partial<PaidAccessRecord> = {}
+): PaidAccessRecord {
   return {
-    id: 'subscription_1',
+    id: 'access_1',
     userId: 'user_1',
-    planId: 'pro_monthly',
+    planId: 'pass_30d',
     status: 'active',
     provider: 'yookassa',
     providerPaymentId: 'payment_1',
     currentPeriodEnd: new Date('2026-07-31T10:00:00.000Z'),
-    autoRenew: false,
-    nextChargeAt: null,
+    autoRenew: true,
+    nextChargeAt: new Date('2026-07-31T10:00:00.000Z'),
     lastChargeAttemptAt: null,
     lastChargeError: null,
+    chargeAttempts: 0,
+    renewalPlanId: 'pass_30d',
+    renewalAmountRub: 1190,
+    renewalNoticeSentAt: null,
     createdAt: new Date('2026-07-01T10:00:00.000Z'),
     updatedAt: new Date('2026-07-01T10:00:00.000Z'),
     ...overrides,
   };
 }
 
+const activePaymentMethod = {
+  id: 'method_1',
+  userId: 'user_1',
+  provider: 'yookassa',
+  providerPaymentMethodId: 'pm_1',
+  status: 'active',
+  methodType: 'bank_card',
+  title: 'Bank card *1111',
+  cardBrand: 'Visa',
+  cardLast4: '1111',
+  cardExpiryMonth: '12',
+  cardExpiryYear: '30',
+  createdAt: new Date('2026-07-01T10:00:00.000Z'),
+};
+
 function createRepository(order = createOrder()) {
-  let activeSubscription: SubscriptionRecord | null = null;
+  let access: PaidAccessRecord | null = null;
   let fulfilledAt: Date | null = null;
   const repository = {
     countOwnerSessions: vi.fn().mockResolvedValue(1),
     countOwnerSessionsSince: vi.fn().mockResolvedValue(0),
     findUserEmail: vi.fn().mockResolvedValue('user@example.com'),
-    findActiveSubscriptionByUserId: vi
-      .fn()
-      .mockImplementation(async () => activeSubscription),
-    findActiveSubscriptionsByUserId: vi
-      .fn()
-      .mockImplementation(async () =>
-        activeSubscription ? [activeSubscription] : []
-      ),
+    findAccessByUserId: vi.fn().mockImplementation(async () => access),
+    setAccessAutoRenew: vi.fn().mockResolvedValue(undefined),
+    listAccessDueForCharge: vi.fn().mockResolvedValue([]),
+    claimAccessForCharge: vi.fn().mockResolvedValue(null),
+    recordAccessChargeError: vi.fn().mockResolvedValue(undefined),
+    listAccessDueForRenewalNotice: vi.fn().mockResolvedValue([]),
+    claimRenewalNotice: vi.fn().mockResolvedValue(true),
     countRealtimeVoiceUsageSeconds: vi.fn().mockResolvedValue(0),
     getRealtimeMinuteBalance: vi.fn().mockResolvedValue({
       totalSeconds: 0,
@@ -111,33 +140,37 @@ function createRepository(order = createOrder()) {
     findPaymentOrderByProviderPaymentId: vi.fn().mockResolvedValue(order),
     findLatestPaymentOrderByUserId: vi.fn().mockResolvedValue(order),
     updatePaymentOrder: vi.fn().mockResolvedValue(order),
-    findSubscriptionByProviderPaymentId: vi.fn().mockResolvedValue(null),
     findPaymentMethodByUserId: vi.fn().mockResolvedValue(null),
     savePendingPaymentMethod: vi.fn().mockResolvedValue(undefined),
     activatePaymentMethod: vi.fn().mockResolvedValue(undefined),
     deletePaymentMethodByUserId: vi.fn().mockResolvedValue(undefined),
-    setSubscriptionAutoRenew: vi.fn().mockResolvedValue(undefined),
-    listSubscriptionsDueForCharge: vi.fn().mockResolvedValue([]),
-    claimSubscriptionForCharge: vi.fn().mockResolvedValue(null),
-    recordSubscriptionChargeError: vi.fn().mockResolvedValue(undefined),
-    grantSubscription: vi.fn().mockImplementation(async (input) => {
-      activeSubscription = createSubscription(input);
-      return activeSubscription;
-    }),
-    // Эмуляция идемпотентности продовой реализации: повторный вызов
-    // по тому же заказу доступ не выдаёт.
+    // Эмуляция идемпотентности продовой реализации: повторный вызов по тому
+    // же заказу доступ не выдаёт; выдача создаёт/продлевает единственную
+    // запись доступа пользователя.
     fulfillPaidOrder: vi.fn().mockImplementation(async (params) => {
       if (fulfilledAt) {
         return { fulfilled: false, alreadyFulfilled: true };
       }
       fulfilledAt = new Date();
-      activeSubscription = createSubscription({
+      access = createAccess({
         planId: params.plan.id,
         providerPaymentId: params.providerPaymentId,
+        autoRenew: params.autoRenew,
+        renewalPlanId: params.plan.id,
+        renewalAmountRub: params.plan.priceRub,
+        currentPeriodEnd: new Date(
+          Date.now() + params.plan.durationDays * 24 * 60 * 60 * 1000
+        ),
       });
       return { fulfilled: true, alreadyFulfilled: false };
     }),
-  } satisfies BillingRepository;
+    // Хелпер для тестов: выставить запись доступа напрямую.
+    __setAccess(value: PaidAccessRecord | null) {
+      access = value;
+    },
+  } satisfies BillingRepository & {
+    __setAccess: (value: PaidAccessRecord | null) => void;
+  };
 
   return repository;
 }
@@ -159,13 +192,13 @@ describe('BillingService payment reconciliation', () => {
     vi.setSystemTime(new Date('2026-07-01T10:00:00.000Z'));
   });
 
-  it('reconciles a paid YooKassa checkout and grants access when webhook did not update the order', async () => {
+  it('reconciles a paid pass checkout and grants access when webhook did not update the order', async () => {
     const repository = createRepository();
     mockedGetYooKassaPayment.mockResolvedValue({
       id: 'payment_1',
       status: 'succeeded',
       paid: true,
-      amountValue: '990.00',
+      amountValue: '1190.00',
       currency: 'RUB',
       metadata: { orderId: 'order_1' },
       paymentMethod: null,
@@ -183,7 +216,7 @@ describe('BillingService payment reconciliation', () => {
       providerStatus: 'succeeded',
       paid: true,
       providerVerified: true,
-      hasActiveSubscription: true,
+      hasActivePaidAccess: true,
       shouldContinuePolling: false,
     });
 
@@ -191,14 +224,77 @@ describe('BillingService payment reconciliation', () => {
       orderId: 'order_1',
       providerPaymentId: 'payment_1',
       plan: {
-        id: 'pro_monthly',
-        kind: 'subscription',
-        periodDays: 30,
+        id: 'pass_30d',
+        type: 'pass',
+        durationDays: 30,
         realtimeVoiceMinutes: 60,
+        // Цена продления фиксируется по фактически оплаченной сумме заказа.
+        priceRub: 1190,
       },
+      autoRenew: true,
       paymentMethod: null,
-      maxExpiresAt: null,
     });
+  });
+
+  it('honours the declined auto-renew choice stored in order metadata', async () => {
+    const order = createOrder({
+      metadata: { userId: 'user_1', planId: 'pass_30d', autoRenew: false },
+    });
+    const repository = createRepository(order);
+    mockedGetYooKassaPayment.mockResolvedValue({
+      id: 'payment_1',
+      status: 'succeeded',
+      paid: true,
+      amountValue: '1190.00',
+      currency: 'RUB',
+      metadata: { orderId: 'order_1' },
+      paymentMethod: null,
+    });
+    const service = createService(repository);
+
+    await service.reconcileYooKassaCheckout({
+      userId: 'user_1',
+      orderId: 'order_1',
+    });
+
+    expect(repository.fulfillPaidOrder).toHaveBeenCalledWith(
+      expect.objectContaining({ autoRenew: false })
+    );
+  });
+
+  it('fixes the renewal price to the actually paid renewal amount', async () => {
+    // Рекуррентный заказ по «старой» цене 999 ₽ при каталожной 1190 ₽.
+    const order = createOrder({
+      amountRub: 999,
+      metadata: {
+        userId: 'user_1',
+        planId: 'pass_30d',
+        renewal: true,
+        autoRenew: true,
+      },
+    });
+    const repository = createRepository(order);
+    mockedGetYooKassaPayment.mockResolvedValue({
+      id: 'payment_1',
+      status: 'succeeded',
+      paid: true,
+      amountValue: '999.00',
+      currency: 'RUB',
+      metadata: { orderId: 'order_1' },
+      paymentMethod: null,
+    });
+    const service = createService(repository);
+
+    await service.reconcileYooKassaCheckout({
+      userId: 'user_1',
+      orderId: 'order_1',
+    });
+
+    expect(repository.fulfillPaidOrder).toHaveBeenCalledWith(
+      expect.objectContaining({
+        plan: expect.objectContaining({ priceRub: 999 }),
+      })
+    );
   });
 
   it('marks a paid gift ready without granting access to the purchaser', async () => {
@@ -210,7 +306,7 @@ describe('BillingService payment reconciliation', () => {
       purchaserUserId: 'user_1',
       recipientEmail: 'friend@example.com',
       senderName: 'Николай',
-      planId: 'pro_monthly',
+      planId: 'pass_30d',
       status: 'ready' as const,
       paidAt: new Date('2026-07-01T10:00:00.000Z'),
       claimExpiresAt: new Date('2027-01-01T10:00:00.000Z'),
@@ -229,7 +325,7 @@ describe('BillingService payment reconciliation', () => {
       id: 'payment_1',
       status: 'succeeded',
       paid: true,
-      amountValue: '990.00',
+      amountValue: '1190.00',
       currency: 'RUB',
       metadata: { orderId: 'order_1' },
       paymentMethod: null,
@@ -243,7 +339,7 @@ describe('BillingService payment reconciliation', () => {
       })
     ).resolves.toMatchObject({
       paid: true,
-      hasActiveSubscription: false,
+      hasActivePaidAccess: false,
       purchaseType: 'gift',
       gift: {
         recipientEmailMasked: 'fr***@example.com',
@@ -268,7 +364,7 @@ describe('BillingService payment reconciliation', () => {
       id: 'payment_1',
       status: 'canceled',
       paid: false,
-      amountValue: '990.00',
+      amountValue: '1190.00',
       currency: 'RUB',
       metadata: { orderId: 'order_1' },
       paymentMethod: null,
@@ -286,134 +382,13 @@ describe('BillingService payment reconciliation', () => {
     });
   });
 
-  it('caps addon minutes by the latest one-time access end and the addon period', async () => {
-    const order = createOrder({
-      planId: 'realtime_pack_60',
-      amountRub: 890,
-    });
-    const repository = createRepository(order);
-    repository.findActiveSubscriptionsByUserId.mockResolvedValue([
-      createSubscription({
-        id: 'one_time_1',
-        planId: 'single_prep',
-        currentPeriodEnd: new Date('2026-08-05T10:00:00.000Z'),
-      }),
-      createSubscription({
-        id: 'one_time_2',
-        planId: 'single_prep',
-        currentPeriodEnd: new Date('2026-08-10T10:00:00.000Z'),
-      }),
-    ]);
-    mockedGetYooKassaPayment.mockResolvedValue({
-      id: 'payment_1',
-      status: 'succeeded',
-      paid: true,
-      amountValue: '890.00',
-      currency: 'RUB',
-      metadata: { orderId: 'order_1' },
-      paymentMethod: null,
-    });
-    const service = createService(repository);
-
-    await service.reconcileYooKassaCheckout({
-      userId: 'user_1',
-      orderId: 'order_1',
-    });
-
-    expect(repository.fulfillPaidOrder).toHaveBeenCalledWith(
-      expect.objectContaining({
-        maxExpiresAt: new Date('2026-07-31T10:00:00.000Z'),
-      })
-    );
-  });
-
-  it('uses the latest active one-time access end when it is earlier than the addon period', async () => {
-    const order = createOrder({
-      planId: 'realtime_pack_60',
-      amountRub: 890,
-    });
-    const repository = createRepository(order);
-    repository.findActiveSubscriptionsByUserId.mockResolvedValue([
-      createSubscription({
-        id: 'one_time_1',
-        planId: 'single_prep',
-        currentPeriodEnd: new Date('2026-07-05T10:00:00.000Z'),
-      }),
-      createSubscription({
-        id: 'one_time_2',
-        planId: 'single_prep',
-        currentPeriodEnd: new Date('2026-07-08T10:00:00.000Z'),
-      }),
-    ]);
-    mockedGetYooKassaPayment.mockResolvedValue({
-      id: 'payment_1',
-      status: 'succeeded',
-      paid: true,
-      amountValue: '890.00',
-      currency: 'RUB',
-      metadata: { orderId: 'order_1' },
-      paymentMethod: null,
-    });
-    const service = createService(repository);
-
-    await service.reconcileYooKassaCheckout({
-      userId: 'user_1',
-      orderId: 'order_1',
-    });
-
-    expect(repository.fulfillPaidOrder).toHaveBeenCalledWith(
-      expect.objectContaining({
-        maxExpiresAt: new Date('2026-07-08T10:00:00.000Z'),
-      })
-    );
-  });
-
-  it('does not cap addon minutes when an active subscription exists', async () => {
-    const order = createOrder({
-      planId: 'realtime_pack_60',
-      amountRub: 890,
-    });
-    const repository = createRepository(order);
-    repository.findActiveSubscriptionsByUserId.mockResolvedValue([
-      createSubscription({
-        id: 'one_time_1',
-        planId: 'single_prep',
-        currentPeriodEnd: new Date('2026-07-05T10:00:00.000Z'),
-      }),
-      createSubscription({
-        id: 'pro_1',
-        planId: 'pro_monthly',
-        currentPeriodEnd: new Date('2026-07-20T10:00:00.000Z'),
-      }),
-    ]);
-    mockedGetYooKassaPayment.mockResolvedValue({
-      id: 'payment_1',
-      status: 'succeeded',
-      paid: true,
-      amountValue: '890.00',
-      currency: 'RUB',
-      metadata: { orderId: 'order_1' },
-      paymentMethod: null,
-    });
-    const service = createService(repository);
-
-    await service.reconcileYooKassaCheckout({
-      userId: 'user_1',
-      orderId: 'order_1',
-    });
-
-    expect(repository.fulfillPaidOrder).toHaveBeenCalledWith(
-      expect.objectContaining({ maxExpiresAt: null })
-    );
-  });
-
   it('does not grant access twice for the same YooKassa payment', async () => {
     const repository = createRepository();
     mockedGetYooKassaPayment.mockResolvedValue({
       id: 'payment_1',
       status: 'succeeded',
       paid: true,
-      amountValue: '990.00',
+      amountValue: '1190.00',
       currency: 'RUB',
       metadata: { orderId: 'order_1' },
       paymentMethod: null,
@@ -436,7 +411,7 @@ describe('BillingService payment reconciliation', () => {
         orderId: 'order_1',
       })
     ).resolves.toMatchObject({
-      hasActiveSubscription: true,
+      hasActivePaidAccess: true,
       shouldContinuePolling: false,
     });
 
@@ -484,7 +459,7 @@ describe('BillingService payment reconciliation', () => {
     ).resolves.toMatchObject({
       providerStatus: 'succeeded',
       paid: true,
-      hasActiveSubscription: false,
+      hasActivePaidAccess: false,
       shouldContinuePolling: false,
     });
 
@@ -504,7 +479,7 @@ describe('BillingService payment reconciliation', () => {
       id: 'payment_1',
       status: 'succeeded',
       paid: true,
-      amountValue: '990.00',
+      amountValue: '1190.00',
       currency: null,
       metadata: { orderId: 'order_1' },
       paymentMethod: null,
@@ -517,10 +492,38 @@ describe('BillingService payment reconciliation', () => {
     });
     expect(repository.fulfillPaidOrder).not.toHaveBeenCalled();
   });
+
+  it('does not grant access for a paid order that references an unknown plan', async () => {
+    const order = createOrder({ planId: 'single_prep', amountRub: 399 });
+    const repository = createRepository(order);
+    mockedGetYooKassaPayment.mockResolvedValue({
+      id: 'payment_1',
+      status: 'succeeded',
+      paid: true,
+      amountValue: '399.00',
+      currency: 'RUB',
+      metadata: { orderId: 'order_1' },
+      paymentMethod: null,
+    });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const service = createService(repository);
+
+    await service.reconcileYooKassaCheckout({
+      userId: 'user_1',
+      orderId: 'order_1',
+    });
+
+    expect(repository.fulfillPaidOrder).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledWith(
+      '[billing] paid order references unknown plan',
+      expect.objectContaining({ planId: 'single_prep' })
+    );
+    errorSpy.mockRestore();
+  });
 });
 
 describe('BillingService payment history', () => {
-  it('maps gift state and preserves the repository cursor', async () => {
+  it('maps plan and gift state and preserves the repository cursor', async () => {
     const repository = createRepository();
     repository.listPaymentOrdersByUserId.mockResolvedValue({
       items: [
@@ -532,7 +535,7 @@ describe('BillingService payment history', () => {
             purchaserUserId: 'user_1',
             recipientEmail: 'friend@example.com',
             senderName: 'Николай',
-            planId: 'pro_monthly',
+            planId: 'pass_30d',
             status: 'ready',
             paidAt: new Date('2026-07-01T10:00:00.000Z'),
             claimExpiresAt: new Date('2027-01-01T10:00:00.000Z'),
@@ -557,7 +560,8 @@ describe('BillingService payment history', () => {
       items: [
         expect.objectContaining({
           id: 'order_1',
-          planName: 'Pro',
+          planName: 'Полный доступ · 30 дн.',
+          planType: 'pass',
           status: 'succeeded',
           gift: expect.objectContaining({
             recipientEmailMasked: 'fr***@example.com',
@@ -577,23 +581,25 @@ describe('BillingService checkout guards', () => {
     vi.useRealTimers();
   });
 
-  it('blocks minute pack purchase without an active paid plan', async () => {
+  it('blocks minute pack purchase without an active pass', async () => {
     const repository = createRepository();
     const service = createService(repository);
 
     await expect(
       service.createCheckout({ userId: 'user_1', planId: 'realtime_pack_60' })
     ).rejects.toMatchObject({
-      message: 'Пакеты минут доступны только при активном платном тарифе',
+      message: 'Пакеты минут доступны только при активном пропуске «Полный доступ»',
     });
     expect(repository.createPaymentOrder).not.toHaveBeenCalled();
   });
 
-  it('allows minute pack purchase with an active one-time plan', async () => {
+  it('allows minute pack purchase with an active pass', async () => {
     const repository = createRepository();
-    repository.findActiveSubscriptionsByUserId.mockResolvedValue([
-      createSubscription({ planId: 'single_prep' }),
-    ]);
+    repository.__setAccess(
+      createAccess({
+        currentPeriodEnd: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      })
+    );
     repository.createPaymentOrder.mockResolvedValue(
       createOrder({ planId: 'realtime_pack_60', amountRub: 890 })
     );
@@ -601,8 +607,8 @@ describe('BillingService checkout guards', () => {
       id: 'payment_addon_1',
       status: 'pending',
       confirmation: {
-        type: 'redirect',
-        confirmation_url: 'https://yookassa.test/payments/payment_addon_1',
+        type: 'embedded',
+        confirmation_token: 'ct_payment_addon_1',
       },
     });
     const service = createService(repository);
@@ -612,17 +618,16 @@ describe('BillingService checkout guards', () => {
     ).resolves.toEqual({
       provider: 'yookassa',
       orderId: 'order_1',
-      confirmationUrl: 'https://yookassa.test/payments/payment_addon_1',
+      confirmationToken: 'ct_payment_addon_1',
+      returnUrl: 'https://glasno.test/pricing?payment=return&orderId=order_1',
     });
-    expect(repository.createPaymentOrder).toHaveBeenCalledWith(
-      expect.objectContaining({
-        userId: 'user_1',
-        planId: 'realtime_pack_60',
-      })
+    // Пакет минут — не автопродлеваемый: карту не сохраняем.
+    expect(mockedCreateYooKassaPayment).toHaveBeenCalledWith(
+      expect.objectContaining({ savePaymentMethod: false })
     );
   });
 
-  it('allows an administrator to buy a minute pack without a paid subscription', async () => {
+  it('allows an administrator to buy a minute pack without an active pass', async () => {
     const repository = createRepository();
     repository.createPaymentOrder.mockResolvedValue(
       createOrder({ planId: 'realtime_pack_60', amountRub: 890 })
@@ -631,9 +636,8 @@ describe('BillingService checkout guards', () => {
       id: 'payment_admin_addon_1',
       status: 'pending',
       confirmation: {
-        type: 'redirect',
-        confirmation_url:
-          'https://yookassa.test/payments/payment_admin_addon_1',
+        type: 'embedded',
+        confirmation_token: 'ct_payment_admin_addon_1',
       },
     });
     const service = createService(repository);
@@ -647,34 +651,66 @@ describe('BillingService checkout guards', () => {
     ).resolves.toEqual({
       provider: 'yookassa',
       orderId: 'order_1',
-      confirmationUrl:
-        'https://yookassa.test/payments/payment_admin_addon_1',
+      confirmationToken: 'ct_payment_admin_addon_1',
+      returnUrl: 'https://glasno.test/pricing?payment=return&orderId=order_1',
     });
   });
 
-  it('requests payment-method saving for Pro auto-renewal by default', async () => {
+  it('enables auto-renewal by default: saves the card and stores the choice in order metadata', async () => {
     const repository = createRepository();
     repository.createPaymentOrder.mockResolvedValue(createOrder());
     mockedCreateYooKassaPayment.mockResolvedValue({
-      id: 'payment_pro_1',
+      id: 'payment_pass_1',
       status: 'pending',
       confirmation: {
-        type: 'redirect',
-        confirmation_url: 'https://yookassa.test/payments/payment_pro_1',
+        type: 'embedded',
+        confirmation_token: 'ct_payment_pass_1',
       },
     });
     const service = createService(repository);
 
-    await service.createCheckout({ userId: 'user_1', planId: 'pro_monthly' });
+    await service.createCheckout({ userId: 'user_1', planId: 'pass_30d' });
 
     expect(mockedCreateYooKassaPayment).toHaveBeenCalledWith(
+      expect.objectContaining({ savePaymentMethod: true })
+    );
+    expect(repository.createPaymentOrder).toHaveBeenCalledWith(
       expect.objectContaining({
-        savePaymentMethod: true,
+        metadata: { userId: 'user_1', planId: 'pass_30d', autoRenew: true },
       })
     );
   });
 
-  it('creates a gift checkout without saving a payment method or leaking recipient email to YooKassa metadata', async () => {
+  it('respects the declined auto-renew checkbox: one-off purchase without card saving', async () => {
+    const repository = createRepository();
+    repository.createPaymentOrder.mockResolvedValue(createOrder());
+    mockedCreateYooKassaPayment.mockResolvedValue({
+      id: 'payment_pass_1',
+      status: 'pending',
+      confirmation: {
+        type: 'embedded',
+        confirmation_token: 'ct_payment_pass_1',
+      },
+    });
+    const service = createService(repository);
+
+    await service.createCheckout({
+      userId: 'user_1',
+      planId: 'pass_30d',
+      autoRenew: false,
+    });
+
+    expect(mockedCreateYooKassaPayment).toHaveBeenCalledWith(
+      expect.objectContaining({ savePaymentMethod: false })
+    );
+    expect(repository.createPaymentOrder).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: { userId: 'user_1', planId: 'pass_30d', autoRenew: false },
+      })
+    );
+  });
+
+  it('creates a gift checkout without auto-renewal and without leaking recipient email to YooKassa', async () => {
     const repository = createRepository();
     repository.createGiftPaymentOrder.mockResolvedValue({
       order: createOrder({ metadata: { gift: true } }),
@@ -684,7 +720,7 @@ describe('BillingService checkout guards', () => {
         purchaserUserId: 'user_1',
         recipientEmail: 'friend@example.com',
         senderName: 'Николай',
-        planId: 'pro_monthly',
+        planId: 'pass_30d',
         status: 'pending_payment',
         paidAt: null,
         claimExpiresAt: null,
@@ -702,15 +738,17 @@ describe('BillingService checkout guards', () => {
       id: 'payment_gift_1',
       status: 'pending',
       confirmation: {
-        type: 'redirect',
-        confirmation_url: 'https://yookassa.test/payments/payment_gift_1',
+        type: 'embedded',
+        confirmation_token: 'ct_payment_gift_1',
       },
     });
     const service = createService(repository);
 
     await service.createCheckout({
       userId: 'user_1',
-      planId: 'pro_monthly',
+      planId: 'pass_30d',
+      // Подарок принудительно без автопродления, даже если пришло true.
+      autoRenew: true,
       gift: { recipientEmail: 'friend@example.com', senderName: 'Николай' },
     });
 
@@ -724,11 +762,11 @@ describe('BillingService checkout guards', () => {
     expect(mockedCreateYooKassaPayment).toHaveBeenCalledWith(
       expect.objectContaining({
         savePaymentMethod: false,
-        description: 'Гласно Pro, подарок',
+        description: 'Гласно Полный доступ · 30 дн., подарок',
         metadata: {
           orderId: 'order_1',
           userId: 'user_1',
-          planId: 'pro_monthly',
+          planId: 'pass_30d',
           gift: 'true',
         },
       })
@@ -741,7 +779,7 @@ describe('BillingService checkout guards', () => {
     ).not.toHaveProperty('senderName');
   });
 
-  it('rejects gifting an addon', async () => {
+  it('rejects gifting a minute pack', async () => {
     const repository = createRepository();
     const service = createService(repository);
 
@@ -752,7 +790,7 @@ describe('BillingService checkout guards', () => {
         gift: { recipientEmail: 'friend@example.com', senderName: 'Николай' },
       })
     ).rejects.toMatchObject({
-      message: 'Подарить можно только тариф или разовую подготовку',
+      message: 'Подарить можно только пропуск «Полный доступ»',
     });
   });
 
@@ -763,7 +801,7 @@ describe('BillingService checkout guards', () => {
     await expect(
       service.createCheckout({
         userId: 'user_1',
-        planId: 'pro_monthly',
+        planId: 'pass_30d',
         gift: { recipientEmail: 'USER@example.com', senderName: 'Николай' },
       })
     ).rejects.toMatchObject({
@@ -781,7 +819,7 @@ describe('BillingService checkout guards', () => {
         purchaserUserId: 'user_1',
         recipientEmail: 'friend@example.com',
         senderName: 'Николай',
-        planId: 'pro_monthly',
+        planId: 'pass_30d',
         status: 'pending_payment',
         paidAt: null,
         claimExpiresAt: null,
@@ -801,7 +839,7 @@ describe('BillingService checkout guards', () => {
     await expect(
       service.createCheckout({
         userId: 'user_1',
-        planId: 'pro_monthly',
+        planId: 'pass_30d',
         gift: { recipientEmail: 'friend@example.com', senderName: 'Николай' },
       })
     ).rejects.toThrow('network');
@@ -810,45 +848,38 @@ describe('BillingService checkout guards', () => {
     });
   });
 
-  it('rejects checkout of the legacy realtime_voice_60 plan', async () => {
+  it('rejects checkout of removed legacy plans', async () => {
     const repository = createRepository();
     const service = createService(repository);
 
-    await expect(
-      service.createCheckout({ userId: 'user_1', planId: 'realtime_voice_60' })
-    ).rejects.toThrow();
+    for (const legacyId of ['single_prep', 'pro_monthly', 'free']) {
+      await expect(
+        service.createCheckout({ userId: 'user_1', planId: legacyId })
+      ).rejects.toThrow('Тариф не найден');
+    }
     expect(repository.createPaymentOrder).not.toHaveBeenCalled();
   });
 });
 
-describe('BillingService auto-renewal scope', () => {
+describe('BillingService auto-renew management', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.useRealTimers();
   });
 
-  it('does not enable auto-renewal on one-time access after binding a card', async () => {
+  it('enables auto-renewal on the active pass after binding a card', async () => {
     const repository = createRepository();
+    repository.__setAccess(
+      createAccess({
+        autoRenew: false,
+        nextChargeAt: null,
+        currentPeriodEnd: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      })
+    );
     repository.findPaymentMethodByUserId.mockResolvedValue({
-      id: 'method_1',
-      userId: 'user_1',
-      provider: 'yookassa',
-      providerPaymentMethodId: 'pm_1',
+      ...activePaymentMethod,
       status: 'pending',
-      methodType: null,
-      title: null,
-      cardBrand: null,
-      cardLast4: null,
-      cardExpiryMonth: null,
-      cardExpiryYear: null,
-      createdAt: new Date('2026-07-01T10:00:00.000Z'),
     });
-    repository.findActiveSubscriptionsByUserId.mockResolvedValue([
-      createSubscription({
-        id: 'one_time_1',
-        planId: 'single_prep',
-      }),
-    ]);
     mockedGetYooKassaPaymentMethod.mockResolvedValue({
       id: 'pm_1',
       type: 'bank_card',
@@ -867,37 +898,73 @@ describe('BillingService auto-renewal scope', () => {
     await service.syncPendingPaymentMethod('user_1');
 
     expect(repository.activatePaymentMethod).toHaveBeenCalledOnce();
-    expect(repository.setSubscriptionAutoRenew).not.toHaveBeenCalled();
-  });
-
-  it('passes only active subscription ids when enabling auto-renewal', async () => {
-    const repository = createRepository();
-    repository.findPaymentMethodByUserId.mockResolvedValue({
-      id: 'method_1',
-      userId: 'user_1',
-      provider: 'yookassa',
-      providerPaymentMethodId: 'pm_1',
-      status: 'active',
-      methodType: 'bank_card',
-      title: 'Bank card *1111',
-      cardBrand: 'Visa',
-      cardLast4: '1111',
-      cardExpiryMonth: '12',
-      cardExpiryYear: '30',
-      createdAt: new Date('2026-07-01T10:00:00.000Z'),
-    });
-    repository.findActiveSubscriptionsByUserId.mockResolvedValue([
-      createSubscription({ id: 'one_time_1', planId: 'single_prep' }),
-      createSubscription({ id: 'subscription_pro', planId: 'pro_monthly' }),
-    ]);
-    const service = createService(repository);
-
-    await service.setAutoRenew({ userId: 'user_1', enabled: true });
-
-    expect(repository.setSubscriptionAutoRenew).toHaveBeenCalledWith({
+    expect(repository.setAccessAutoRenew).toHaveBeenCalledWith({
       userId: 'user_1',
       autoRenew: true,
-      subscriptionIds: ['subscription_pro'],
+    });
+  });
+
+  it('does not enable auto-renewal after binding when the pass has expired', async () => {
+    const repository = createRepository();
+    repository.__setAccess(
+      createAccess({
+        currentPeriodEnd: new Date(Date.now() - 24 * 60 * 60 * 1000),
+        autoRenew: false,
+        nextChargeAt: null,
+      })
+    );
+    repository.findPaymentMethodByUserId.mockResolvedValue({
+      ...activePaymentMethod,
+      status: 'pending',
+    });
+    mockedGetYooKassaPaymentMethod.mockResolvedValue({
+      id: 'pm_1',
+      type: 'bank_card',
+      saved: true,
+      status: 'active',
+      title: 'Bank card *1111',
+      card: undefined,
+    });
+    const service = createService(repository);
+
+    await service.syncPendingPaymentMethod('user_1');
+
+    expect(repository.setAccessAutoRenew).not.toHaveBeenCalled();
+  });
+
+  it('requires a bound card and an active pass to enable auto-renewal', async () => {
+    const repository = createRepository();
+    const service = createService(repository);
+
+    await expect(
+      service.setAutoRenew({ userId: 'user_1', enabled: true })
+    ).rejects.toThrow('привяжите карту');
+
+    repository.findPaymentMethodByUserId.mockResolvedValue(
+      activePaymentMethod
+    );
+    await expect(
+      service.setAutoRenew({ userId: 'user_1', enabled: true })
+    ).rejects.toThrow('Автопродление доступно при активном пропуске');
+  });
+
+  it('disables auto-renewal unconditionally (376-ФЗ) and on card unbind', async () => {
+    const repository = createRepository();
+    const service = createService(repository);
+
+    await service.setAutoRenew({ userId: 'user_1', enabled: false });
+    expect(repository.setAccessAutoRenew).toHaveBeenCalledWith({
+      userId: 'user_1',
+      autoRenew: false,
+    });
+
+    await service.unbindPaymentMethod('user_1');
+    expect(repository.deletePaymentMethodByUserId).toHaveBeenCalledWith(
+      'user_1'
+    );
+    expect(repository.setAccessAutoRenew).toHaveBeenLastCalledWith({
+      userId: 'user_1',
+      autoRenew: false,
     });
   });
 });
@@ -909,33 +976,28 @@ describe('BillingService renewal sweep', () => {
     vi.setSystemTime(new Date('2026-07-31T10:00:00.000Z'));
   });
 
-  it('charges a due subscription through the existing renewal sequence', async () => {
-    const due = createSubscription({
+  it('charges a due access with the fixed renewal price, not the catalog price', async () => {
+    const due = createAccess({
       autoRenew: true,
       nextChargeAt: new Date('2026-07-31T09:00:00.000Z'),
+      // Зафиксированная при покупке цена ниже каталожной.
+      renewalAmountRub: 999,
     });
     const renewalOrder = createOrder({
       id: 'renewal_order_1',
       providerPaymentId: null,
       status: 'pending',
+      amountRub: 999,
     });
     const repository = createRepository(renewalOrder);
-    repository.listSubscriptionsDueForCharge.mockResolvedValue([due]);
-    repository.claimSubscriptionForCharge.mockResolvedValue(due);
-    repository.findPaymentMethodByUserId.mockResolvedValue({
-      id: 'method_1',
-      userId: 'user_1',
-      provider: 'yookassa',
-      providerPaymentMethodId: 'pm_1',
-      status: 'active',
-      methodType: 'bank_card',
-      title: 'Bank card *1111',
-      cardBrand: 'Visa',
-      cardLast4: '1111',
-      cardExpiryMonth: '12',
-      cardExpiryYear: '30',
-      createdAt: new Date('2026-07-01T10:00:00.000Z'),
+    repository.listAccessDueForCharge.mockResolvedValue([due]);
+    repository.claimAccessForCharge.mockResolvedValue({
+      ...due,
+      chargeAttempts: 1,
     });
+    repository.findPaymentMethodByUserId.mockResolvedValue(
+      activePaymentMethod
+    );
     repository.createPaymentOrder.mockResolvedValue(renewalOrder);
     mockedCreateYooKassaRecurringPayment.mockResolvedValue({
       id: 'renewal_payment_1',
@@ -945,7 +1007,7 @@ describe('BillingService renewal sweep', () => {
       id: 'renewal_payment_1',
       status: 'succeeded',
       paid: true,
-      amountValue: '990.00',
+      amountValue: '999.00',
       currency: 'RUB',
       metadata: { orderId: 'renewal_order_1' },
       paymentMethod: null,
@@ -959,50 +1021,154 @@ describe('BillingService renewal sweep', () => {
       })
     ).resolves.toEqual({ processed: 1, failed: 0 });
 
-    expect(repository.listSubscriptionsDueForCharge).toHaveBeenCalledWith({
+    expect(repository.listAccessDueForCharge).toHaveBeenCalledWith({
       now: new Date('2026-07-31T10:00:00.000Z'),
-      retryAfterMs: 6 * 60 * 60 * 1000,
+      retryAfterMs: 24 * 60 * 60 * 1000,
+      maxAttempts: 3,
       limit: 25,
-      planIds: ['pro_monthly', 'career_pack'],
     });
-    expect(mockedCreateYooKassaRecurringPayment).toHaveBeenCalledOnce();
+    expect(repository.createPaymentOrder).toHaveBeenCalledWith(
+      expect.objectContaining({ amountRub: 999 })
+    );
+    expect(mockedCreateYooKassaRecurringPayment).toHaveBeenCalledWith(
+      expect.objectContaining({ amountRub: 999 })
+    );
     expect(repository.fulfillPaidOrder).toHaveBeenCalledOnce();
   });
 
-  it('uses the due-subscription query for the opportunistic backup', async () => {
-    const due = createSubscription({
+  it('uses the due-access query for the opportunistic backup', async () => {
+    const due = createAccess({
       autoRenew: true,
-      currentPeriodEnd: new Date('2026-07-31T10:00:00.000Z'),
       nextChargeAt: new Date('2026-07-31T10:00:00.000Z'),
     });
     const repository = createRepository();
-    repository.listSubscriptionsDueForCharge.mockResolvedValue([due]);
-    repository.claimSubscriptionForCharge.mockResolvedValue(null);
+    repository.listAccessDueForCharge.mockResolvedValue([due]);
+    repository.claimAccessForCharge.mockResolvedValue(null);
     const service = createService(repository);
 
     await service.maybeRunAutoRenewal('user_1');
 
-    expect(repository.listSubscriptionsDueForCharge).toHaveBeenCalledWith({
+    expect(repository.listAccessDueForCharge).toHaveBeenCalledWith({
       userId: 'user_1',
       now: new Date('2026-07-31T10:00:00.000Z'),
-      retryAfterMs: 6 * 60 * 60 * 1000,
+      retryAfterMs: 24 * 60 * 60 * 1000,
+      maxAttempts: 3,
       limit: 1,
-      planIds: ['pro_monthly', 'career_pack'],
     });
-    expect(repository.findActiveSubscriptionsByUserId).not.toHaveBeenCalled();
-    expect(repository.claimSubscriptionForCharge).toHaveBeenCalledWith({
-      subscriptionId: 'subscription_1',
+    expect(repository.claimAccessForCharge).toHaveBeenCalledWith({
+      accessId: 'access_1',
       now: new Date('2026-07-31T10:00:00.000Z'),
-      retryAfterMs: 6 * 60 * 60 * 1000,
+      retryAfterMs: 24 * 60 * 60 * 1000,
+      maxAttempts: 3,
     });
   });
 
-  it('continues the sweep when one subscription throws', async () => {
-    const first = createSubscription({ id: 'subscription_1' });
-    const second = createSubscription({ id: 'subscription_2' });
+  it('disables auto-renewal when the card disappeared before the charge', async () => {
+    const due = createAccess();
     const repository = createRepository();
-    repository.listSubscriptionsDueForCharge.mockResolvedValue([first, second]);
-    repository.claimSubscriptionForCharge
+    repository.listAccessDueForCharge.mockResolvedValue([due]);
+    repository.claimAccessForCharge.mockResolvedValue({
+      ...due,
+      chargeAttempts: 1,
+    });
+    repository.findPaymentMethodByUserId.mockResolvedValue(null);
+    const service = createService(repository);
+
+    await service.runAutoRenewalSweep();
+
+    expect(repository.setAccessAutoRenew).toHaveBeenCalledWith({
+      userId: 'user_1',
+      autoRenew: false,
+      now: new Date('2026-07-31T10:00:00.000Z'),
+    });
+    expect(mockedCreateYooKassaRecurringPayment).not.toHaveBeenCalled();
+  });
+
+  it('records a non-final charge failure without disabling auto-renewal', async () => {
+    const due = createAccess();
+    const repository = createRepository();
+    repository.listAccessDueForCharge.mockResolvedValue([due]);
+    repository.claimAccessForCharge.mockResolvedValue({
+      ...due,
+      chargeAttempts: 1,
+    });
+    repository.findPaymentMethodByUserId.mockResolvedValue(
+      activePaymentMethod
+    );
+    repository.createPaymentOrder.mockResolvedValue(
+      createOrder({ id: 'renewal_order_1' })
+    );
+    mockedCreateYooKassaRecurringPayment.mockRejectedValue(
+      new Error('card declined')
+    );
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const service = createService(repository);
+
+    await service.runAutoRenewalSweep();
+
+    expect(repository.recordAccessChargeError).toHaveBeenCalledWith({
+      accessId: 'access_1',
+      error: 'card declined',
+      disableAutoRenew: false,
+      now: new Date('2026-07-31T10:00:00.000Z'),
+    });
+    expect(mockedSendRenewalFailedEmail).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  it('disables auto-renewal and emails the user after the final failed attempt', async () => {
+    const due = createAccess();
+    const repository = createRepository();
+    repository.listAccessDueForCharge.mockResolvedValue([due]);
+    // Третья (финальная) попытка.
+    repository.claimAccessForCharge.mockResolvedValue({
+      ...due,
+      chargeAttempts: 3,
+    });
+    repository.findPaymentMethodByUserId.mockResolvedValue(
+      activePaymentMethod
+    );
+    repository.createPaymentOrder.mockResolvedValue(
+      createOrder({ id: 'renewal_order_1' })
+    );
+    mockedCreateYooKassaRecurringPayment.mockResolvedValue({
+      id: 'renewal_payment_1',
+      status: 'canceled',
+    });
+    mockedGetYooKassaPayment.mockResolvedValue({
+      id: 'renewal_payment_1',
+      status: 'canceled',
+      paid: false,
+      amountValue: '1190.00',
+      currency: 'RUB',
+      metadata: { orderId: 'renewal_order_1' },
+      paymentMethod: null,
+    });
+    const service = createService(repository);
+
+    await service.runAutoRenewalSweep();
+
+    expect(repository.recordAccessChargeError).toHaveBeenCalledWith({
+      accessId: 'access_1',
+      error: 'Списание отклонено (canceled)',
+      disableAutoRenew: true,
+      now: new Date('2026-07-31T10:00:00.000Z'),
+    });
+    expect(mockedSendRenewalFailedEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: 'user@example.com',
+        planName: 'Полный доступ · 30 дн.',
+        amountRub: 1190,
+      })
+    );
+  });
+
+  it('continues the sweep when one access throws', async () => {
+    const first = createAccess({ id: 'access_1' });
+    const second = createAccess({ id: 'access_2' });
+    const repository = createRepository();
+    repository.listAccessDueForCharge.mockResolvedValue([first, second]);
+    repository.claimAccessForCharge
       .mockRejectedValueOnce(new Error('claim failed'))
       .mockResolvedValueOnce(null);
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -1012,43 +1178,99 @@ describe('BillingService renewal sweep', () => {
       processed: 1,
       failed: 1,
     });
-    expect(repository.claimSubscriptionForCharge).toHaveBeenCalledTimes(2);
+    expect(repository.claimAccessForCharge).toHaveBeenCalledTimes(2);
     expect(errorSpy).toHaveBeenCalledWith(
       '[billing] renewal sweep item failed',
-      expect.objectContaining({ subscriptionId: 'subscription_1' })
+      expect.objectContaining({ accessId: 'access_1' })
     );
 
     errorSpy.mockRestore();
   });
+});
 
-  it('isolates plan resolution errors inside the per-item sweep boundary', async () => {
-    const unknown = createSubscription({
-      id: 'subscription_unknown',
-      planId: 'removed_plan',
+describe('BillingService renewal notices', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-29T10:00:00.000Z'));
+  });
+
+  it('sends an idempotent notice 3 days ahead for a 30-day pass', async () => {
+    const access = createAccess({
+      nextChargeAt: new Date('2026-07-31T10:00:00.000Z'),
     });
-    const valid = createSubscription({ id: 'subscription_valid' });
     const repository = createRepository();
-    repository.listSubscriptionsDueForCharge.mockResolvedValue([
-      unknown,
-      valid,
-    ]);
-    repository.claimSubscriptionForCharge.mockResolvedValue(null);
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    repository.listAccessDueForRenewalNotice.mockResolvedValue([access]);
     const service = createService(repository);
 
-    await expect(service.runAutoRenewalSweep()).resolves.toEqual({
-      processed: 1,
-      failed: 1,
+    await expect(service.runRenewalNoticeSweep()).resolves.toEqual({
+      sent: 1,
+      skipped: 0,
     });
-    expect(repository.claimSubscriptionForCharge).toHaveBeenCalledOnce();
-    expect(repository.claimSubscriptionForCharge).toHaveBeenCalledWith(
-      expect.objectContaining({ subscriptionId: 'subscription_valid' })
-    );
-    expect(errorSpy).toHaveBeenCalledWith(
-      '[billing] renewal sweep item failed',
-      expect.objectContaining({ subscriptionId: 'subscription_unknown' })
-    );
 
-    errorSpy.mockRestore();
+    expect(repository.claimRenewalNotice).toHaveBeenCalledWith({
+      accessId: 'access_1',
+      now: new Date('2026-07-29T10:00:00.000Z'),
+    });
+    expect(mockedSendRenewalNoticeEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: 'user@example.com',
+        planName: 'Полный доступ · 30 дн.',
+        amountRub: 1190,
+        chargeAt: new Date('2026-07-31T10:00:00.000Z'),
+      })
+    );
+  });
+
+  it('does not duplicate the notice when another sweep already claimed it', async () => {
+    const access = createAccess({
+      nextChargeAt: new Date('2026-07-31T10:00:00.000Z'),
+    });
+    const repository = createRepository();
+    repository.listAccessDueForRenewalNotice.mockResolvedValue([access]);
+    repository.claimRenewalNotice.mockResolvedValue(false);
+    const service = createService(repository);
+
+    await expect(service.runRenewalNoticeSweep()).resolves.toEqual({
+      sent: 0,
+      skipped: 1,
+    });
+    expect(mockedSendRenewalNoticeEmail).not.toHaveBeenCalled();
+  });
+
+  it('waits for the 1-day lead on short passes', async () => {
+    const access = createAccess({
+      planId: 'pass_7d',
+      renewalPlanId: 'pass_7d',
+      renewalAmountRub: 449,
+      // Списание через 2 дня: для 7-дневного пропуска ещё рано (lead 1 день).
+      nextChargeAt: new Date('2026-07-31T10:00:00.000Z'),
+    });
+    const repository = createRepository();
+    repository.listAccessDueForRenewalNotice.mockResolvedValue([access]);
+    const service = createService(repository);
+
+    await expect(service.runRenewalNoticeSweep()).resolves.toEqual({
+      sent: 0,
+      skipped: 1,
+    });
+    expect(repository.claimRenewalNotice).not.toHaveBeenCalled();
+  });
+
+  it('claims but skips sending when the user has no email', async () => {
+    const access = createAccess({
+      nextChargeAt: new Date('2026-07-31T10:00:00.000Z'),
+    });
+    const repository = createRepository();
+    repository.listAccessDueForRenewalNotice.mockResolvedValue([access]);
+    repository.findUserEmail.mockResolvedValue(null);
+    const service = createService(repository);
+
+    await expect(service.runRenewalNoticeSweep()).resolves.toEqual({
+      sent: 0,
+      skipped: 1,
+    });
+    expect(repository.claimRenewalNotice).toHaveBeenCalledOnce();
+    expect(mockedSendRenewalNoticeEmail).not.toHaveBeenCalled();
   });
 });

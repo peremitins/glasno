@@ -57,8 +57,13 @@ export default defineNitroPlugin((nitroApp) => {
   // Без Redis (локальная разработка/деградация): обычный интервал в процессе.
   // Claim-паттерн делает параллельные прогоны безопасными и здесь.
   const runSweep = () => {
-    void createService()
-      .runAutoRenewalSweep()
+    const service = createService();
+    void service
+      .runRenewalNoticeSweep()
+      .catch((err) => {
+        console.error('[billing] renewal notice sweep failed', err);
+      })
+      .then(() => service.runAutoRenewalSweep())
       .catch((err) => {
         console.error('[billing] renewal sweep failed', err);
       });

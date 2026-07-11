@@ -1,4 +1,5 @@
 import { Queue, Worker } from 'bullmq';
+import { logRedisConnectionError } from '@/server/infrastructure/redis/redisClient';
 import type { BillingService } from './billingService';
 
 const QUEUE_PREFIX = 'glasno';
@@ -26,6 +27,9 @@ function getQueue(redisUrl: string) {
         maxRetriesPerRequest: null,
       },
     });
+    // Без обработчика ошибки соединения (например, Redis не поднят локально)
+    // сыпались бы сырыми стек-трейсами в цикле переподключения.
+    queue.on('error', (err) => logRedisConnectionError('renewal-queue', err));
   }
   return queue;
 }
@@ -49,10 +53,13 @@ export function createRenewalWorker(params: {
   redisUrl: string;
   createService: () => BillingService;
 }) {
-  return new Worker(
+  const worker = new Worker(
     QUEUE_NAME,
     async () => {
       const service = params.createService();
+      // Сначала предуведомления, затем списания: письмо о будущем списании
+      // не должно проигрывать гонку самому списанию.
+      await service.runRenewalNoticeSweep();
       await service.runAutoRenewalSweep();
     },
     {
@@ -66,6 +73,9 @@ export function createRenewalWorker(params: {
       concurrency: 1,
     }
   );
+  // Ошибки соединения (Redis недоступен) — сжатым warn, не сырым стеком.
+  worker.on('error', (err) => logRedisConnectionError('renewal-worker', err));
+  return worker;
 }
 
 export async function closeRenewalQueue(): Promise<void> {
