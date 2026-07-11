@@ -1,11 +1,13 @@
 <script setup lang="ts">
   // Пейволл по образцу Mentala FeaturePaywallModal, два режима:
-  // - 'minutes': у юзера есть тариф, но кончились минуты голоса → пакеты минут;
-  // - 'plans': тарифа нет (или истёк) → основные тарифы.
-  import { computed, ref, watch } from 'vue';
+  // - 'minutes': у юзера есть пропуск, но кончились минуты голоса → пакеты;
+  // - 'plans': пропуска нет (или истёк) → короткая подборка сроков,
+  //   полная сетка — на /pricing.
+  import { computed, onBeforeUnmount, ref, watch } from 'vue';
   import { useI18n } from 'vue-i18n';
   import ButtonLoader from '@/app/components/design/ButtonLoader.vue';
   import GlassSkeletonStack from '@/app/components/design/GlassSkeletonStack.vue';
+  import { useYookassaWidget } from '@/app/composables/useYookassaWidget';
   import type {
     BillingCheckoutResponse,
     BillingPlansResponse,
@@ -24,6 +26,10 @@
   const plansPending = ref(false);
   const checkoutPlanId = ref('');
   const errorMessage = ref('');
+  // Нативное всплывающее окно YooKassa (карта, СБП, SberPay).
+  const checkoutToken = ref('');
+  const checkoutReturnUrl = ref('');
+  const { mount: mountWidget, destroy: destroyWidget } = useYookassaWidget();
 
   watch(
     () => props.open,
@@ -33,9 +39,38 @@
       }
       if (open) {
         errorMessage.value = '';
+      } else {
+        resetWidget();
       }
     }
   );
+
+  // Как только пришёл токен, скрываем пейволл и открываем собственное
+  // всплывающее окно YooKassa. При закрытии возвращаем выбор тарифов.
+  watch(
+    () => [props.open, checkoutToken.value] as const,
+    async ([open, token]) => {
+      if (!open || !token || !checkoutReturnUrl.value) {
+        destroyWidget();
+        return;
+      }
+      await mountWidget({
+        confirmationToken: token,
+        returnUrl: checkoutReturnUrl.value,
+        modal: true,
+        onModalClose: resetWidget,
+        onError: resetWidget,
+      });
+    }
+  );
+
+  function resetWidget() {
+    checkoutToken.value = '';
+    checkoutReturnUrl.value = '';
+    checkoutPlanId.value = '';
+  }
+
+  onBeforeUnmount(destroyWidget);
 
   async function loadPlans() {
     plansPending.value = true;
@@ -48,16 +83,20 @@
     }
   }
 
+  // В модалке — три ключевых срока (входной/основной/выгодный), чтобы не
+  // перегружать быстрый выбор; все шесть — на странице тарифов.
+  const PAYWALL_PASS_IDS = ['pass_7d', 'pass_30d', 'pass_90d'];
+
   const items = computed(() => {
     const plans = plansData.value?.plans || [];
     if (props.mode === 'minutes') {
       return plans.filter(
-        (plan) => plan.kind === 'addon' && plan.isCheckoutEnabled
+        (plan) => plan.type === 'minute_pack' && plan.isCheckoutEnabled
       );
     }
-    return plans.filter(
-      (plan) => plan.kind !== 'addon' && plan.isCheckoutEnabled
-    );
+    return PAYWALL_PASS_IDS.map((id) =>
+      plans.find((plan) => plan.id === id && plan.isCheckoutEnabled)
+    ).filter((plan): plan is NonNullable<typeof plan> => Boolean(plan));
   });
 
   const title = computed(() =>
@@ -86,7 +125,9 @@
         '/api/billing/checkout',
         { method: 'POST', body: { planId } }
       );
-      window.location.href = response.confirmationUrl;
+      // Нативное окно YooKassa откроется watcher-ом после сохранения токена.
+      checkoutToken.value = response.confirmationToken;
+      checkoutReturnUrl.value = response.returnUrl;
     } catch (err) {
       const data = (err as { data?: { error?: { message?: string } } })?.data;
       errorMessage.value = data?.error?.message || t('paywall.checkoutError');
@@ -99,7 +140,7 @@
   <Teleport to="body">
     <Transition name="paywall-fade">
       <div
-        v-if="open"
+        v-if="open && !checkoutToken"
         class="paywall-overlay"
         role="dialog"
         aria-modal="true"
@@ -113,48 +154,54 @@
 
           <GlassSkeletonStack v-if="plansPending" :heights="[64, 64]" />
           <ul v-else class="paywall-items">
-            <li v-for="plan in items" :key="plan.id">
-              <div class="paywall-item-copy">
-                <strong>{{ plan.name }}</strong>
-                <span>{{ plan.description }}</span>
-              </div>
-              <button
-                class="primary-action primary-action--compact button-loader-host"
-                type="button"
-                :disabled="Boolean(checkoutPlanId)"
-                @click="checkout(plan.id)"
-              >
-                <ButtonLoader v-if="checkoutPlanId === plan.id" />
-                <span
-                  class="button-loader-content"
-                  :class="{
-                    'button-loader-content--loading':
-                      checkoutPlanId === plan.id,
-                  }"
+              <li v-for="plan in items" :key="plan.id">
+                <div class="paywall-item-copy">
+                  <strong>{{ plan.name }}</strong>
+                  <span>{{ plan.description }}</span>
+                </div>
+                <button
+                  class="primary-action primary-action--compact button-loader-host"
+                  type="button"
+                  :disabled="Boolean(checkoutPlanId)"
+                  @click="checkout(plan.id)"
                 >
-                  {{ formatPrice(plan.priceRub) }} ₽
-                </span>
-              </button>
-            </li>
+                  <ButtonLoader v-if="checkoutPlanId === plan.id" />
+                  <span
+                    class="button-loader-content"
+                    :class="{
+                      'button-loader-content--loading':
+                        checkoutPlanId === plan.id,
+                    }"
+                  >
+                    {{ formatPrice(plan.priceRub) }} ₽
+                  </span>
+                </button>
+              </li>
           </ul>
+
+            <!-- Автопродление включено по умолчанию: информируем до оплаты,
+                 снять галочку можно в полном чекауте на /pricing. -->
+          <p v-if="mode === 'plans'" class="paywall-disclosure">
+            {{ t('paywall.autoRenewDisclosure') }}
+          </p>
 
           <p v-if="errorMessage" class="paywall-error">{{ errorMessage }}</p>
 
           <div class="paywall-actions">
-            <NuxtLink
-              to="/pricing"
-              class="secondary-action secondary-action--compact"
-              @click="close"
-            >
-              {{ t('paywall.allPlans') }}
-            </NuxtLink>
-            <button
-              type="button"
-              class="secondary-action secondary-action--compact"
-              @click="close"
-            >
-              {{ t('paywall.later') }}
-            </button>
+              <NuxtLink
+                to="/pricing"
+                class="secondary-action secondary-action--compact"
+                @click="close"
+              >
+                {{ t('paywall.allPlans') }}
+              </NuxtLink>
+              <button
+                type="button"
+                class="secondary-action secondary-action--compact"
+                @click="close"
+              >
+                {{ t('paywall.later') }}
+              </button>
           </div>
         </div>
       </div>
@@ -252,6 +299,13 @@
     font-size: 13px;
   }
 
+  .paywall-disclosure {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.45;
+  }
+
   .paywall-actions {
     display: flex;
     gap: 8px;
@@ -267,4 +321,5 @@
   .paywall-fade-leave-to {
     opacity: 0;
   }
+
 </style>

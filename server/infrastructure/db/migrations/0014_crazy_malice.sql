@@ -1,0 +1,1 @@
+ALTER TABLE "gift_entitlements" ADD COLUMN "sender_name" text;

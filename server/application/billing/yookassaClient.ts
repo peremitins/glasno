@@ -21,7 +21,6 @@ export interface YooKassaReceipt {
 export interface BuildYooKassaPaymentRequestInput extends YooKassaConfig {
   idempotenceKey: string;
   amountRub: number;
-  returnUrl: string;
   description: string;
   metadata: Record<string, string>;
   receipt?: YooKassaReceipt;
@@ -73,6 +72,9 @@ export interface YooKassaCreatePaymentResponse {
   confirmation?: {
     type?: string;
     confirmation_url?: string;
+    // Для встроенного виджета (confirmation.type = embedded): токен,
+    // с которым фронт инициализирует YooMoneyCheckoutWidget.
+    confirmation_token?: string;
   };
 }
 
@@ -95,10 +97,11 @@ export function buildYooKassaCreatePaymentRequest(
       currency: 'RUB',
     },
     capture: true,
+    // Встроенный виджет (Уровень 1): пользователь платит, не покидая Гласно.
+    // return_url и locale передаёт фронт при инициализации виджета, поэтому
+    // здесь их нет — в теле создания платежа для embedded они не нужны.
     confirmation: {
-      type: 'redirect',
-      return_url: input.returnUrl,
-      locale: 'ru_RU',
+      type: 'embedded',
     },
     description: input.description.slice(0, 128),
     metadata: input.metadata,
@@ -334,14 +337,14 @@ export function extractYooKassaPaymentMethod(
   };
 }
 
-export function getYooKassaConfirmationUrl(
+export function getYooKassaConfirmationToken(
   response: YooKassaCreatePaymentResponse
 ): string {
-  const url = response.confirmation?.confirmation_url;
-  if (!url) {
-    throw apiError('E_UPSTREAM', 'YooKassa не вернула ссылку на оплату');
+  const token = response.confirmation?.confirmation_token;
+  if (!token) {
+    throw apiError('E_UPSTREAM', 'YooKassa не вернула токен для оплаты');
   }
-  return url;
+  return token;
 }
 
 export function extractYooKassaPaymentEvent(

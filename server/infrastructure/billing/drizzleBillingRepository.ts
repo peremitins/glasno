@@ -21,16 +21,32 @@ import type {
   CreatePaymentOrderInput,
   FulfillPaidOrderResult,
   FulfillPlanInput,
-  GrantSubscriptionInput,
+  GiftEntitlementRecord,
+  GiftNotificationStatus,
+  GiftPaymentOrderResult,
+  PaidAccessRecord,
   PaymentMethodRecord,
   PaymentOrderRecord,
   RealtimeMinuteBalance,
-  SubscriptionRecord,
   UpdatePaymentOrderInput,
 } from '@/server/interface/billingRepository';
 
 type PaymentOrderRow = typeof schema.paymentOrders.$inferSelect;
-type SubscriptionRow = typeof schema.userSubscriptions.$inferSelect;
+type AccessRow = typeof schema.userSubscriptions.$inferSelect;
+type GiftEntitlementRow = typeof schema.giftEntitlements.$inferSelect;
+type BillingTransaction = Parameters<
+  Parameters<ReturnType<typeof getDb>['transaction']>[0]
+>[0];
+
+interface GrantAccessPaymentMethod {
+  providerPaymentMethodId: string;
+  methodType?: string | null;
+  title?: string | null;
+  cardBrand?: string | null;
+  cardLast4?: string | null;
+  cardExpiryMonth?: string | null;
+  cardExpiryYear?: string | null;
+}
 
 function ownerWhere(owner: BillingOwner) {
   if (owner.userId) {
@@ -59,7 +75,7 @@ function mapPaymentOrder(row: PaymentOrderRow): PaymentOrderRecord {
   };
 }
 
-function mapSubscription(row: SubscriptionRow): SubscriptionRecord {
+function mapAccess(row: AccessRow): PaidAccessRecord {
   return {
     id: row.id,
     userId: row.userId,
@@ -72,6 +88,33 @@ function mapSubscription(row: SubscriptionRow): SubscriptionRecord {
     nextChargeAt: row.nextChargeAt,
     lastChargeAttemptAt: row.lastChargeAttemptAt,
     lastChargeError: row.lastChargeError,
+    chargeAttempts: row.chargeAttempts,
+    renewalPlanId: row.renewalPlanId,
+    renewalAmountRub: row.renewalAmountRub,
+    renewalNoticeSentAt: row.renewalNoticeSentAt,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+function mapGiftEntitlement(row: GiftEntitlementRow): GiftEntitlementRecord {
+  return {
+    id: row.id,
+    orderId: row.orderId,
+    purchaserUserId: row.purchaserUserId,
+    recipientEmail: row.recipientEmail,
+    senderName: row.senderName,
+    planId: row.planId,
+    status: row.status as GiftEntitlementRecord['status'],
+    paidAt: row.paidAt,
+    claimExpiresAt: row.claimExpiresAt,
+    claimedAt: row.claimedAt,
+    claimedByUserId: row.claimedByUserId,
+    notificationStatus:
+      row.notificationStatus as GiftNotificationStatus,
+    notificationAttempts: row.notificationAttempts,
+    notificationNextAttemptAt: row.notificationNextAttemptAt,
+    notificationSentAt: row.notificationSentAt,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -136,29 +179,15 @@ export class DrizzleBillingRepository implements BillingRepository {
     return row?.email ?? null;
   }
 
-  async findActiveSubscriptionByUserId(
-    userId: string,
-    now = new Date()
-  ): Promise<SubscriptionRecord | null> {
-    const rows = await this.findActiveSubscriptionsByUserId(userId, now);
-    return rows[0] ?? null;
-  }
-
-  async findActiveSubscriptionsByUserId(
-    userId: string,
-    now = new Date()
-  ): Promise<SubscriptionRecord[]> {
-    const rows = await this.db
+  // Запись доступа пользователя — одна на пользователя, включая истёкшую
+  // (нужна для состояния «доступ закончился {дата}»).
+  async findAccessByUserId(userId: string): Promise<PaidAccessRecord | null> {
+    const [row] = await this.db
       .select()
       .from(schema.userSubscriptions)
-      .where(
-        and(
-          eq(schema.userSubscriptions.userId, userId),
-          eq(schema.userSubscriptions.status, 'active'),
-          gt(schema.userSubscriptions.currentPeriodEnd, now)
-        )
-      );
-    return rows.map(mapSubscription);
+      .where(eq(schema.userSubscriptions.userId, userId))
+      .limit(1);
+    return row ? mapAccess(row) : null;
   }
 
   async countRealtimeVoiceUsageSeconds(
@@ -226,6 +255,335 @@ export class DrizzleBillingRepository implements BillingRepository {
     return mapPaymentOrder(requireRow(row, 'payment_order'));
   }
 
+  async createGiftPaymentOrder(input: {
+    purchaserUserId: string;
+    recipientEmail: string;
+    senderName: string;
+    planId: string;
+    amountRub: number;
+    currency: 'RUB';
+    metadata: Record<string, unknown>;
+  }): Promise<GiftPaymentOrderResult> {
+    return await this.db.transaction(async (tx) => {
+      const [orderRow] = await tx
+        .insert(schema.paymentOrders)
+        .values({
+          userId: input.purchaserUserId,
+          planId: input.planId,
+          amountRub: input.amountRub,
+          currency: input.currency,
+          metadata: input.metadata,
+          status: 'pending',
+        })
+        .returning();
+      const order = requireRow(orderRow, 'payment_order');
+      const [giftRow] = await tx
+        .insert(schema.giftEntitlements)
+        .values({
+          orderId: order.id,
+          purchaserUserId: input.purchaserUserId,
+          recipientEmail: input.recipientEmail,
+          senderName: input.senderName,
+          planId: input.planId,
+          status: 'pending_payment',
+          notificationStatus: 'pending',
+        })
+        .returning();
+      return {
+        order: mapPaymentOrder(order),
+        gift: mapGiftEntitlement(requireRow(giftRow, 'gift_entitlement')),
+      };
+    });
+  }
+
+  async findGiftEntitlementByOrderId(
+    orderId: string
+  ): Promise<GiftEntitlementRecord | null> {
+    const [row] = await this.db
+      .select()
+      .from(schema.giftEntitlements)
+      .where(eq(schema.giftEntitlements.orderId, orderId))
+      .limit(1);
+    return row ? mapGiftEntitlement(row) : null;
+  }
+
+  async markGiftOrderPaid(params: {
+    orderId: string;
+    providerPaymentId: string;
+    paidAt?: Date;
+    claimExpiresAt: Date;
+  }): Promise<GiftEntitlementRecord | null> {
+    const paidAt = params.paidAt ?? new Date();
+    return await this.db.transaction(async (tx) => {
+      const [orderRow] = await tx
+        .select()
+        .from(schema.paymentOrders)
+        .where(eq(schema.paymentOrders.id, params.orderId))
+        .for('update')
+        .limit(1);
+      const [giftRow] = await tx
+        .select()
+        .from(schema.giftEntitlements)
+        .where(eq(schema.giftEntitlements.orderId, params.orderId))
+        .for('update')
+        .limit(1);
+      if (!orderRow || !giftRow) return null;
+      if (giftRow.status === 'ready' || giftRow.status === 'claimed') {
+        return mapGiftEntitlement(giftRow);
+      }
+
+      await tx
+        .update(schema.paymentOrders)
+        .set({
+          providerPaymentId: params.providerPaymentId,
+          status: 'succeeded',
+          fulfilledAt: paidAt,
+          updatedAt: paidAt,
+        })
+        .where(eq(schema.paymentOrders.id, params.orderId));
+      const [updated] = await tx
+        .update(schema.giftEntitlements)
+        .set({
+          status: 'ready',
+          paidAt,
+          claimExpiresAt: params.claimExpiresAt,
+          notificationStatus: 'pending',
+          notificationNextAttemptAt: paidAt,
+          updatedAt: paidAt,
+        })
+        .where(eq(schema.giftEntitlements.id, giftRow.id))
+        .returning();
+      return updated ? mapGiftEntitlement(updated) : null;
+    });
+  }
+
+  async cancelGiftOrder(params: {
+    orderId: string;
+    now?: Date;
+  }): Promise<void> {
+    const now = params.now ?? new Date();
+    await this.db
+      .update(schema.giftEntitlements)
+      .set({
+        status: 'canceled',
+        notificationStatus: 'failed',
+        notificationNextAttemptAt: null,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(schema.giftEntitlements.orderId, params.orderId),
+          eq(schema.giftEntitlements.status, 'pending_payment')
+        )
+      );
+  }
+
+  async claimReadyGiftsByEmail(params: {
+    recipientEmail: string;
+    beneficiaryUserId: string;
+    plans: FulfillPlanInput[];
+    now?: Date;
+  }): Promise<GiftEntitlementRecord[]> {
+    const now = params.now ?? new Date();
+    const planById = new Map(params.plans.map((plan) => [plan.id, plan]));
+    return await this.db.transaction(async (tx) => {
+      const gifts = await tx
+        .select()
+        .from(schema.giftEntitlements)
+        .where(
+          and(
+            eq(schema.giftEntitlements.recipientEmail, params.recipientEmail),
+            eq(schema.giftEntitlements.status, 'ready')
+          )
+        )
+        .for('update');
+      const claimed: GiftEntitlementRecord[] = [];
+
+      for (const gift of gifts) {
+        if (gift.claimExpiresAt && gift.claimExpiresAt <= now) {
+          await tx
+            .update(schema.giftEntitlements)
+            .set({ status: 'expired', updatedAt: now })
+            .where(eq(schema.giftEntitlements.id, gift.id));
+          continue;
+        }
+        const plan = planById.get(gift.planId);
+        if (!plan || plan.type !== 'pass') continue;
+        const [order] = await tx
+          .select()
+          .from(schema.paymentOrders)
+          .where(eq(schema.paymentOrders.id, gift.orderId))
+          .for('update')
+          .limit(1);
+        if (!order?.providerPaymentId) continue;
+
+        // Подарок — всегда без автопродления (ТЗ тарифы v2): получатель
+        // может включить его сам после привязки своей карты.
+        const granted = await grantPaidAccess(tx, {
+          beneficiaryUserId: params.beneficiaryUserId,
+          providerPaymentId: order.providerPaymentId,
+          plan,
+          autoRenew: false,
+          paymentMethod: null,
+          now,
+        });
+        if (!granted) continue;
+
+        await tx
+          .update(schema.giftEntitlements)
+          .set({
+            status: 'claimed',
+            claimedAt: now,
+            claimedByUserId: params.beneficiaryUserId,
+            updatedAt: now,
+          })
+          .where(eq(schema.giftEntitlements.id, gift.id));
+        claimed.push(
+          mapGiftEntitlement({
+            ...gift,
+            status: 'claimed',
+            claimedAt: now,
+            claimedByUserId: params.beneficiaryUserId,
+            updatedAt: now,
+          })
+        );
+      }
+      return claimed;
+    });
+  }
+
+  async listPaymentOrdersByUserId(params: {
+    userId: string;
+    cursor?: string | null;
+    limit?: number;
+  }) {
+    const limit = Math.min(50, Math.max(1, params.limit ?? 20));
+    const cursor = decodePaymentCursor(params.cursor);
+    const rows = await this.db
+      .select({
+        order: schema.paymentOrders,
+        gift: schema.giftEntitlements,
+      })
+      .from(schema.paymentOrders)
+      .leftJoin(
+        schema.giftEntitlements,
+        eq(schema.giftEntitlements.orderId, schema.paymentOrders.id)
+      )
+      .where(
+        and(
+          eq(schema.paymentOrders.userId, params.userId),
+          cursor
+            ? or(
+                lt(schema.paymentOrders.createdAt, cursor.createdAt),
+                and(
+                  eq(schema.paymentOrders.createdAt, cursor.createdAt),
+                  lt(schema.paymentOrders.id, cursor.id)
+                )
+              )
+            : undefined
+        )
+      )
+      .orderBy(
+        desc(schema.paymentOrders.createdAt),
+        desc(schema.paymentOrders.id)
+      )
+      .limit(limit + 1);
+    const visible = rows.slice(0, limit);
+    const last = visible.at(-1)?.order;
+    return {
+      items: visible.map((row) => ({
+        order: mapPaymentOrder(row.order),
+        gift: row.gift ? mapGiftEntitlement(row.gift) : null,
+      })),
+      nextCursor:
+        rows.length > limit && last
+          ? encodePaymentCursor(last.createdAt, last.id)
+          : null,
+    };
+  }
+
+  async claimGiftNotifications(params: {
+    now?: Date;
+    limit?: number;
+  }): Promise<GiftEntitlementRecord[]> {
+    const now = params.now ?? new Date();
+    return await this.db.transaction(async (tx) => {
+      const rows = await tx
+        .select()
+        .from(schema.giftEntitlements)
+        .where(
+          and(
+            eq(schema.giftEntitlements.status, 'ready'),
+            inArray(schema.giftEntitlements.notificationStatus, [
+              'pending',
+              'failed',
+              'sending',
+            ]),
+            lt(schema.giftEntitlements.notificationAttempts, 5),
+            or(
+              isNull(schema.giftEntitlements.notificationNextAttemptAt),
+              lte(schema.giftEntitlements.notificationNextAttemptAt, now)
+            )
+          )
+        )
+        .for('update', { skipLocked: true })
+        .limit(params.limit ?? 20);
+      const leaseUntil = new Date(now.getTime() + 10 * 60 * 1000);
+      for (const row of rows) {
+        await tx
+          .update(schema.giftEntitlements)
+          .set({
+            notificationStatus: 'sending',
+            notificationAttempts: row.notificationAttempts + 1,
+            notificationNextAttemptAt: leaseUntil,
+            updatedAt: now,
+          })
+          .where(eq(schema.giftEntitlements.id, row.id));
+      }
+      return rows.map((row) =>
+        mapGiftEntitlement({
+          ...row,
+          notificationStatus: 'sending',
+          notificationAttempts: row.notificationAttempts + 1,
+          notificationNextAttemptAt: leaseUntil,
+          updatedAt: now,
+        })
+      );
+    });
+  }
+
+  async markGiftNotificationSent(params: {
+    giftId: string;
+    now?: Date;
+  }): Promise<void> {
+    const now = params.now ?? new Date();
+    await this.db
+      .update(schema.giftEntitlements)
+      .set({
+        notificationStatus: 'sent',
+        notificationNextAttemptAt: null,
+        notificationSentAt: now,
+        updatedAt: now,
+      })
+      .where(eq(schema.giftEntitlements.id, params.giftId));
+  }
+
+  async markGiftNotificationFailed(params: {
+    giftId: string;
+    nextAttemptAt: Date | null;
+    now?: Date;
+  }): Promise<void> {
+    const now = params.now ?? new Date();
+    await this.db
+      .update(schema.giftEntitlements)
+      .set({
+        notificationStatus: 'failed',
+        notificationNextAttemptAt: params.nextAttemptAt,
+        updatedAt: now,
+      })
+      .where(eq(schema.giftEntitlements.id, params.giftId));
+  }
+
   async findPaymentOrderById(id: string): Promise<PaymentOrderRecord | null> {
     const [row] = await this.db
       .select()
@@ -285,49 +643,17 @@ export class DrizzleBillingRepository implements BillingRepository {
     return row ? mapPaymentOrder(row) : null;
   }
 
-  async findSubscriptionByProviderPaymentId(
-    providerPaymentId: string
-  ): Promise<SubscriptionRecord | null> {
-    const [row] = await this.db
-      .select()
-      .from(schema.userSubscriptions)
-      .where(
-        and(
-          eq(schema.userSubscriptions.provider, 'yookassa'),
-          eq(schema.userSubscriptions.providerPaymentId, providerPaymentId)
-        )
-      )
-      .limit(1);
-    return row ? mapSubscription(row) : null;
-  }
-
-  async grantSubscription(
-    input: GrantSubscriptionInput
-  ): Promise<SubscriptionRecord> {
-    const [row] = await this.db
-      .insert(schema.userSubscriptions)
-      .values({
-        userId: input.userId,
-        planId: input.planId,
-        status: 'active',
-        provider: input.provider,
-        providerPaymentId: input.providerPaymentId,
-        currentPeriodEnd: input.currentPeriodEnd,
-      })
-      .returning();
-    return mapSubscription(requireRow(row, 'user_subscription'));
-  }
-
   // Идемпотентная выдача доступа по оплаченному заказу. Ключевые свойства:
   // 1) заказ блокируется FOR UPDATE — параллельные вебхук и поллинг
   //    checkout-status не выдадут доступ дважды (fulfilled_at — флаг);
-  // 2) повторная покупка subscription продлевает период, а каждый one_time
-  //    платёж создаёт отдельный entitlement на включённое интервью;
+  // 2) покупка пропуска создаёт или продлевает единственную запись доступа
+  //    пользователя (повторный вебхук не удвоит срок и минуты);
   // 3) минуты realtime voice начисляются грантом в леджер со сроком действия.
   async fulfillPaidOrder(params: {
     orderId: string;
     providerPaymentId: string;
     plan: FulfillPlanInput;
+    autoRenew: boolean;
     paymentMethod?: {
       providerPaymentMethodId: string;
       methodType?: string | null;
@@ -337,7 +663,6 @@ export class DrizzleBillingRepository implements BillingRepository {
       cardExpiryMonth?: string | null;
       cardExpiryYear?: string | null;
     } | null;
-    maxExpiresAt?: Date | null;
     now?: Date;
   }): Promise<FulfillPaidOrderResult> {
     const now = params.now ?? new Date();
@@ -355,131 +680,16 @@ export class DrizzleBillingRepository implements BillingRepository {
         return { fulfilled: false, alreadyFulfilled: true };
       }
 
-      const plan = params.plan;
-      const savedCard =
-        plan.kind === 'subscription' ? (params.paymentMethod ?? null) : null;
-      let subscriptionId: string | null = null;
-      let minutesExpireAt = addDaysTo(now, plan.periodDays);
-      // Кап для addon-пакетов: минуты не живут дольше активного доступа
-      // покупателя. Кап в прошлом игнорируем — иначе грант родится мёртвым.
-      if (
-        plan.kind === 'addon' &&
-        params.maxExpiresAt &&
-        params.maxExpiresAt > now &&
-        params.maxExpiresAt < minutesExpireAt
-      ) {
-        minutesExpireAt = params.maxExpiresAt;
-      }
-
-      let existing: SubscriptionRow | undefined;
-      if (plan.kind === 'subscription') {
-        const rows = await tx
-          .select()
-          .from(schema.userSubscriptions)
-          .where(
-            and(
-              eq(schema.userSubscriptions.userId, orderRow.userId),
-              eq(schema.userSubscriptions.planId, plan.id),
-              eq(schema.userSubscriptions.status, 'active'),
-              gt(schema.userSubscriptions.currentPeriodEnd, now)
-            )
-          )
-          .for('update')
-          .limit(1);
-        existing = rows[0];
-      }
-
-      if (existing) {
-        // Продление: новый период добавляется к концу текущего.
-        const base =
-          existing.currentPeriodEnd > now ? existing.currentPeriodEnd : now;
-        const nextPeriodEnd = addDaysTo(base, plan.periodDays);
-        await tx
-          .update(schema.userSubscriptions)
-          .set({
-            currentPeriodEnd: nextPeriodEnd,
-            updatedAt: now,
-            ...(savedCard || existing.autoRenew
-              ? {
-                  autoRenew: true,
-                  nextChargeAt: nextPeriodEnd,
-                  lastChargeError: null,
-                }
-              : {}),
-          })
-          .where(eq(schema.userSubscriptions.id, existing.id));
-        subscriptionId = existing.id;
-        minutesExpireAt = nextPeriodEnd;
-      } else if (plan.kind === 'subscription' || plan.kind === 'one_time') {
-        const periodEnd = addDaysTo(now, plan.periodDays);
-        const [inserted] = await tx
-          .insert(schema.userSubscriptions)
-          .values({
-            userId: orderRow.userId,
-            planId: plan.id,
-            status: 'active',
-            provider: 'yookassa',
-            providerPaymentId: params.providerPaymentId,
-            currentPeriodEnd: periodEnd,
-            autoRenew: Boolean(savedCard),
-            nextChargeAt: savedCard ? periodEnd : null,
-          })
-          .onConflictDoNothing({
-            target: schema.userSubscriptions.providerPaymentId,
-          })
-          .returning();
-        if (!inserted) {
-          // Уникальный индекс сработал: этот платёж уже обслужен.
-          return { fulfilled: false, alreadyFulfilled: true };
-        }
-        subscriptionId = inserted.id;
-        minutesExpireAt = periodEnd;
-      }
-
-      // Карта, сохранённая YooKassa при оплате подписки: upsert для
-      // автосписаний (одна карта на пользователя, по образцу Mentala).
-      if (savedCard) {
-        await tx
-          .insert(schema.userPaymentMethods)
-          .values({
-            userId: orderRow.userId,
-            provider: 'yookassa',
-            providerPaymentMethodId: savedCard.providerPaymentMethodId,
-            status: 'active',
-            methodType: savedCard.methodType ?? null,
-            title: savedCard.title ?? null,
-            cardBrand: savedCard.cardBrand ?? null,
-            cardLast4: savedCard.cardLast4 ?? null,
-            cardExpiryMonth: savedCard.cardExpiryMonth ?? null,
-            cardExpiryYear: savedCard.cardExpiryYear ?? null,
-            updatedAt: now,
-          })
-          .onConflictDoUpdate({
-            target: schema.userPaymentMethods.userId,
-            set: {
-              providerPaymentMethodId: savedCard.providerPaymentMethodId,
-              status: 'active',
-              methodType: savedCard.methodType ?? null,
-              title: savedCard.title ?? null,
-              cardBrand: savedCard.cardBrand ?? null,
-              cardLast4: savedCard.cardLast4 ?? null,
-              cardExpiryMonth: savedCard.cardExpiryMonth ?? null,
-              cardExpiryYear: savedCard.cardExpiryYear ?? null,
-              updatedAt: now,
-            },
-          });
-      }
-
-      if (plan.realtimeVoiceMinutes > 0) {
-        await tx.insert(schema.realtimeMinuteGrants).values({
-          userId: orderRow.userId,
-          planId: plan.id,
-          sourceType: plan.kind,
-          subscriptionId,
-          providerPaymentId: params.providerPaymentId,
-          totalSeconds: plan.realtimeVoiceMinutes * 60,
-          expiresAt: minutesExpireAt,
-        });
+      const granted = await grantPaidAccess(tx, {
+        beneficiaryUserId: orderRow.userId,
+        providerPaymentId: params.providerPaymentId,
+        plan: params.plan,
+        autoRenew: params.autoRenew,
+        paymentMethod: params.paymentMethod ?? null,
+        now,
+      });
+      if (!granted) {
+        return { fulfilled: false, alreadyFulfilled: true };
       }
 
       await tx
@@ -642,49 +852,55 @@ export class DrizzleBillingRepository implements BillingRepository {
       .where(eq(schema.userPaymentMethods.userId, userId));
   }
 
-  async setSubscriptionAutoRenew(params: {
+  async setAccessAutoRenew(params: {
     userId: string;
     autoRenew: boolean;
-    subscriptionIds?: string[];
     now?: Date;
   }): Promise<void> {
     const now = params.now ?? new Date();
-    const subscriptionIds = params.subscriptionIds ?? [];
-    if (params.autoRenew && subscriptionIds.length === 0) return;
+    if (params.autoRenew) {
+      // Включение — только на активном доступе: списание планируем на конец
+      // периода, счётчик попыток и предуведомление сбрасываем.
+      await this.db
+        .update(schema.userSubscriptions)
+        .set({
+          autoRenew: true,
+          nextChargeAt: sql`${schema.userSubscriptions.currentPeriodEnd}`,
+          lastChargeError: null,
+          chargeAttempts: 0,
+          renewalNoticeSentAt: null,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(schema.userSubscriptions.userId, params.userId),
+            eq(schema.userSubscriptions.status, 'active'),
+            gt(schema.userSubscriptions.currentPeriodEnd, now)
+          )
+        );
+      return;
+    }
+    // Выключение — безусловное (376-ФЗ: отказ от списаний должен работать
+    // всегда, в том числе для просроченной записи).
     await this.db
       .update(schema.userSubscriptions)
       .set({
-        autoRenew: params.autoRenew,
-        // При включении списание планируем на конец периода; при
-        // выключении план списания снимаем.
-        nextChargeAt: params.autoRenew
-          ? sql`${schema.userSubscriptions.currentPeriodEnd}`
-          : null,
-        lastChargeError: null,
+        autoRenew: false,
+        nextChargeAt: null,
         updatedAt: now,
       })
-      .where(
-        and(
-          eq(schema.userSubscriptions.userId, params.userId),
-          params.autoRenew
-            ? inArray(schema.userSubscriptions.id, subscriptionIds)
-            : undefined,
-          eq(schema.userSubscriptions.status, 'active'),
-          gt(schema.userSubscriptions.currentPeriodEnd, now)
-        )
-      );
+      .where(eq(schema.userSubscriptions.userId, params.userId));
   }
 
-  // Подписки, которым пора автосписание: базовые eligibility-условия
-  // зеркалят claimSubscriptionForCharge, а userId/planIds сужают кандидатов.
-  async listSubscriptionsDueForCharge(params: {
+  // Доступы, которым пора автосписание: базовые eligibility-условия
+  // зеркалят claimAccessForCharge.
+  async listAccessDueForCharge(params: {
     userId?: string;
-    planIds: string[];
     now?: Date;
     retryAfterMs: number;
+    maxAttempts: number;
     limit?: number;
-  }): Promise<SubscriptionRecord[]> {
-    if (params.planIds.length === 0) return [];
+  }): Promise<PaidAccessRecord[]> {
     const now = params.now ?? new Date();
     const retryCutoff = new Date(now.getTime() - params.retryAfterMs);
     const rows = await this.db
@@ -695,10 +911,10 @@ export class DrizzleBillingRepository implements BillingRepository {
           params.userId
             ? eq(schema.userSubscriptions.userId, params.userId)
             : undefined,
-          inArray(schema.userSubscriptions.planId, params.planIds),
           eq(schema.userSubscriptions.status, 'active'),
           eq(schema.userSubscriptions.autoRenew, true),
           lte(schema.userSubscriptions.nextChargeAt, now),
+          lt(schema.userSubscriptions.chargeAttempts, params.maxAttempts),
           or(
             isNull(schema.userSubscriptions.lastChargeAttemptAt),
             lt(schema.userSubscriptions.lastChargeAttemptAt, retryCutoff)
@@ -707,27 +923,33 @@ export class DrizzleBillingRepository implements BillingRepository {
       )
       .orderBy(schema.userSubscriptions.nextChargeAt)
       .limit(params.limit ?? 50);
-    return rows.map(mapSubscription);
+    return rows.map(mapAccess);
   }
 
-  // Claim-паттерн: атомарно помечает подписку «в работе», чтобы два
-  // параллельных запроса не запустили двойное списание.
-  async claimSubscriptionForCharge(params: {
-    subscriptionId: string;
+  // Claim-паттерн: атомарно помечает запись «в работе» и инкрементирует
+  // счётчик попыток, чтобы два параллельных запроса не списали дважды.
+  async claimAccessForCharge(params: {
+    accessId: string;
     retryAfterMs: number;
+    maxAttempts: number;
     now?: Date;
-  }): Promise<SubscriptionRecord | null> {
+  }): Promise<PaidAccessRecord | null> {
     const now = params.now ?? new Date();
     const retryCutoff = new Date(now.getTime() - params.retryAfterMs);
     const [row] = await this.db
       .update(schema.userSubscriptions)
-      .set({ lastChargeAttemptAt: now, updatedAt: now })
+      .set({
+        lastChargeAttemptAt: now,
+        chargeAttempts: sql`${schema.userSubscriptions.chargeAttempts} + 1`,
+        updatedAt: now,
+      })
       .where(
         and(
-          eq(schema.userSubscriptions.id, params.subscriptionId),
+          eq(schema.userSubscriptions.id, params.accessId),
           eq(schema.userSubscriptions.status, 'active'),
           eq(schema.userSubscriptions.autoRenew, true),
           lte(schema.userSubscriptions.nextChargeAt, now),
+          lt(schema.userSubscriptions.chargeAttempts, params.maxAttempts),
           or(
             isNull(schema.userSubscriptions.lastChargeAttemptAt),
             lt(schema.userSubscriptions.lastChargeAttemptAt, retryCutoff)
@@ -735,24 +957,291 @@ export class DrizzleBillingRepository implements BillingRepository {
         )
       )
       .returning();
-    return row ? mapSubscription(row) : null;
+    return row ? mapAccess(row) : null;
   }
 
-  async recordSubscriptionChargeError(params: {
-    subscriptionId: string;
+  async recordAccessChargeError(params: {
+    accessId: string;
     error: string;
+    disableAutoRenew?: boolean;
     now?: Date;
   }): Promise<void> {
     const now = params.now ?? new Date();
     await this.db
       .update(schema.userSubscriptions)
-      .set({ lastChargeError: params.error.slice(0, 500), updatedAt: now })
-      .where(eq(schema.userSubscriptions.id, params.subscriptionId));
+      .set({
+        lastChargeError: params.error.slice(0, 500),
+        ...(params.disableAutoRenew
+          ? { autoRenew: false, nextChargeAt: null }
+          : {}),
+        updatedAt: now,
+      })
+      .where(eq(schema.userSubscriptions.id, params.accessId));
   }
+
+  async listAccessDueForRenewalNotice(params: {
+    now?: Date;
+    horizonMs: number;
+    limit?: number;
+  }): Promise<PaidAccessRecord[]> {
+    const now = params.now ?? new Date();
+    const horizon = new Date(now.getTime() + params.horizonMs);
+    const rows = await this.db
+      .select()
+      .from(schema.userSubscriptions)
+      .where(
+        and(
+          eq(schema.userSubscriptions.status, 'active'),
+          eq(schema.userSubscriptions.autoRenew, true),
+          isNull(schema.userSubscriptions.renewalNoticeSentAt),
+          // Списание впереди и уже в пределах горизонта уведомления.
+          gt(schema.userSubscriptions.nextChargeAt, now),
+          lte(schema.userSubscriptions.nextChargeAt, horizon)
+        )
+      )
+      .orderBy(schema.userSubscriptions.nextChargeAt)
+      .limit(params.limit ?? 50);
+    return rows.map(mapAccess);
+  }
+
+  // Идемпотентный claim предуведомления: renewal_notice_sent_at выставляется
+  // атомарно, параллельный обход второй раз письмо не отправит.
+  async claimRenewalNotice(params: {
+    accessId: string;
+    now?: Date;
+  }): Promise<boolean> {
+    const now = params.now ?? new Date();
+    const rows = await this.db
+      .update(schema.userSubscriptions)
+      .set({ renewalNoticeSentAt: now, updatedAt: now })
+      .where(
+        and(
+          eq(schema.userSubscriptions.id, params.accessId),
+          isNull(schema.userSubscriptions.renewalNoticeSentAt)
+        )
+      )
+      .returning({ id: schema.userSubscriptions.id });
+    return rows.length > 0;
+  }
+}
+
+// Выдача оплаченного доступа внутри транзакции. Инварианты модели v2:
+// - одна запись доступа на пользователя: активная продлевается от конца
+//   периода, истёкшая начинает новый период от «сейчас»;
+// - гранты одного пользователя сериализуются блокировкой его строки users —
+//   гонка двух первых покупок не создаст две записи и не потеряет продление;
+// - условия автопродления (план и цена) фиксируются в момент покупки;
+// - все живые минуты (пакеты и минуты прежнего пропуска) продлеваются до
+//   нового конца доступа: «минуты не сгорают, пока жив доступ».
+async function grantPaidAccess(
+  tx: BillingTransaction,
+  params: {
+    beneficiaryUserId: string;
+    providerPaymentId: string;
+    plan: FulfillPlanInput;
+    autoRenew: boolean;
+    paymentMethod: GrantAccessPaymentMethod | null;
+    now: Date;
+  }
+): Promise<boolean> {
+  const { beneficiaryUserId, plan, providerPaymentId, now } = params;
+
+  await tx
+    .select({ id: schema.users.id })
+    .from(schema.users)
+    .where(eq(schema.users.id, beneficiaryUserId))
+    .for('update');
+
+  if (plan.type === 'minute_pack') {
+    // Пакет живёт, пока жив пропуск. Без активного пропуска (гонка с
+    // истечением между checkout и оплатой) — не дольше собственного потолка.
+    const [access] = await tx
+      .select()
+      .from(schema.userSubscriptions)
+      .where(
+        and(
+          eq(schema.userSubscriptions.userId, beneficiaryUserId),
+          eq(schema.userSubscriptions.status, 'active'),
+          gt(schema.userSubscriptions.currentPeriodEnd, now)
+        )
+      )
+      .limit(1);
+    await tx.insert(schema.realtimeMinuteGrants).values({
+      userId: beneficiaryUserId,
+      planId: plan.id,
+      sourceType: 'minute_pack',
+      subscriptionId: access?.id ?? null,
+      providerPaymentId,
+      totalSeconds: plan.realtimeVoiceMinutes * 60,
+      expiresAt: access?.currentPeriodEnd ?? addDaysTo(now, plan.durationDays),
+    });
+    return true;
+  }
+
+  const savedCard = params.paymentMethod;
+  const [existing] = await tx
+    .select()
+    .from(schema.userSubscriptions)
+    .where(eq(schema.userSubscriptions.userId, beneficiaryUserId))
+    .for('update')
+    .limit(1);
+
+  // Автопродление реально включается, только если есть чем списывать:
+  // карта пришла с этим платежом или уже была привязана (оплата СБП и т.п.
+  // без сохранённого метода оставляет покупку разовой).
+  let hasChargeableMethod = Boolean(savedCard);
+  if (!hasChargeableMethod) {
+    const [method] = await tx
+      .select({ id: schema.userPaymentMethods.id })
+      .from(schema.userPaymentMethods)
+      .where(
+        and(
+          eq(schema.userPaymentMethods.userId, beneficiaryUserId),
+          eq(schema.userPaymentMethods.status, 'active')
+        )
+      )
+      .limit(1);
+    hasChargeableMethod = Boolean(method);
+  }
+
+  const existingActive = Boolean(
+    existing &&
+      existing.status === 'active' &&
+      existing.currentPeriodEnd > now
+  );
+  // Повторная покупка со снятой галочкой не выключает уже включённое
+  // автопродление — выключение только явным действием пользователя.
+  const autoRenewOn =
+    (params.autoRenew && hasChargeableMethod) ||
+    (existingActive && Boolean(existing!.autoRenew));
+  const periodStart = existingActive ? existing!.currentPeriodEnd : now;
+  const periodEnd = addDaysTo(periodStart, plan.durationDays);
+
+  let accessId: string;
+  if (existing) {
+    await tx
+      .update(schema.userSubscriptions)
+      .set({
+        planId: plan.id,
+        status: 'active',
+        provider: 'yookassa',
+        providerPaymentId,
+        currentPeriodEnd: periodEnd,
+        autoRenew: autoRenewOn,
+        nextChargeAt: autoRenewOn ? periodEnd : null,
+        lastChargeError: null,
+        chargeAttempts: 0,
+        renewalPlanId: plan.id,
+        renewalAmountRub: plan.priceRub,
+        renewalNoticeSentAt: null,
+        updatedAt: now,
+      })
+      .where(eq(schema.userSubscriptions.id, existing.id));
+    accessId = existing.id;
+  } else {
+    const [inserted] = await tx
+      .insert(schema.userSubscriptions)
+      .values({
+        userId: beneficiaryUserId,
+        planId: plan.id,
+        status: 'active',
+        provider: 'yookassa',
+        providerPaymentId,
+        currentPeriodEnd: periodEnd,
+        autoRenew: autoRenewOn,
+        nextChargeAt: autoRenewOn ? periodEnd : null,
+        renewalPlanId: plan.id,
+        renewalAmountRub: plan.priceRub,
+      })
+      .onConflictDoNothing({
+        target: schema.userSubscriptions.providerPaymentId,
+      })
+      .returning();
+    if (!inserted) return false;
+    accessId = inserted.id;
+  }
+
+  // Все живые минуты доезжают до нового конца доступа.
+  await tx
+    .update(schema.realtimeMinuteGrants)
+    .set({ expiresAt: periodEnd, updatedAt: now })
+    .where(
+      and(
+        eq(schema.realtimeMinuteGrants.userId, beneficiaryUserId),
+        gt(schema.realtimeMinuteGrants.expiresAt, now),
+        lt(schema.realtimeMinuteGrants.expiresAt, periodEnd)
+      )
+    );
+
+  if (savedCard) {
+    await tx
+      .insert(schema.userPaymentMethods)
+      .values({
+        userId: beneficiaryUserId,
+        provider: 'yookassa',
+        providerPaymentMethodId: savedCard.providerPaymentMethodId,
+        status: 'active',
+        methodType: savedCard.methodType ?? null,
+        title: savedCard.title ?? null,
+        cardBrand: savedCard.cardBrand ?? null,
+        cardLast4: savedCard.cardLast4 ?? null,
+        cardExpiryMonth: savedCard.cardExpiryMonth ?? null,
+        cardExpiryYear: savedCard.cardExpiryYear ?? null,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: schema.userPaymentMethods.userId,
+        set: {
+          providerPaymentMethodId: savedCard.providerPaymentMethodId,
+          status: 'active',
+          methodType: savedCard.methodType ?? null,
+          title: savedCard.title ?? null,
+          cardBrand: savedCard.cardBrand ?? null,
+          cardLast4: savedCard.cardLast4 ?? null,
+          cardExpiryMonth: savedCard.cardExpiryMonth ?? null,
+          cardExpiryYear: savedCard.cardExpiryYear ?? null,
+          updatedAt: now,
+        },
+      });
+  }
+
+  if (plan.realtimeVoiceMinutes > 0) {
+    await tx.insert(schema.realtimeMinuteGrants).values({
+      userId: beneficiaryUserId,
+      planId: plan.id,
+      sourceType: 'pass',
+      subscriptionId: accessId,
+      providerPaymentId,
+      totalSeconds: plan.realtimeVoiceMinutes * 60,
+      expiresAt: periodEnd,
+    });
+  }
+  return true;
 }
 
 function addDaysTo(date: Date, days: number): Date {
   const next = new Date(date);
   next.setDate(next.getDate() + days);
   return next;
+}
+
+function encodePaymentCursor(createdAt: Date, id: string): string {
+  return Buffer.from(`${createdAt.toISOString()}|${id}`).toString('base64url');
+}
+
+function decodePaymentCursor(value: string | null | undefined): {
+  createdAt: Date;
+  id: string;
+} | null {
+  if (!value) return null;
+  try {
+    const [createdAtValue, id] = Buffer.from(value, 'base64url')
+      .toString('utf8')
+      .split('|');
+    const createdAt = new Date(createdAtValue || '');
+    if (!id || Number.isNaN(createdAt.getTime())) throw new Error('invalid');
+    return { createdAt, id };
+  } catch {
+    throw apiError('E_VALIDATION', 'Некорректный cursor истории платежей');
+  }
 }

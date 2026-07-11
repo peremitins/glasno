@@ -66,9 +66,7 @@
   import { useAudioPermissionGate } from '@/app/composables/useAudioPermissionGate';
   import { useCameraPermissionGate } from '@/app/composables/useCameraPermissionGate';
   import { useMicPermissionGate } from '@/app/composables/useMicPermissionGate';
-  import {
-    buildRealtimeResponseCreateEvent,
-  } from '@/app/utils/interviewModeBridgeContext';
+  import { buildRealtimeResponseCreateEvent } from '@/app/utils/interviewModeBridgeContext';
 
   type ConversationMessage = {
     id: string;
@@ -194,7 +192,9 @@
   const assistantParticipantName = computed(() => {
     if (!isInterviewerTraining.value) return undefined;
     return t(
-      `interview.session.aiCandidate.persona.${state.value?.session.candidatePersona || 'strong_brief'}`
+      `interview.session.aiCandidate.persona.${
+        state.value?.session.candidatePersona || 'strong_brief'
+      }`
     );
   });
   const currentTurnLabel = computed(() => {
@@ -236,8 +236,8 @@
     )
   );
   const isDone = computed(() => state.value?.session.status === 'done');
-  const canOfferInterviewExplainSelectionOnboarding = computed(
-    () => Boolean(state.value && currentTurn.value && !isDone.value)
+  const canOfferInterviewExplainSelectionOnboarding = computed(() =>
+    Boolean(state.value && currentTurn.value && !isDone.value)
   );
   const isLastQuestion = computed(() => {
     const session = state.value?.session;
@@ -358,8 +358,8 @@
               ? t('interview.session.userQuestionInterviewer')
               : t('interview.session.userQuestion')
             : isInterviewerTraining.value
-              ? t('interview.session.stagePrompt')
-              : t('interview.session.question'),
+            ? t('interview.session.stagePrompt')
+            : t('interview.session.question'),
       });
       // Живой диалог по вопросу: реплики кандидата и интервьюера.
       if (turn.messages?.length) {
@@ -1851,9 +1851,7 @@
                           t('interview.session.hintsPanel.sampleAnswerLabel')
                         }}
                       </em>
-                      <strong>{{
-                        hintSampleTitle
-                      }}</strong>
+                      <strong>{{ hintSampleTitle }}</strong>
                     </span>
                   </summary>
                   <p
@@ -1968,7 +1966,7 @@
                     :src="getInterviewerFacePhotoSrc(opt.id)"
                     :alt="t(opt.modeLabel)"
                     @error="onThumbError(opt.id)"
-                  >
+                  />
                   <em v-else class="picker-initials">{{
                     group.key === 'male' ? 'М' : 'Ж'
                   }}</em>
@@ -1987,7 +1985,9 @@
           <div
             class="pause-row"
             role="group"
-            :aria-label="t('interview.session.interviewerPicker.responsePauseTitle')"
+            :aria-label="
+              t('interview.session.interviewerPicker.responsePauseTitle')
+            "
           >
             <button
               v-for="ms in responsePauseOptions"
@@ -2076,7 +2076,7 @@
   }
 
   .panel {
-    padding: clamp(8px, 2.2vw, 26px);
+    padding: clamp(15px, 2.2vw, 26px);
   }
 
   .stage-shell {

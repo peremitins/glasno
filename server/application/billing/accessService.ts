@@ -1,23 +1,33 @@
-import type { BillingStatusResponse } from '@/shared/dto';
+import type {
+  BillingActiveAccess,
+  BillingStatusResponse,
+} from '@/shared/dto';
 import { apiError } from '@/server/utils/errors';
 import type {
   BillingOwner,
   BillingRepository,
+  PaidAccessRecord,
   PaymentMethodRecord,
-  SubscriptionRecord,
 } from '@/server/interface/billingRepository';
 import {
   ALL_SESSION_GOALS,
   FREE_ALLOWED_SESSION_GOALS,
   FREE_SESSIONS_LIMIT,
-  getBillingPlan,
-  type BillingPlanConfig,
+  SESSION_CREATION_BURST_LIMIT,
+  SESSION_CREATION_BURST_WINDOW_MS,
+  SESSION_CREATION_DAILY_LIMIT,
+  findBillingPlan,
+  getPassPlans,
   type SessionGoalAccess,
 } from './plans';
 
-interface ActivePlan {
-  subscription: SubscriptionRecord;
-  plan: BillingPlanConfig;
+// Представление записи доступа для статуса: активен / истёк / отсутствует.
+interface AccessView {
+  active: boolean;
+  activeAccess: BillingActiveAccess | null;
+  lastAccessEndedAt: string | null;
+  lastAccessPlanName: string | null;
+  access: PaidAccessRecord | null;
 }
 
 export class BillingAccessService {
@@ -27,69 +37,43 @@ export class BillingAccessService {
         BillingRepository,
         | 'countOwnerSessions'
         | 'countOwnerSessionsSince'
-        | 'findActiveSubscriptionsByUserId'
+        | 'findAccessByUserId'
         | 'getRealtimeMinuteBalance'
         | 'findPaymentMethodByUserId'
+        | 'findUserEmail'
+        | 'claimReadyGiftsByEmail'
       >;
     }
   ) {}
 
   async getStatus(owner: BillingOwner): Promise<BillingStatusResponse> {
-    // Admin — безлимит, лимиты не считаем. Но реальный billing-блок
-    // (карта, автопродление) возвращаем: админ должен видеть и тестировать
-    // привязку карты и автосписания как обычный пользователь.
-    if (owner.role === 'admin') {
-      const [subscriptions, paymentMethod] = await Promise.all([
-        owner.userId
-          ? this.deps.repository.findActiveSubscriptionsByUserId(owner.userId)
-          : Promise.resolve([]),
-        owner.userId
-          ? this.deps.repository.findPaymentMethodByUserId(owner.userId)
-          : Promise.resolve(null),
-      ]);
-      const plans = toActivePlans(subscriptions);
-      const subscriptionPlans = plans.filter(
-        (item) => item.plan.kind === 'subscription'
-      );
-      const primaryPlan =
-        [...plans].sort(
-          (a, b) => b.plan.priority - a.plan.priority
-        )[0] ?? null;
-      return {
-        freeSessionsLimit: FREE_SESSIONS_LIMIT,
-        freeSessionsUsed: 0,
-        canCreateInterview: true,
-        allowedSessionGoals: ALL_SESSION_GOALS,
-        paidInterviewsRemaining: null,
-        hasActiveSubscription: subscriptionPlans.length > 0,
-        unlimited: true,
-        activePlanId: primaryPlan?.plan.id ?? null,
-        activePlanName: primaryPlan?.plan.name ?? null,
-        subscriptionExpiresAt:
-          primaryPlan?.subscription.currentPeriodEnd.toISOString() ?? null,
-        billing: buildBillingInfo({
-          userId: owner.userId,
-          subscriptionPlans,
-          paymentMethod,
-        }),
-        needsAuthForCheckout: !owner.userId,
-        realtimeVoice: {
-          includedMinutes: 999_999,
-          usedMinutes: 0,
-          remainingMinutes: 999_999,
-          canBuyMore: true,
-        },
-      };
+    const now = new Date();
+
+    if (owner.userId) {
+      const email = await this.deps.repository.findUserEmail(owner.userId);
+      if (email) {
+        await this.deps.repository.claimReadyGiftsByEmail({
+          recipientEmail: email.trim().toLowerCase(),
+          beneficiaryUserId: owner.userId,
+          plans: getPassPlans().map((plan) => ({
+            id: plan.id,
+            type: plan.type,
+            durationDays: plan.durationDays,
+            realtimeVoiceMinutes: plan.realtimeVoiceMinutes,
+            priceRub: plan.priceRub,
+          })),
+        });
+      }
     }
 
-    const [freeSessionsUsed, subscriptions, minuteBalance, paymentMethod] =
+    const [freeSessionsUsed, access, minuteBalance, paymentMethod] =
       await Promise.all([
         this.deps.repository.countOwnerSessions(owner),
         owner.userId
-          ? this.deps.repository.findActiveSubscriptionsByUserId(owner.userId)
-          : Promise.resolve([]),
+          ? this.deps.repository.findAccessByUserId(owner.userId)
+          : Promise.resolve(null),
         owner.userId
-          ? this.deps.repository.getRealtimeMinuteBalance(owner.userId)
+          ? this.deps.repository.getRealtimeMinuteBalance(owner.userId, now)
           : Promise.resolve({
               totalSeconds: 0,
               consumedSeconds: 0,
@@ -100,79 +84,68 @@ export class BillingAccessService {
           : Promise.resolve(null),
       ]);
 
-    const plans = toActivePlans(subscriptions);
-    const subscriptionPlans = plans.filter(
-      (item) => item.plan.kind === 'subscription'
-    );
-    const oneTimePlans = plans.filter((item) => item.plan.kind === 'one_time');
-    const hasActiveSubscription = subscriptionPlans.length > 0;
+    const view = buildAccessView(access, now);
+    const billing = buildBillingInfo({
+      userId: owner.userId,
+      view,
+      paymentMethod,
+    });
 
-    // «Основной» тариф — с наибольшим приоритетом (Career Pack > Pro > разовый).
-    const primaryPlan =
-      [...subscriptionPlans, ...oneTimePlans].sort(
-        (a, b) => b.plan.priority - a.plan.priority
-      )[0] ?? null;
-
-    // Разовый доступ: считаем интервью, созданные после его покупки.
-    let paidInterviewsRemaining: number | null = null;
-    if (!hasActiveSubscription && oneTimePlans.length > 0) {
-      const earliestGrantedAt = oneTimePlans.reduce(
-        (min, item) =>
-          item.subscription.createdAt < min ? item.subscription.createdAt : min,
-        oneTimePlans[0]!.subscription.createdAt
-      );
-      const includedInterviews = oneTimePlans.reduce(
-        (sum, item) => sum + (item.plan.includedInterviews ?? 0),
-        0
-      );
-      const usedSince = await this.deps.repository.countOwnerSessionsSince(
-        owner,
-        earliestGrantedAt
-      );
-      paidInterviewsRemaining = Math.max(0, includedInterviews - usedSince);
+    // Admin — безлимит, лимиты не считаем. Но реальный billing-блок
+    // (карта, автопродление) возвращаем: админ должен видеть и тестировать
+    // привязку карты и автосписания как обычный пользователь.
+    if (owner.role === 'admin') {
+      return {
+        freeSessionsLimit: FREE_SESSIONS_LIMIT,
+        freeSessionsUsed: 0,
+        canCreateInterview: true,
+        allowedSessionGoals: ALL_SESSION_GOALS,
+        hasActivePaidAccess: view.active,
+        hasRecurringRenewal: view.active && Boolean(view.access?.autoRenew),
+        unlimited: true,
+        activeAccess: view.activeAccess,
+        lastAccessEndedAt: view.lastAccessEndedAt,
+        lastAccessPlanName: view.lastAccessPlanName,
+        billing,
+        needsAuthForCheckout: !owner.userId,
+        realtimeVoice: {
+          includedMinutes: 999_999,
+          usedMinutes: 0,
+          remainingMinutes: 999_999,
+          canBuyMore: true,
+        },
+      };
     }
 
     const canCreateInterview =
-      hasActiveSubscription ||
-      (paidInterviewsRemaining ?? 0) > 0 ||
-      freeSessionsUsed < FREE_SESSIONS_LIMIT;
-
-    const allowedSessionGoals: SessionGoalAccess[] =
-      hasActiveSubscription || (paidInterviewsRemaining ?? 0) > 0
-        ? ALL_SESSION_GOALS
-        : FREE_ALLOWED_SESSION_GOALS;
+      view.active || freeSessionsUsed < FREE_SESSIONS_LIMIT;
+    const allowedSessionGoals: SessionGoalAccess[] = view.active
+      ? ALL_SESSION_GOALS
+      : FREE_ALLOWED_SESSION_GOALS;
 
     const includedMinutes = Math.floor(minuteBalance.totalSeconds / 60);
     const remainingMinutes = Math.floor(minuteBalance.remainingSeconds / 60);
     const usedMinutes = Math.max(0, includedMinutes - remainingMinutes);
-
-    const billing = buildBillingInfo({
-      userId: owner.userId,
-      subscriptionPlans,
-      paymentMethod,
-    });
 
     return {
       freeSessionsLimit: FREE_SESSIONS_LIMIT,
       freeSessionsUsed,
       canCreateInterview,
       allowedSessionGoals,
-      paidInterviewsRemaining,
-      hasActiveSubscription,
+      hasActivePaidAccess: view.active,
+      hasRecurringRenewal: view.active && Boolean(view.access?.autoRenew),
       unlimited: false,
-      activePlanId: primaryPlan?.plan.id ?? null,
-      activePlanName: primaryPlan?.plan.name ?? null,
-      subscriptionExpiresAt:
-        primaryPlan?.subscription.currentPeriodEnd.toISOString() ?? null,
+      activeAccess: view.activeAccess,
+      lastAccessEndedAt: view.lastAccessEndedAt,
+      lastAccessPlanName: view.lastAccessPlanName,
       billing,
       needsAuthForCheckout: !owner.userId,
       realtimeVoice: {
         includedMinutes,
         usedMinutes,
         remainingMinutes,
-        // Пакеты минут продаются при любом активном платном тарифе
-        // (подписка или разовый доступ).
-        canBuyMore: Boolean(owner.userId) && plans.length > 0,
+        // Пакеты минут — расходник к активному пропуску.
+        canBuyMore: Boolean(owner.userId) && view.active,
       },
     };
   }
@@ -185,7 +158,7 @@ export class BillingAccessService {
     if (!status.canCreateInterview) {
       throw apiError(
         'E_FORBIDDEN',
-        'Бесплатный лимит исчерпан. Выберите тариф, чтобы продолжить тренировки.',
+        'Бесплатное интервью использовано. Оформите доступ, чтобы продолжить тренировки.',
         status
       );
     }
@@ -197,44 +170,118 @@ export class BillingAccessService {
     ) {
       throw apiError(
         'E_FORBIDDEN',
-        'Бесплатно доступно быстрое интервью. Стандартный и глубокий форматы — на платных тарифах.',
+        'Бесплатно доступно быстрое интервью. Стандартный и глубокий форматы — с пропуском «Полный доступ».',
         status
       );
     }
+    if (!status.unlimited) {
+      await this.assertSessionCreationWithinLimits(owner);
+    }
     return status;
+  }
+
+  // Антиабьюз «безлимита» (ТЗ тарифы v2, раздел 2): эксплуатационная защита
+  // от автоматизации, а не продуктовый лимит — честный пользователь порогов
+  // не замечает.
+  private async assertSessionCreationWithinLimits(
+    owner: BillingOwner
+  ): Promise<void> {
+    const now = Date.now();
+    const [burstCount, dailyCount] = await Promise.all([
+      this.deps.repository.countOwnerSessionsSince(
+        owner,
+        new Date(now - SESSION_CREATION_BURST_WINDOW_MS)
+      ),
+      this.deps.repository.countOwnerSessionsSince(
+        owner,
+        new Date(now - 24 * 60 * 60 * 1000)
+      ),
+    ]);
+    if (dailyCount >= SESSION_CREATION_DAILY_LIMIT) {
+      console.warn('[billing] session creation daily limit hit', {
+        userId: owner.userId ?? null,
+        anonymousSessionId: owner.anonymousSessionId,
+        dailyCount,
+      });
+      throw apiError(
+        'E_RATE',
+        'Слишком много интервью за сутки. Продолжить можно завтра — лимит защищает сервис от автоматизации.'
+      );
+    }
+    if (burstCount >= SESSION_CREATION_BURST_LIMIT) {
+      throw apiError(
+        'E_RATE',
+        'Слишком много интервью подряд. Подождите несколько минут и начните снова.'
+      );
+    }
   }
 }
 
-function toActivePlans(subscriptions: SubscriptionRecord[]): ActivePlan[] {
-  return subscriptions.map((subscription) => ({
-    subscription,
-    plan: getBillingPlan(subscription.planId),
-  }));
+function buildAccessView(
+  access: PaidAccessRecord | null,
+  now: Date
+): AccessView {
+  if (!access) {
+    return {
+      active: false,
+      activeAccess: null,
+      lastAccessEndedAt: null,
+      lastAccessPlanName: null,
+      access: null,
+    };
+  }
+  const plan = findBillingPlan(access.planId);
+  const planName = plan?.name ?? access.planId;
+  const active = access.status === 'active' && access.currentPeriodEnd > now;
+  if (active) {
+    return {
+      active: true,
+      activeAccess: {
+        planId: access.planId,
+        planName,
+        durationDays: plan?.durationDays ?? 30,
+        expiresAt: access.currentPeriodEnd.toISOString(),
+      },
+      lastAccessEndedAt: null,
+      lastAccessPlanName: null,
+      access,
+    };
+  }
+  return {
+    active: false,
+    activeAccess: null,
+    lastAccessEndedAt: access.currentPeriodEnd.toISOString(),
+    lastAccessPlanName: planName,
+    access,
+  };
 }
 
-// Информация об автопродлении (по образцу Mentala): когда и сколько
-// спишется, с какой карты, была ли ошибка последнего списания.
-// Блок возвращается ЛЮБОМУ авторизованному пользователю — UI показывает
-// «Привязать карту», когда карты нет.
+// Информация об автопродлении: когда и сколько спишется, с какой карты,
+// была ли ошибка последнего списания. Блок возвращается ЛЮБОМУ
+// авторизованному пользователю — UI показывает «Привязать карту», когда
+// карты нет. Сумма — зафиксированная при покупке, не из каталога.
 function buildBillingInfo(params: {
   userId: string | null | undefined;
-  subscriptionPlans: ActivePlan[];
+  view: AccessView;
   paymentMethod: PaymentMethodRecord | null;
 }): BillingStatusResponse['billing'] {
   if (!params.userId) return null;
-  const renewalSubscription = params.subscriptionPlans.find(
-    (item) => item.subscription.autoRenew
-  );
+  const { view } = params;
+  const renewalOn = view.active && Boolean(view.access?.autoRenew);
   const activePaymentMethod =
     params.paymentMethod?.status === 'active' ? params.paymentMethod : null;
   return {
-    autoRenew: Boolean(renewalSubscription),
+    autoRenew: renewalOn,
     nextChargeAt:
-      renewalSubscription?.subscription.nextChargeAt?.toISOString() ?? null,
-    nextChargeAmountRub: renewalSubscription
-      ? renewalSubscription.plan.priceRub
+      renewalOn && view.access?.nextChargeAt
+        ? view.access.nextChargeAt.toISOString()
+        : null,
+    nextChargeAmountRub: renewalOn
+      ? view.access?.renewalAmountRub ??
+        findBillingPlan(view.access!.planId)?.priceRub ??
+        null
       : null,
-    lastChargeError: renewalSubscription?.subscription.lastChargeError ?? null,
+    lastChargeError: view.access?.lastChargeError ?? null,
     paymentMethod: activePaymentMethod
       ? {
           title: activePaymentMethod.title,

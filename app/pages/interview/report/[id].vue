@@ -596,7 +596,7 @@
   }
 
   .panel {
-    padding: clamp(8px, 2.2vw, 26px);
+    padding: clamp(15px, 2.2vw, 26px);
   }
 
   .panel h2 {

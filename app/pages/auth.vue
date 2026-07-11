@@ -513,21 +513,6 @@
     font-weight: 900;
   }
 
-  .input-shell {
-    position: relative;
-  }
-
-  .input-shell svg {
-    position: absolute;
-    top: 50%;
-    left: 15px;
-    width: 17px;
-    height: 17px;
-    color: var(--text-muted);
-    transform: translateY(-50%);
-  }
-
-  .input-shell input,
   .code-input {
     width: 100%;
     min-height: 54px;
@@ -539,10 +524,6 @@
     padding: 0 16px;
   }
 
-  .input-shell input {
-    padding-left: 44px;
-  }
-
   .code-input {
     font-family: var(--font-mono);
     font-size: 24px;
@@ -551,7 +532,6 @@
     text-align: center;
   }
 
-  .input-shell input:focus,
   .code-input:focus {
     border-color: var(--focus-ring);
     box-shadow: 0 0 0 4px color-mix(in srgb, var(--focus-ring) 18%, transparent);
