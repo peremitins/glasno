@@ -377,11 +377,24 @@ export class BillingService {
     }
     this.requireYooKassaConfig();
 
-    const binding = await createYooKassaPaymentMethodBinding({
-      ...this.deps.config.yookassa,
-      idempotenceKey: `bind-${userId}-${Date.now()}`,
-      returnUrl: buildBindingReturnUrl(this.deps.config.appUrl),
-    });
+    let binding: Awaited<
+      ReturnType<typeof createYooKassaPaymentMethodBinding>
+    >;
+    try {
+      binding = await createYooKassaPaymentMethodBinding({
+        ...this.deps.config.yookassa,
+        idempotenceKey: `bind-${userId}-${Date.now()}`,
+        returnUrl: buildBindingReturnUrl(this.deps.config.appUrl),
+      });
+    } catch (err) {
+      if (isYooKassaRecurringPaymentsUnavailable(err)) {
+        throw apiError(
+          'E_FORBIDDEN',
+          'Автопродление ещё не подключено для магазина. Обратитесь в поддержку YooKassa.'
+        );
+      }
+      throw apiError('E_UPSTREAM', 'Не удалось начать привязку карты в YooKassa');
+    }
     const confirmationUrl = binding.confirmation?.confirmation_url;
     if (!binding.id || !confirmationUrl) {
       throw apiError(
@@ -926,6 +939,19 @@ function isAccessActive(
 ): access is PaidAccessRecord {
   return Boolean(
     access && access.status === 'active' && access.currentPeriodEnd > now
+  );
+}
+
+// YooKassa отвечает 403 Forbidden на POST /v3/payment_methods, когда для
+// магазина ещё не подключены автоплатежи (сохранённые способы оплаты).
+// Неверные ключи дали бы 401, поэтому 403 на этом эндпоинте однозначно
+// означает «фича не включена». На точный текст description не опираемся —
+// формулировки YooKassa меняются (recurring payments / saved methods / ...).
+function isYooKassaRecurringPaymentsUnavailable(err: unknown): boolean {
+  return (
+    !!err &&
+    typeof err === 'object' &&
+    (err as { statusCode?: unknown }).statusCode === 403
   );
 }
 

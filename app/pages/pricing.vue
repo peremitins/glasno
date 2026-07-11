@@ -564,7 +564,6 @@
         </p>
         <div class="status-actions">
           <button
-            v-if="!billingInfo.paymentMethod"
             type="button"
             class="secondary-action secondary-action--compact"
             :disabled="cardActionPending"
@@ -591,10 +590,9 @@
             {{ t('pricing.enableAutoRenew') }}
           </button>
           <button
-            v-if="billingInfo.paymentMethod"
             type="button"
             class="secondary-action secondary-action--compact"
-            :disabled="cardActionPending"
+            :disabled="cardActionPending || !billingInfo.paymentMethod"
             @click="confirmAction = 'unbind'"
           >
             {{ t('pricing.unbindCard') }}
