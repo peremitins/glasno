@@ -560,6 +560,20 @@ a {
   background: var(--surface-raised);
 }
 
+.secondary-action:disabled,
+.ghost-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
+  transform: none;
+}
+
+.secondary-action:disabled:hover,
+.ghost-action:disabled:hover {
+  transform: none;
+  border-color: var(--glass-border);
+  background: var(--surface-soft);
+}
+
 .primary-action--compact,
 .secondary-action--compact,
 .ghost-action--compact {
