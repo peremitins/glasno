@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { BillingService } from './billingService';
 import {
   createYooKassaPayment,
+  createYooKassaPaymentMethodBinding,
   createYooKassaRecurringPayment,
   getYooKassaPayment,
   getYooKassaPaymentMethod,
@@ -24,6 +25,7 @@ vi.mock('./yookassaClient', async (importOriginal) => {
     getYooKassaPayment: vi.fn(),
     getYooKassaPaymentMethod: vi.fn(),
     createYooKassaPayment: vi.fn(),
+    createYooKassaPaymentMethodBinding: vi.fn(),
     createYooKassaRecurringPayment: vi.fn(),
   };
 });
@@ -36,6 +38,9 @@ vi.mock('./renewalEmailSender', () => ({
 const mockedGetYooKassaPayment = vi.mocked(getYooKassaPayment);
 const mockedGetYooKassaPaymentMethod = vi.mocked(getYooKassaPaymentMethod);
 const mockedCreateYooKassaPayment = vi.mocked(createYooKassaPayment);
+const mockedCreateYooKassaPaymentMethodBinding = vi.mocked(
+  createYooKassaPaymentMethodBinding
+);
 const mockedCreateYooKassaRecurringPayment = vi.mocked(
   createYooKassaRecurringPayment
 );
@@ -966,6 +971,34 @@ describe('BillingService auto-renew management', () => {
       userId: 'user_1',
       autoRenew: false,
     });
+  });
+});
+
+describe('BillingService payment-method binding', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('returns an actionable error when YooKassa has not enabled recurring payments', async () => {
+    const repository = createRepository();
+    mockedCreateYooKassaPaymentMethodBinding.mockRejectedValue({
+      statusCode: 403,
+      data: {
+        type: 'error',
+        code: 'forbidden',
+        description:
+          "This store can't make recurring payments. Contact your YooMoney manager to learn more",
+      },
+    });
+    const service = createService(repository);
+
+    await expect(service.startPaymentMethodBinding('user_1')).rejects.toMatchObject({
+      data: {
+        code: 'E_FORBIDDEN',
+        message: expect.stringContaining('Автопродление'),
+      },
+    });
+    expect(repository.savePendingPaymentMethod).not.toHaveBeenCalled();
   });
 });
 
