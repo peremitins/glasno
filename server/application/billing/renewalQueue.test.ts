@@ -12,6 +12,7 @@ const previousRedisUrl = process.env.REDIS_URL;
 
 const bullmq = vi.hoisted(() => ({
   queueClose: vi.fn().mockResolvedValue(undefined),
+  queueOn: vi.fn(),
   upsertJobScheduler: vi.fn().mockResolvedValue(undefined),
   workerClose: vi.fn().mockResolvedValue(undefined),
   workerOn: vi.fn(),
@@ -20,6 +21,7 @@ const bullmq = vi.hoisted(() => ({
     return {
       close: bullmq.queueClose,
       upsertJobScheduler: bullmq.upsertJobScheduler,
+      on: bullmq.queueOn,
     };
   }),
   Worker: vi.fn(function WorkerMock(
@@ -103,12 +105,18 @@ describe('renewalQueue', () => {
     );
   });
 
-  it('runs the billing renewal sweep from the worker processor', async () => {
+  it('runs the renewal notice and charge sweeps from the worker processor', async () => {
     const runAutoRenewalSweep = vi.fn().mockResolvedValue({
       processed: 2,
       failed: 0,
     });
-    const createService = vi.fn().mockReturnValue({ runAutoRenewalSweep });
+    const runRenewalNoticeSweep = vi.fn().mockResolvedValue({
+      sent: 1,
+      skipped: 0,
+    });
+    const createService = vi
+      .fn()
+      .mockReturnValue({ runAutoRenewalSweep, runRenewalNoticeSweep });
 
     createRenewalWorker({
       redisUrl: 'redis://localhost:6379/1',
@@ -116,6 +124,11 @@ describe('renewalQueue', () => {
     });
     await expect(bullmq.workerProcessor?.()).resolves.toBeUndefined();
     expect(createService).toHaveBeenCalledOnce();
+    // Предуведомление идёт до списания: письмо не должно проигрывать
+    // гонку самому чарджу.
+    expect(runRenewalNoticeSweep.mock.invocationCallOrder[0]).toBeLessThan(
+      runAutoRenewalSweep.mock.invocationCallOrder[0]!
+    );
     expect(runAutoRenewalSweep).toHaveBeenCalledOnce();
   });
 

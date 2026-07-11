@@ -24,16 +24,15 @@ import type {
   GiftEntitlementRecord,
   GiftNotificationStatus,
   GiftPaymentOrderResult,
-  GrantSubscriptionInput,
+  PaidAccessRecord,
   PaymentMethodRecord,
   PaymentOrderRecord,
   RealtimeMinuteBalance,
-  SubscriptionRecord,
   UpdatePaymentOrderInput,
 } from '@/server/interface/billingRepository';
 
 type PaymentOrderRow = typeof schema.paymentOrders.$inferSelect;
-type SubscriptionRow = typeof schema.userSubscriptions.$inferSelect;
+type AccessRow = typeof schema.userSubscriptions.$inferSelect;
 type GiftEntitlementRow = typeof schema.giftEntitlements.$inferSelect;
 type BillingTransaction = Parameters<
   Parameters<ReturnType<typeof getDb>['transaction']>[0]
@@ -76,7 +75,7 @@ function mapPaymentOrder(row: PaymentOrderRow): PaymentOrderRecord {
   };
 }
 
-function mapSubscription(row: SubscriptionRow): SubscriptionRecord {
+function mapAccess(row: AccessRow): PaidAccessRecord {
   return {
     id: row.id,
     userId: row.userId,
@@ -89,6 +88,10 @@ function mapSubscription(row: SubscriptionRow): SubscriptionRecord {
     nextChargeAt: row.nextChargeAt,
     lastChargeAttemptAt: row.lastChargeAttemptAt,
     lastChargeError: row.lastChargeError,
+    chargeAttempts: row.chargeAttempts,
+    renewalPlanId: row.renewalPlanId,
+    renewalAmountRub: row.renewalAmountRub,
+    renewalNoticeSentAt: row.renewalNoticeSentAt,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -176,29 +179,15 @@ export class DrizzleBillingRepository implements BillingRepository {
     return row?.email ?? null;
   }
 
-  async findActiveSubscriptionByUserId(
-    userId: string,
-    now = new Date()
-  ): Promise<SubscriptionRecord | null> {
-    const rows = await this.findActiveSubscriptionsByUserId(userId, now);
-    return rows[0] ?? null;
-  }
-
-  async findActiveSubscriptionsByUserId(
-    userId: string,
-    now = new Date()
-  ): Promise<SubscriptionRecord[]> {
-    const rows = await this.db
+  // Запись доступа пользователя — одна на пользователя, включая истёкшую
+  // (нужна для состояния «доступ закончился {дата}»).
+  async findAccessByUserId(userId: string): Promise<PaidAccessRecord | null> {
+    const [row] = await this.db
       .select()
       .from(schema.userSubscriptions)
-      .where(
-        and(
-          eq(schema.userSubscriptions.userId, userId),
-          eq(schema.userSubscriptions.status, 'active'),
-          gt(schema.userSubscriptions.currentPeriodEnd, now)
-        )
-      );
-    return rows.map(mapSubscription);
+      .where(eq(schema.userSubscriptions.userId, userId))
+      .limit(1);
+    return row ? mapAccess(row) : null;
   }
 
   async countRealtimeVoiceUsageSeconds(
@@ -419,7 +408,7 @@ export class DrizzleBillingRepository implements BillingRepository {
           continue;
         }
         const plan = planById.get(gift.planId);
-        if (!plan || plan.kind === 'addon') continue;
+        if (!plan || plan.type !== 'pass') continue;
         const [order] = await tx
           .select()
           .from(schema.paymentOrders)
@@ -428,12 +417,14 @@ export class DrizzleBillingRepository implements BillingRepository {
           .limit(1);
         if (!order?.providerPaymentId) continue;
 
+        // Подарок — всегда без автопродления (ТЗ тарифы v2): получатель
+        // может включить его сам после привязки своей карты.
         const granted = await grantPaidAccess(tx, {
           beneficiaryUserId: params.beneficiaryUserId,
           providerPaymentId: order.providerPaymentId,
           plan,
+          autoRenew: false,
           paymentMethod: null,
-          maxExpiresAt: null,
           now,
         });
         if (!granted) continue;
@@ -652,49 +643,17 @@ export class DrizzleBillingRepository implements BillingRepository {
     return row ? mapPaymentOrder(row) : null;
   }
 
-  async findSubscriptionByProviderPaymentId(
-    providerPaymentId: string
-  ): Promise<SubscriptionRecord | null> {
-    const [row] = await this.db
-      .select()
-      .from(schema.userSubscriptions)
-      .where(
-        and(
-          eq(schema.userSubscriptions.provider, 'yookassa'),
-          eq(schema.userSubscriptions.providerPaymentId, providerPaymentId)
-        )
-      )
-      .limit(1);
-    return row ? mapSubscription(row) : null;
-  }
-
-  async grantSubscription(
-    input: GrantSubscriptionInput
-  ): Promise<SubscriptionRecord> {
-    const [row] = await this.db
-      .insert(schema.userSubscriptions)
-      .values({
-        userId: input.userId,
-        planId: input.planId,
-        status: 'active',
-        provider: input.provider,
-        providerPaymentId: input.providerPaymentId,
-        currentPeriodEnd: input.currentPeriodEnd,
-      })
-      .returning();
-    return mapSubscription(requireRow(row, 'user_subscription'));
-  }
-
   // Идемпотентная выдача доступа по оплаченному заказу. Ключевые свойства:
   // 1) заказ блокируется FOR UPDATE — параллельные вебхук и поллинг
   //    checkout-status не выдадут доступ дважды (fulfilled_at — флаг);
-  // 2) повторная покупка subscription продлевает период, а каждый one_time
-  //    платёж создаёт отдельный entitlement на включённое интервью;
+  // 2) покупка пропуска создаёт или продлевает единственную запись доступа
+  //    пользователя (повторный вебхук не удвоит срок и минуты);
   // 3) минуты realtime voice начисляются грантом в леджер со сроком действия.
   async fulfillPaidOrder(params: {
     orderId: string;
     providerPaymentId: string;
     plan: FulfillPlanInput;
+    autoRenew: boolean;
     paymentMethod?: {
       providerPaymentMethodId: string;
       methodType?: string | null;
@@ -704,7 +663,6 @@ export class DrizzleBillingRepository implements BillingRepository {
       cardExpiryMonth?: string | null;
       cardExpiryYear?: string | null;
     } | null;
-    maxExpiresAt?: Date | null;
     now?: Date;
   }): Promise<FulfillPaidOrderResult> {
     const now = params.now ?? new Date();
@@ -726,8 +684,8 @@ export class DrizzleBillingRepository implements BillingRepository {
         beneficiaryUserId: orderRow.userId,
         providerPaymentId: params.providerPaymentId,
         plan: params.plan,
+        autoRenew: params.autoRenew,
         paymentMethod: params.paymentMethod ?? null,
-        maxExpiresAt: params.maxExpiresAt ?? null,
         now,
       });
       if (!granted) {
@@ -894,49 +852,55 @@ export class DrizzleBillingRepository implements BillingRepository {
       .where(eq(schema.userPaymentMethods.userId, userId));
   }
 
-  async setSubscriptionAutoRenew(params: {
+  async setAccessAutoRenew(params: {
     userId: string;
     autoRenew: boolean;
-    subscriptionIds?: string[];
     now?: Date;
   }): Promise<void> {
     const now = params.now ?? new Date();
-    const subscriptionIds = params.subscriptionIds ?? [];
-    if (params.autoRenew && subscriptionIds.length === 0) return;
+    if (params.autoRenew) {
+      // Включение — только на активном доступе: списание планируем на конец
+      // периода, счётчик попыток и предуведомление сбрасываем.
+      await this.db
+        .update(schema.userSubscriptions)
+        .set({
+          autoRenew: true,
+          nextChargeAt: sql`${schema.userSubscriptions.currentPeriodEnd}`,
+          lastChargeError: null,
+          chargeAttempts: 0,
+          renewalNoticeSentAt: null,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(schema.userSubscriptions.userId, params.userId),
+            eq(schema.userSubscriptions.status, 'active'),
+            gt(schema.userSubscriptions.currentPeriodEnd, now)
+          )
+        );
+      return;
+    }
+    // Выключение — безусловное (376-ФЗ: отказ от списаний должен работать
+    // всегда, в том числе для просроченной записи).
     await this.db
       .update(schema.userSubscriptions)
       .set({
-        autoRenew: params.autoRenew,
-        // При включении списание планируем на конец периода; при
-        // выключении план списания снимаем.
-        nextChargeAt: params.autoRenew
-          ? sql`${schema.userSubscriptions.currentPeriodEnd}`
-          : null,
-        lastChargeError: null,
+        autoRenew: false,
+        nextChargeAt: null,
         updatedAt: now,
       })
-      .where(
-        and(
-          eq(schema.userSubscriptions.userId, params.userId),
-          params.autoRenew
-            ? inArray(schema.userSubscriptions.id, subscriptionIds)
-            : undefined,
-          eq(schema.userSubscriptions.status, 'active'),
-          gt(schema.userSubscriptions.currentPeriodEnd, now)
-        )
-      );
+      .where(eq(schema.userSubscriptions.userId, params.userId));
   }
 
-  // Подписки, которым пора автосписание: базовые eligibility-условия
-  // зеркалят claimSubscriptionForCharge, а userId/planIds сужают кандидатов.
-  async listSubscriptionsDueForCharge(params: {
+  // Доступы, которым пора автосписание: базовые eligibility-условия
+  // зеркалят claimAccessForCharge.
+  async listAccessDueForCharge(params: {
     userId?: string;
-    planIds: string[];
     now?: Date;
     retryAfterMs: number;
+    maxAttempts: number;
     limit?: number;
-  }): Promise<SubscriptionRecord[]> {
-    if (params.planIds.length === 0) return [];
+  }): Promise<PaidAccessRecord[]> {
     const now = params.now ?? new Date();
     const retryCutoff = new Date(now.getTime() - params.retryAfterMs);
     const rows = await this.db
@@ -947,10 +911,10 @@ export class DrizzleBillingRepository implements BillingRepository {
           params.userId
             ? eq(schema.userSubscriptions.userId, params.userId)
             : undefined,
-          inArray(schema.userSubscriptions.planId, params.planIds),
           eq(schema.userSubscriptions.status, 'active'),
           eq(schema.userSubscriptions.autoRenew, true),
           lte(schema.userSubscriptions.nextChargeAt, now),
+          lt(schema.userSubscriptions.chargeAttempts, params.maxAttempts),
           or(
             isNull(schema.userSubscriptions.lastChargeAttemptAt),
             lt(schema.userSubscriptions.lastChargeAttemptAt, retryCutoff)
@@ -959,27 +923,33 @@ export class DrizzleBillingRepository implements BillingRepository {
       )
       .orderBy(schema.userSubscriptions.nextChargeAt)
       .limit(params.limit ?? 50);
-    return rows.map(mapSubscription);
+    return rows.map(mapAccess);
   }
 
-  // Claim-паттерн: атомарно помечает подписку «в работе», чтобы два
-  // параллельных запроса не запустили двойное списание.
-  async claimSubscriptionForCharge(params: {
-    subscriptionId: string;
+  // Claim-паттерн: атомарно помечает запись «в работе» и инкрементирует
+  // счётчик попыток, чтобы два параллельных запроса не списали дважды.
+  async claimAccessForCharge(params: {
+    accessId: string;
     retryAfterMs: number;
+    maxAttempts: number;
     now?: Date;
-  }): Promise<SubscriptionRecord | null> {
+  }): Promise<PaidAccessRecord | null> {
     const now = params.now ?? new Date();
     const retryCutoff = new Date(now.getTime() - params.retryAfterMs);
     const [row] = await this.db
       .update(schema.userSubscriptions)
-      .set({ lastChargeAttemptAt: now, updatedAt: now })
+      .set({
+        lastChargeAttemptAt: now,
+        chargeAttempts: sql`${schema.userSubscriptions.chargeAttempts} + 1`,
+        updatedAt: now,
+      })
       .where(
         and(
-          eq(schema.userSubscriptions.id, params.subscriptionId),
+          eq(schema.userSubscriptions.id, params.accessId),
           eq(schema.userSubscriptions.status, 'active'),
           eq(schema.userSubscriptions.autoRenew, true),
           lte(schema.userSubscriptions.nextChargeAt, now),
+          lt(schema.userSubscriptions.chargeAttempts, params.maxAttempts),
           or(
             isNull(schema.userSubscriptions.lastChargeAttemptAt),
             lt(schema.userSubscriptions.lastChargeAttemptAt, retryCutoff)
@@ -987,86 +957,188 @@ export class DrizzleBillingRepository implements BillingRepository {
         )
       )
       .returning();
-    return row ? mapSubscription(row) : null;
+    return row ? mapAccess(row) : null;
   }
 
-  async recordSubscriptionChargeError(params: {
-    subscriptionId: string;
+  async recordAccessChargeError(params: {
+    accessId: string;
     error: string;
+    disableAutoRenew?: boolean;
     now?: Date;
   }): Promise<void> {
     const now = params.now ?? new Date();
     await this.db
       .update(schema.userSubscriptions)
-      .set({ lastChargeError: params.error.slice(0, 500), updatedAt: now })
-      .where(eq(schema.userSubscriptions.id, params.subscriptionId));
+      .set({
+        lastChargeError: params.error.slice(0, 500),
+        ...(params.disableAutoRenew
+          ? { autoRenew: false, nextChargeAt: null }
+          : {}),
+        updatedAt: now,
+      })
+      .where(eq(schema.userSubscriptions.id, params.accessId));
+  }
+
+  async listAccessDueForRenewalNotice(params: {
+    now?: Date;
+    horizonMs: number;
+    limit?: number;
+  }): Promise<PaidAccessRecord[]> {
+    const now = params.now ?? new Date();
+    const horizon = new Date(now.getTime() + params.horizonMs);
+    const rows = await this.db
+      .select()
+      .from(schema.userSubscriptions)
+      .where(
+        and(
+          eq(schema.userSubscriptions.status, 'active'),
+          eq(schema.userSubscriptions.autoRenew, true),
+          isNull(schema.userSubscriptions.renewalNoticeSentAt),
+          // Списание впереди и уже в пределах горизонта уведомления.
+          gt(schema.userSubscriptions.nextChargeAt, now),
+          lte(schema.userSubscriptions.nextChargeAt, horizon)
+        )
+      )
+      .orderBy(schema.userSubscriptions.nextChargeAt)
+      .limit(params.limit ?? 50);
+    return rows.map(mapAccess);
+  }
+
+  // Идемпотентный claim предуведомления: renewal_notice_sent_at выставляется
+  // атомарно, параллельный обход второй раз письмо не отправит.
+  async claimRenewalNotice(params: {
+    accessId: string;
+    now?: Date;
+  }): Promise<boolean> {
+    const now = params.now ?? new Date();
+    const rows = await this.db
+      .update(schema.userSubscriptions)
+      .set({ renewalNoticeSentAt: now, updatedAt: now })
+      .where(
+        and(
+          eq(schema.userSubscriptions.id, params.accessId),
+          isNull(schema.userSubscriptions.renewalNoticeSentAt)
+        )
+      )
+      .returning({ id: schema.userSubscriptions.id });
+    return rows.length > 0;
   }
 }
 
+// Выдача оплаченного доступа внутри транзакции. Инварианты модели v2:
+// - одна запись доступа на пользователя: активная продлевается от конца
+//   периода, истёкшая начинает новый период от «сейчас»;
+// - гранты одного пользователя сериализуются блокировкой его строки users —
+//   гонка двух первых покупок не создаст две записи и не потеряет продление;
+// - условия автопродления (план и цена) фиксируются в момент покупки;
+// - все живые минуты (пакеты и минуты прежнего пропуска) продлеваются до
+//   нового конца доступа: «минуты не сгорают, пока жив доступ».
 async function grantPaidAccess(
   tx: BillingTransaction,
   params: {
     beneficiaryUserId: string;
     providerPaymentId: string;
     plan: FulfillPlanInput;
+    autoRenew: boolean;
     paymentMethod: GrantAccessPaymentMethod | null;
-    maxExpiresAt: Date | null;
     now: Date;
   }
 ): Promise<boolean> {
   const { beneficiaryUserId, plan, providerPaymentId, now } = params;
-  const savedCard =
-    plan.kind === 'subscription' ? params.paymentMethod : null;
-  let subscriptionId: string | null = null;
-  let minutesExpireAt = addDaysTo(now, plan.periodDays);
 
-  if (
-    plan.kind === 'addon' &&
-    params.maxExpiresAt &&
-    params.maxExpiresAt > now &&
-    params.maxExpiresAt < minutesExpireAt
-  ) {
-    minutesExpireAt = params.maxExpiresAt;
-  }
+  await tx
+    .select({ id: schema.users.id })
+    .from(schema.users)
+    .where(eq(schema.users.id, beneficiaryUserId))
+    .for('update');
 
-  let existing: SubscriptionRow | undefined;
-  if (plan.kind === 'subscription') {
-    const rows = await tx
+  if (plan.type === 'minute_pack') {
+    // Пакет живёт, пока жив пропуск. Без активного пропуска (гонка с
+    // истечением между checkout и оплатой) — не дольше собственного потолка.
+    const [access] = await tx
       .select()
       .from(schema.userSubscriptions)
       .where(
         and(
           eq(schema.userSubscriptions.userId, beneficiaryUserId),
-          eq(schema.userSubscriptions.planId, plan.id),
           eq(schema.userSubscriptions.status, 'active'),
           gt(schema.userSubscriptions.currentPeriodEnd, now)
         )
       )
-      .for('update')
       .limit(1);
-    existing = rows[0];
+    await tx.insert(schema.realtimeMinuteGrants).values({
+      userId: beneficiaryUserId,
+      planId: plan.id,
+      sourceType: 'minute_pack',
+      subscriptionId: access?.id ?? null,
+      providerPaymentId,
+      totalSeconds: plan.realtimeVoiceMinutes * 60,
+      expiresAt: access?.currentPeriodEnd ?? addDaysTo(now, plan.durationDays),
+    });
+    return true;
   }
 
+  const savedCard = params.paymentMethod;
+  const [existing] = await tx
+    .select()
+    .from(schema.userSubscriptions)
+    .where(eq(schema.userSubscriptions.userId, beneficiaryUserId))
+    .for('update')
+    .limit(1);
+
+  // Автопродление реально включается, только если есть чем списывать:
+  // карта пришла с этим платежом или уже была привязана (оплата СБП и т.п.
+  // без сохранённого метода оставляет покупку разовой).
+  let hasChargeableMethod = Boolean(savedCard);
+  if (!hasChargeableMethod) {
+    const [method] = await tx
+      .select({ id: schema.userPaymentMethods.id })
+      .from(schema.userPaymentMethods)
+      .where(
+        and(
+          eq(schema.userPaymentMethods.userId, beneficiaryUserId),
+          eq(schema.userPaymentMethods.status, 'active')
+        )
+      )
+      .limit(1);
+    hasChargeableMethod = Boolean(method);
+  }
+
+  const existingActive = Boolean(
+    existing &&
+      existing.status === 'active' &&
+      existing.currentPeriodEnd > now
+  );
+  // Повторная покупка со снятой галочкой не выключает уже включённое
+  // автопродление — выключение только явным действием пользователя.
+  const autoRenewOn =
+    (params.autoRenew && hasChargeableMethod) ||
+    (existingActive && Boolean(existing!.autoRenew));
+  const periodStart = existingActive ? existing!.currentPeriodEnd : now;
+  const periodEnd = addDaysTo(periodStart, plan.durationDays);
+
+  let accessId: string;
   if (existing) {
-    const nextPeriodEnd = addDaysTo(existing.currentPeriodEnd, plan.periodDays);
     await tx
       .update(schema.userSubscriptions)
       .set({
-        currentPeriodEnd: nextPeriodEnd,
+        planId: plan.id,
+        status: 'active',
+        provider: 'yookassa',
+        providerPaymentId,
+        currentPeriodEnd: periodEnd,
+        autoRenew: autoRenewOn,
+        nextChargeAt: autoRenewOn ? periodEnd : null,
+        lastChargeError: null,
+        chargeAttempts: 0,
+        renewalPlanId: plan.id,
+        renewalAmountRub: plan.priceRub,
+        renewalNoticeSentAt: null,
         updatedAt: now,
-        ...(savedCard || existing.autoRenew
-          ? {
-              autoRenew: true,
-              nextChargeAt: nextPeriodEnd,
-              lastChargeError: null,
-            }
-          : {}),
       })
       .where(eq(schema.userSubscriptions.id, existing.id));
-    subscriptionId = existing.id;
-    minutesExpireAt = nextPeriodEnd;
-  } else if (plan.kind === 'subscription' || plan.kind === 'one_time') {
-    const periodEnd = addDaysTo(now, plan.periodDays);
+    accessId = existing.id;
+  } else {
     const [inserted] = await tx
       .insert(schema.userSubscriptions)
       .values({
@@ -1076,34 +1148,30 @@ async function grantPaidAccess(
         provider: 'yookassa',
         providerPaymentId,
         currentPeriodEnd: periodEnd,
-        autoRenew: Boolean(savedCard),
-        nextChargeAt: savedCard ? periodEnd : null,
+        autoRenew: autoRenewOn,
+        nextChargeAt: autoRenewOn ? periodEnd : null,
+        renewalPlanId: plan.id,
+        renewalAmountRub: plan.priceRub,
       })
       .onConflictDoNothing({
         target: schema.userSubscriptions.providerPaymentId,
       })
       .returning();
     if (!inserted) return false;
-    subscriptionId = inserted.id;
-    minutesExpireAt = periodEnd;
+    accessId = inserted.id;
   }
 
-  if (plan.kind === 'subscription') {
-    await tx
-      .update(schema.realtimeMinuteGrants)
-      .set({ expiresAt: minutesExpireAt, updatedAt: now })
-      .where(
-        and(
-          eq(schema.realtimeMinuteGrants.userId, beneficiaryUserId),
-          inArray(schema.realtimeMinuteGrants.sourceType, [
-            'one_time',
-            'addon',
-          ]),
-          gt(schema.realtimeMinuteGrants.expiresAt, now),
-          lt(schema.realtimeMinuteGrants.expiresAt, minutesExpireAt)
-        )
-      );
-  }
+  // Все живые минуты доезжают до нового конца доступа.
+  await tx
+    .update(schema.realtimeMinuteGrants)
+    .set({ expiresAt: periodEnd, updatedAt: now })
+    .where(
+      and(
+        eq(schema.realtimeMinuteGrants.userId, beneficiaryUserId),
+        gt(schema.realtimeMinuteGrants.expiresAt, now),
+        lt(schema.realtimeMinuteGrants.expiresAt, periodEnd)
+      )
+    );
 
   if (savedCard) {
     await tx
@@ -1141,11 +1209,11 @@ async function grantPaidAccess(
     await tx.insert(schema.realtimeMinuteGrants).values({
       userId: beneficiaryUserId,
       planId: plan.id,
-      sourceType: plan.kind,
-      subscriptionId,
+      sourceType: 'pass',
+      subscriptionId: accessId,
       providerPaymentId,
       totalSeconds: plan.realtimeVoiceMinutes * 60,
-      expiresAt: minutesExpireAt,
+      expiresAt: periodEnd,
     });
   }
   return true;

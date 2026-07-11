@@ -6,6 +6,14 @@ const checkoutModalSource = readFileSync(
   'app/components/billing/BillingCheckoutModal.vue',
   'utf8'
 );
+const paywallModalSource = readFileSync(
+  'app/components/billing/PaywallModal.vue',
+  'utf8'
+);
+const yookassaWidgetSource = readFileSync(
+  'app/composables/useYookassaWidget.ts',
+  'utf8'
+);
 const layoutSource = readFileSync('app/layouts/default.vue', 'utf8');
 const authSource = readFileSync('app/pages/auth.vue', 'utf8');
 const globalStyles = readFileSync('app/assets/css/main.css', 'utf8');
@@ -49,11 +57,24 @@ describe('pricing page loading state', () => {
   });
 });
 
-describe('pricing plan affordances', () => {
+describe('pricing pass card (тарифы v2)', () => {
+  it('renders a single full-access card with a six-step duration picker', () => {
+    expect(source).toContain("t('pricing.fullAccessTitle')");
+    expect(source).toContain('duration-picker');
+    expect(source).toContain('role="radiogroup"');
+    expect(source).toMatch(/v-for="plan in passPlans"/);
+    expect(source).toContain('selectedPassId = plan.id');
+    expect(source).toContain("t('pricing.perDay'");
+    // Старой сетки из трёх карточек больше нет.
+    expect(source).not.toContain('mainPlans');
+    expect(source).not.toContain('single_prep');
+    expect(source).not.toContain('pro_monthly');
+  });
+
   it('renders feature lists with Radix checkmarks and accent tokens', () => {
     expect(source).toContain("import { CheckIcon } from '@radix-icons/vue'");
     expect(source).toMatch(
-      /<li v-for="feature in plan\.features"[^>]*>\s*<CheckIcon class="feature-check"/
+      /<li v-for="feature in selectedPass\.features"[^>]*>\s*<CheckIcon class="feature-check"/
     );
     expect(source).toMatch(
       /<li v-for="feature in pack\.features"[^>]*>\s*<CheckIcon class="feature-check"/
@@ -71,16 +92,78 @@ describe('pricing plan affordances', () => {
     );
   });
 
-  it('describes minute packs as additions to either active paid plan', () => {
+  it('describes minute packs as additions to the active pass', () => {
     expect(messages.pricing.minutePacksSubtitle).toContain(
-      'Докупаются к Pro и Разовой подготовке'
+      'к активному пропуску'
     );
-    expect(messages.pricing.packsNeedPlan).toContain(
-      'к активному платному тарифу'
-    );
+    expect(messages.pricing.packsNeedPlan).toContain('к активному пропуску');
     expect(messages.paywall.minutesDescription).toContain(
-      'к активному платному тарифу'
+      'к активному пропуску'
     );
+  });
+
+  it('places the minute-pack heading in the standard glass container', () => {
+    expect(source).toContain(
+      '<header class="packs-header glass-frame glass-frame--soft">'
+    );
+  });
+
+  it('shows all four current-access states', () => {
+    for (const state of ['admin', 'active', 'expired', 'trial-used']) {
+      expect(source).toContain(`'${state}'`);
+    }
+    expect(source).toContain("t('pricing.accessExpiredAt'");
+    expect(source).toContain("t('pricing.trialHint')");
+    expect(source).toContain("t('pricing.trialUsedHint')");
+    expect(source).toContain("t('pricing.renewCta')");
+  });
+});
+
+describe('pricing auto-renewal consent (default-on)', () => {
+  it('opens checkout with auto-renewal enabled by default and sends the choice', () => {
+    expect(source).toContain('const autoRenew = ref(true)');
+    expect(source).toContain('autoRenew.value = true');
+    expect(source).toContain('autoRenew: !isGift && autoRenew.value');
+    expect(source).toContain(':auto-renew="autoRenew"');
+  });
+
+  it('renders an explicit auto-renew switch with charge date and amount in the modal', () => {
+    expect(checkoutModalSource).toContain("t('pricing.autoRenewSwitchLabel')");
+    expect(checkoutModalSource).toContain("t('pricing.autoRenewSwitchHint'");
+    expect(checkoutModalSource).toContain('updateAutoRenew');
+    expect(checkoutModalSource).toContain('nextChargeDate');
+    // Подарок — всегда без автопродления: свитч скрывается.
+    expect(checkoutModalSource).toMatch(
+      /renewalAvailable = computed\(\s*\(\) => props\.plan\?\.type === 'pass' && !displayGift\.value\s*\)/
+    );
+  });
+});
+
+describe('YooKassa widget presentation', () => {
+  it('opens the native YooKassa modal instead of nesting the widget in checkout chrome', () => {
+    expect(yookassaWidgetSource).toContain('modal: true');
+    expect(yookassaWidgetSource).toContain('getYooKassaWidgetColors');
+    expect(yookassaWidgetSource).toContain("control_primary: '#7C5CFF'");
+    expect(yookassaWidgetSource).toContain("control_primary_content: '#FFFFFF'");
+    expect(yookassaWidgetSource).toContain("background: '#11162C'");
+    expect(yookassaWidgetSource).toContain("background: '#F4F7FF'");
+    expect(yookassaWidgetSource).toContain('colors: getYooKassaWidgetColors()');
+    // Не фиксируем СБП отдельно: на мобильном сам виджет отобразит список
+    // банков и платежных сервисов после выбора СБП.
+    expect(yookassaWidgetSource).not.toContain('payment_methods:');
+    expect(yookassaWidgetSource).toContain("instance.on('modal_close'");
+    expect(yookassaWidgetSource).toContain('await instance.render();');
+    expect(checkoutModalSource).toContain('v-if="open && plan && !showWidget"');
+    expect(checkoutModalSource).not.toContain('ref="widgetContainer"');
+    expect(checkoutModalSource).toContain('modal: true');
+    expect(checkoutModalSource).toContain("onModalClose: () => emit('back')");
+  });
+
+  it('returns to the paywall choices when the native YooKassa modal closes', () => {
+    expect(paywallModalSource).toContain('v-if="open && !checkoutToken"');
+    expect(paywallModalSource).not.toContain('ref="widgetContainer"');
+    expect(paywallModalSource).toContain('modal: true');
+    expect(paywallModalSource).toContain('onModalClose: resetWidget');
   });
 });
 
@@ -89,7 +172,7 @@ describe('pricing subscription management and gift checkout', () => {
     expect(source).toContain('selectedPlanId');
     expect(source).toContain('giftMode');
     expect(source).toContain('recipientEmail');
-    expect(source).toContain("gift: giftMode.value");
+    expect(source).toContain('gift: isGift');
     expect(source).toContain('BillingCheckoutModal');
     expect(source).not.toContain('id="billing-checkout"');
     expect(source).not.toContain('checkout-shell');
@@ -109,7 +192,7 @@ describe('pricing subscription management and gift checkout', () => {
     expect(source).not.toContain('management-actions');
     expect(source).not.toContain('scrollToPlans');
     expect(source).not.toContain('plansSection');
-    expect(layoutSource).toContain('/pricing?checkout=gift&plan=pro_monthly');
+    expect(layoutSource).toContain('/pricing?checkout=gift&plan=pass_30d');
     expect(layoutSource).toContain("t('layout.giftAction')");
     expect(layoutSource).toContain("t('layout.shareAction')");
     expect(layoutSource).toContain('shareServiceContent');

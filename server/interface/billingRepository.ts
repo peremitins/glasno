@@ -4,7 +4,9 @@ export interface BillingOwner {
   role?: 'user' | 'admin' | null;
 }
 
-export interface SubscriptionRecord {
+// Запись оплаченного доступа («Полный доступ» на срок). Одна на
+// пользователя: продление обновляет её, а не создаёт новую.
+export interface PaidAccessRecord {
   id: string;
   userId: string;
   planId: string;
@@ -16,6 +18,11 @@ export interface SubscriptionRecord {
   nextChargeAt: Date | null;
   lastChargeAttemptAt: Date | null;
   lastChargeError: string | null;
+  chargeAttempts: number;
+  // Условия продления, зафиксированные при покупке.
+  renewalPlanId: string | null;
+  renewalAmountRub: number | null;
+  renewalNoticeSentAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -125,20 +132,14 @@ export interface UpdatePaymentOrderInput {
   metadata?: Record<string, unknown> | null;
 }
 
-export interface GrantSubscriptionInput {
-  userId: string;
-  planId: string;
-  provider: 'yookassa';
-  providerPaymentId: string;
-  currentPeriodEnd: Date;
-}
-
 // Данные тарифа, нужные для выдачи доступа по оплаченному заказу.
 export interface FulfillPlanInput {
   id: string;
-  kind: 'subscription' | 'one_time' | 'addon';
-  periodDays: number;
+  type: 'pass' | 'minute_pack';
+  durationDays: number;
   realtimeVoiceMinutes: number;
+  // Цена покупки: фиксируется как renewal_amount_rub записи доступа.
+  priceRub: number;
 }
 
 export interface FulfillPaidOrderResult {
@@ -155,15 +156,18 @@ export interface RealtimeMinuteBalance {
 
 export interface BillingRepository {
   countOwnerSessions(owner: BillingOwner): Promise<number>;
+  // Для антиабьюз-порогов: сколько сессий создано с указанного момента.
   countOwnerSessionsSince(owner: BillingOwner, since: Date): Promise<number>;
   findUserEmail(userId: string): Promise<string | null>;
-  // Идемпотентная выдача доступа: подписка/разовый доступ + грант минут.
-  // Безопасна при гонке «вебхук + поллинг checkout-status».
-  // paymentMethod: сохранённая YooKassa карта — включает автопродление.
+  // Идемпотентная выдача доступа: пропуск (создание/продление записи) или
+  // пакет минут. Безопасна при гонке «вебхук + поллинг checkout-status».
+  // autoRenew — выбор пользователя в чекауте; фактически включается, только
+  // если есть сохранённая карта (пришла с платежом или привязана ранее).
   fulfillPaidOrder(params: {
     orderId: string;
     providerPaymentId: string;
     plan: FulfillPlanInput;
+    autoRenew: boolean;
     paymentMethod?: {
       providerPaymentMethodId: string;
       methodType?: string | null;
@@ -173,9 +177,6 @@ export interface BillingRepository {
       cardExpiryMonth?: string | null;
       cardExpiryYear?: string | null;
     } | null;
-    // Верхняя граница срока действия минут (для addon-пакетов: не дольше
-    // конца активного разового доступа покупателя).
-    maxExpiresAt?: Date | null;
     now?: Date;
   }): Promise<FulfillPaidOrderResult>;
   findPaymentMethodByUserId(userId: string): Promise<PaymentMethodRecord | null>;
@@ -195,38 +196,55 @@ export interface BillingRepository {
     cardExpiryMonth?: string | null;
     cardExpiryYear?: string | null;
   }): Promise<void>;
-  // Отвязка карты: удаляет способ оплаты и выключает автопродление.
+  // Отвязка карты = электронный отказ (376-ФЗ): способ оплаты удаляется,
+  // автопродление выключает application-слой.
   deletePaymentMethodByUserId(userId: string): Promise<void>;
-  setSubscriptionAutoRenew(params: {
+  // Запись доступа пользователя (включая истёкшую) — одна на пользователя.
+  findAccessByUserId(userId: string): Promise<PaidAccessRecord | null>;
+  // Включение/выключение автопродления активного доступа. При включении
+  // сбрасывает счётчик попыток и ошибку последнего списания.
+  setAccessAutoRenew(params: {
     userId: string;
     autoRenew: boolean;
-    // При включении application-слой передаёт только реальные subscription-
-    // записи. При выключении undefined означает сбросить все записи владельца.
-    subscriptionIds?: string[];
     now?: Date;
   }): Promise<void>;
-  // Подписки, которым пора автосписание (для фонового обхода): только
-  // переданные subscription planIds, active, autoRenew, nextChargeAt <= now,
-  // с учётом троттлинга повторных попыток.
-  listSubscriptionsDueForCharge(params: {
+  // Доступы, которым пора автосписание: active, autoRenew, nextChargeAt <=
+  // now, попыток меньше maxAttempts, с учётом троттлинга повторов.
+  listAccessDueForCharge(params: {
     userId?: string;
-    planIds: string[];
     now?: Date;
     retryAfterMs: number;
+    maxAttempts: number;
     limit?: number;
-  }): Promise<SubscriptionRecord[]>;
-  // Атомарно «забирает» подписку на попытку автосписания (claim):
-  // возвращает null, если списание уже выполняется/недавно было.
-  claimSubscriptionForCharge(params: {
-    subscriptionId: string;
+  }): Promise<PaidAccessRecord[]>;
+  // Атомарно «забирает» запись на попытку списания и инкрементирует
+  // charge_attempts. null — уже в работе/недавно была попытка.
+  claimAccessForCharge(params: {
+    accessId: string;
     retryAfterMs: number;
+    maxAttempts: number;
     now?: Date;
-  }): Promise<SubscriptionRecord | null>;
-  recordSubscriptionChargeError(params: {
-    subscriptionId: string;
+  }): Promise<PaidAccessRecord | null>;
+  recordAccessChargeError(params: {
+    accessId: string;
     error: string;
+    // Финальная неудача: автопродление выключается.
+    disableAutoRenew?: boolean;
     now?: Date;
   }): Promise<void>;
+  // Кандидаты на предуведомление о списании: autoRenew, списание в пределах
+  // горизонта, уведомление ещё не отправлялось.
+  listAccessDueForRenewalNotice(params: {
+    now?: Date;
+    horizonMs: number;
+    limit?: number;
+  }): Promise<PaidAccessRecord[]>;
+  // Идемпотентный claim отправки предуведомления (одно на период):
+  // true — можно отправлять, false — уже отправлено/забрано параллельно.
+  claimRenewalNotice(params: {
+    accessId: string;
+    now?: Date;
+  }): Promise<boolean>;
   getRealtimeMinuteBalance(
     userId: string,
     now?: Date
@@ -238,14 +256,6 @@ export interface BillingRepository {
     realtimeSessionId?: string | null;
     now?: Date;
   }): Promise<void>;
-  findActiveSubscriptionByUserId(
-    userId: string,
-    now?: Date
-  ): Promise<SubscriptionRecord | null>;
-  findActiveSubscriptionsByUserId(
-    userId: string,
-    now?: Date
-  ): Promise<SubscriptionRecord[]>;
   countRealtimeVoiceUsageSeconds(
     owner: BillingOwner,
     params: {
@@ -312,8 +322,4 @@ export interface BillingRepository {
   updatePaymentOrder(
     input: UpdatePaymentOrderInput
   ): Promise<PaymentOrderRecord | null>;
-  findSubscriptionByProviderPaymentId(
-    providerPaymentId: string
-  ): Promise<SubscriptionRecord | null>;
-  grantSubscription(input: GrantSubscriptionInput): Promise<SubscriptionRecord>;
 }

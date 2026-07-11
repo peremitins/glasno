@@ -13,6 +13,7 @@ export default defineApiHandler(async (event) => {
     userId: event.context.session?.userId,
     role: event.context.session?.role,
     planId: input.planId,
+    autoRenew: input.autoRenew,
     gift: input.gift,
   });
   return BillingCheckoutResponseDto.parse(checkout);

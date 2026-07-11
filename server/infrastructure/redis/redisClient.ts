@@ -10,6 +10,21 @@ function resolveRedisUrl(redisUrl?: string | null): string {
   return redisUrl || process.env.NUXT_REDIS_URL || process.env.REDIS_URL || '';
 }
 
+// Троттлинг логов о недоступности Redis: BullMQ Queue/Worker эмитят 'error'
+// в цикле переподключения. Без обработчика это сырые стек-трейсы каждую
+// секунду; здесь — один сжатый warn на scope не чаще раза в минуту.
+const REDIS_ERROR_LOG_INTERVAL_MS = 60_000;
+const redisErrorLoggedAt = new Map<string, number>();
+
+export function logRedisConnectionError(scope: string, err: unknown): void {
+  const now = Date.now();
+  const last = redisErrorLoggedAt.get(scope) ?? 0;
+  if (now - last < REDIS_ERROR_LOG_INTERVAL_MS) return;
+  redisErrorLoggedAt.set(scope, now);
+  const message = err instanceof Error ? err.message : String(err);
+  console.warn(`[redis] ${scope}: соединение недоступно (${message})`);
+}
+
 export function getRedisClient(redisUrl?: string | null): Redis | null {
   const url = resolveRedisUrl(redisUrl);
   if (!url || url === failedUrl) return null;

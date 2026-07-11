@@ -122,7 +122,7 @@
               width="44"
               height="44"
               aria-hidden="true"
-            >
+            />
           </span>
           <span class="brand-text">{{ t('app.name') }}</span>
         </NuxtLink>
@@ -168,7 +168,7 @@
         </NuxtLink>
         <NuxtLink
           v-tooltip="isSidebarCollapsed ? t('layout.giftAction') : undefined"
-          to="/pricing?checkout=gift&plan=pro_monthly"
+          to="/pricing?checkout=gift&plan=pass_30d"
           class="nav-item nav-action"
           :aria-label="t('layout.giftAction')"
         >
@@ -219,8 +219,6 @@
       </section>
 
       <section class="sidebar-card sidebar-card--accent">
-        <p>{{ t('layout.planTitle') }}</p>
-        <span>{{ t('layout.planHint') }}</span>
         <NuxtLink to="/pricing" class="mini-cta">{{
           t('billing.upgrade')
         }}</NuxtLink>
@@ -283,10 +281,7 @@
         <component :is="item.icon" aria-hidden="true" />
         <small>{{ t(`nav.${item.key}`) }}</small>
       </NuxtLink>
-      <NuxtLink
-        to="/pricing?checkout=gift&plan=pro_monthly"
-        class="bottom-item"
-      >
+      <NuxtLink to="/pricing?checkout=gift&plan=pass_30d" class="bottom-item">
         <MagicWandIcon aria-hidden="true" />
         <small>{{ t('layout.giftAction') }}</small>
       </NuxtLink>
@@ -414,6 +409,9 @@
   .nav {
     display: grid;
     gap: 6px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding-right: 5px;
   }
 
   .nav-action {

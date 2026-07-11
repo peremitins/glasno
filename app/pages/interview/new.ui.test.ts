@@ -139,6 +139,12 @@ describe('interview new page UI structure', () => {
     expect(source).toContain('15 мин');
   });
 
+  it('aligns the mobile sticky start bar with the reserved bottom navigation area', () => {
+    expect(source).toMatch(
+      /@media \(max-width: 640px\)\s*{\s*\.sticky-start-bar\s*{[\s\S]*?bottom:\s*0;/
+    );
+  });
+
   it('constrains the teleported role menu to the viewport', () => {
     const globalStyle = source.slice(source.lastIndexOf('<style>'));
 

@@ -24,12 +24,19 @@
   const checkoutPlanId = ref('');
   const selectedPlanId = ref('');
   const giftMode = ref(false);
+  // Автопродление по умолчанию включено (ТЗ тарифы v2); в модалке чекаута
+  // пользователь видит дату/сумму списания и может снять галочку.
+  const autoRenew = ref(true);
   const recipientEmail = ref('');
   const senderName = ref('');
   const recipientEmailError = ref('');
   const senderNameError = ref('');
   const checkoutError = ref('');
   const checkoutModalOpen = ref(false);
+  // Токен и return_url встроенного виджета YooKassa: заполняются после
+  // создания платежа, переключают модалку с формы на виджет оплаты.
+  const checkoutToken = ref('');
+  const checkoutReturnUrl = ref('');
   const paymentHistoryRef = ref<InstanceType<typeof PaymentHistory> | null>(
     null
   );
@@ -63,29 +70,78 @@
     () => statusPending.value && !status.value
   );
 
-  // Тарифы и пакеты минут — разные сущности: тарифы дают доступ,
-  // пакеты — расходник к активному тарифу. Показываем отдельными блоками.
-  const mainPlans = computed(() =>
-    (plansData.value?.plans || []).filter((plan) => plan.kind !== 'addon')
+  // Один продукт «Полный доступ» с выбором срока + пакеты минут отдельным
+  // блоком (расходник к активному пропуску).
+  const passPlans = computed(() =>
+    (plansData.value?.plans || [])
+      .filter((plan) => plan.type === 'pass' && plan.isCheckoutEnabled)
+      .sort((a, b) => a.durationDays - b.durationDays)
   );
   const minutePacks = computed(() =>
-    (plansData.value?.plans || []).filter((plan) => plan.kind === 'addon')
+    (plansData.value?.plans || []).filter((plan) => plan.type === 'minute_pack')
   );
-  const selectedPlan = computed(() =>
-    (plansData.value?.plans || []).find(
-      (plan) => plan.id === selectedPlanId.value
-    ) ?? null
+
+  // Выбранный срок: по умолчанию — выделенный в каталоге (30 дней).
+  const selectedPassId = ref('');
+  watch(
+    passPlans,
+    (plans) => {
+      if (!plans.length) return;
+      if (plans.some((plan) => plan.id === selectedPassId.value)) return;
+      selectedPassId.value =
+        plans.find((plan) => plan.isHighlighted)?.id ?? plans[0]!.id;
+    },
+    { immediate: true }
   );
-  // Серверная правда: пакеты доступны при любом активном платном тарифе
-  // (Pro или разовый доступ), см. accessService.canBuyMore.
+  const selectedPass = computed(
+    () =>
+      passPlans.value.find((plan) => plan.id === selectedPassId.value) ?? null
+  );
+  const selectedPassPerDay = computed(() => {
+    const plan = selectedPass.value;
+    if (!plan) return 0;
+    return Math.round(plan.priceRub / plan.durationDays);
+  });
+
+  const selectedPlan = computed(
+    () =>
+      (plansData.value?.plans || []).find(
+        (plan) => plan.id === selectedPlanId.value
+      ) ?? null
+  );
+  // Серверная правда: пакеты доступны при активном пропуске,
+  // см. accessService.canBuyMore.
   const packsLocked = computed(
     () => !(status.value?.realtimeVoice.canBuyMore || status.value?.unlimited)
   );
 
-  // --- Блок «Текущий доступ» (по образцу Mentala) ---------------------
+  // --- Блок «Текущий доступ»: 4 состояния (ТЗ тарифы v2, раздел 4) ----
+  // admin / активный пропуск / пропуск истёк / трайл (не)использован.
+  const trialUsed = computed(
+    () =>
+      (status.value?.freeSessionsUsed ?? 0) >=
+      (status.value?.freeSessionsLimit ?? 1)
+  );
+  const accessState = computed(() => {
+    if (!status.value) return 'loading';
+    if (status.value.unlimited) return 'admin';
+    if (status.value.activeAccess) return 'active';
+    if (status.value.lastAccessEndedAt) return 'expired';
+    return trialUsed.value ? 'trial-used' : 'trial';
+  });
   const currentPlanLabel = computed(() => {
-    if (status.value?.unlimited) return t('pricing.adminAccess');
-    return status.value?.activePlanName || t('billing.free');
+    switch (accessState.value) {
+      case 'admin':
+        return t('pricing.adminAccess');
+      case 'active':
+        return status.value?.activeAccess?.planName ?? '';
+      case 'expired':
+        return t('pricing.accessExpiredTitle');
+      case 'trial-used':
+        return t('pricing.trialUsedTitle');
+      default:
+        return t('pricing.trialTitle');
+    }
   });
   const billingInfo = computed(() => status.value?.billing ?? null);
   const paymentMethodLabel = computed(() => {
@@ -119,6 +175,7 @@
 
   async function startCheckout(input: {
     planId: string;
+    autoRenew: boolean;
     gift?: { recipientEmail: string; senderName: string };
   }) {
     const planId = input.planId;
@@ -133,7 +190,11 @@
           body: input,
         }
       );
-      window.location.href = response.confirmationUrl;
+      // Не редиректим на страницу YooKassa — показываем встроенный виджет
+      // в той же модалке (карта, СБП, SberPay). return_url виджета вернёт
+      // пользователя на /pricing, где отработает обычная сверка статуса.
+      checkoutToken.value = response.confirmationToken;
+      checkoutReturnUrl.value = response.returnUrl;
     } catch (err) {
       if (err && typeof err === 'object' && 'data' in err) {
         const data = (err as { data?: { error?: { message?: string } } }).data;
@@ -152,29 +213,35 @@
     );
     if (!plan) return;
     selectedPlanId.value = planId;
-    giftMode.value = mode === 'gift' && plan.kind !== 'addon';
+    giftMode.value = mode === 'gift' && plan.type === 'pass';
+    // Каждое открытие чекаута — с включённым автопродлением по умолчанию.
+    autoRenew.value = true;
     recipientEmailError.value = '';
     senderNameError.value = '';
     checkoutError.value = '';
+    // Новый чекаут всегда начинается с формы, а не с прошлого виджета.
+    checkoutToken.value = '';
+    checkoutReturnUrl.value = '';
     checkoutModalOpen.value = true;
+  }
+
+  // Возврат от виджета к форме (кнопка «назад» при ошибке виджета).
+  function backToCheckoutForm() {
+    checkoutToken.value = '';
+    checkoutReturnUrl.value = '';
+    checkoutError.value = '';
   }
 
   async function submitCheckout() {
     if (!selectedPlan.value) return;
+    const isGift = giftMode.value && selectedPlan.value.type === 'pass';
     const normalizedEmail = recipientEmail.value.trim().toLowerCase();
     const normalizedSenderName = senderName.value.trim();
-    if (
-      giftMode.value && selectedPlan.value.kind !== 'addon' &&
-      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)
-    ) {
+    if (isGift && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
       recipientEmailError.value = t('pricing.giftEmailError');
       return;
     }
-    if (
-      giftMode.value &&
-      selectedPlan.value.kind !== 'addon' &&
-      !normalizedSenderName
-    ) {
+    if (isGift && !normalizedSenderName) {
       senderNameError.value = t('pricing.giftSenderNameError');
       return;
     }
@@ -182,7 +249,8 @@
     senderNameError.value = '';
     await startCheckout({
       planId: selectedPlan.value.id,
-      gift: giftMode.value && selectedPlan.value.kind !== 'addon'
+      autoRenew: !isGift && autoRenew.value,
+      gift: isGift
         ? {
             recipientEmail: normalizedEmail,
             senderName: normalizedSenderName,
@@ -193,6 +261,12 @@
 
   async function updateCheckoutModalOpen(value: boolean) {
     checkoutModalOpen.value = value;
+    if (!value) {
+      // Закрыли модалку — сбрасываем виджет, чтобы повторное открытие
+      // начиналось с формы.
+      checkoutToken.value = '';
+      checkoutReturnUrl.value = '';
+    }
     if (value || !route.query.checkout) return;
     const query = { ...route.query };
     delete query.checkout;
@@ -201,24 +275,15 @@
   }
 
   watch(
-    [
-      () => route.query.checkout,
-      () => route.query.plan,
-      () => plansData.value,
-    ],
+    [() => route.query.checkout, () => route.query.plan, () => plansData.value],
     ([checkoutMode, requestedPlan]) => {
       if (checkoutMode !== 'gift' || !plansData.value) return;
       const requestedPlanId =
-        typeof requestedPlan === 'string' ? requestedPlan : 'pro_monthly';
+        typeof requestedPlan === 'string' ? requestedPlan : '';
       const plan =
-        mainPlans.value.find(
-          (item) =>
-            item.id === requestedPlanId && item.isCheckoutEnabled
-        ) ??
-        mainPlans.value.find(
-          (item) => item.id === 'pro_monthly' && item.isCheckoutEnabled
-        ) ??
-        mainPlans.value.find((item) => item.isCheckoutEnabled);
+        passPlans.value.find((item) => item.id === requestedPlanId) ??
+        passPlans.value.find((item) => item.isHighlighted) ??
+        passPlans.value[0];
       if (plan) selectPlan(plan.id, 'gift');
     },
     { immediate: true }
@@ -273,7 +338,7 @@
         return {
           title: t('pricing.disableRenewConfirmTitle'),
           description: t('pricing.disableRenewConfirmText', {
-            date: formatDate(status.value?.subscriptionExpiresAt),
+            date: formatDate(status.value?.activeAccess?.expiresAt),
           }),
           confirmLabel: t('pricing.disableAutoRenew'),
           tone: 'default' as const,
@@ -365,7 +430,7 @@
           return;
         }
 
-        if (paymentStatus.hasActiveSubscription) {
+        if (paymentStatus.hasActivePaidAccess) {
           paymentStatusMessage.value = t('pricing.paymentActivated');
           await paymentHistoryRef.value?.refresh();
           return;
@@ -409,25 +474,32 @@
       class="status-skeleton"
       :heights="[132]"
     />
-    <!-- Текущий доступ: тариф, срок, минуты, автосписание, карта -->
+    <!-- Текущий доступ, 4 состояния (ТЗ тарифы v2, раздел 4): активный
+         пропуск / пропуск истёк / трайл не использован / трайл исчерпан -->
     <section v-else class="status glass-frame glass-frame--soft">
       <div class="status-main">
         <p class="panel-label">{{ t('pricing.current') }}</p>
         <h2>{{ currentPlanLabel }}</h2>
-        <p v-if="status?.activePlanId" class="status-line">
+        <p v-if="accessState === 'active'" class="status-line">
           {{
             t('pricing.activeUntil', {
-              date: formatDate(status.subscriptionExpiresAt),
+              date: formatDate(status?.activeAccess?.expiresAt),
             })
           }}
         </p>
-        <p v-else-if="!status?.unlimited" class="status-line">
+        <p v-else-if="accessState === 'expired'" class="status-line">
           {{
-            t('pricing.freeUsed', {
-              used: status?.freeSessionsUsed ?? 0,
-              limit: status?.freeSessionsLimit ?? 1,
+            t('pricing.accessExpiredAt', {
+              plan: status?.lastAccessPlanName ?? '',
+              date: formatDate(status?.lastAccessEndedAt),
             })
           }}
+        </p>
+        <p v-else-if="accessState === 'trial'" class="status-line">
+          {{ t('pricing.trialHint') }}
+        </p>
+        <p v-else-if="accessState === 'trial-used'" class="status-line">
+          {{ t('pricing.trialUsedHint') }}
         </p>
         <p v-if="showMinutes" class="status-line status-line--minutes">
           {{
@@ -437,6 +509,23 @@
             })
           }}
         </p>
+        <div
+          v-if="accessState === 'expired' || accessState === 'trial-used'"
+          class="status-actions"
+        >
+          <a href="#plans" class="secondary-action secondary-action--compact">
+            {{
+              accessState === 'expired'
+                ? t('pricing.renewCta')
+                : t('pricing.choosePassCta')
+            }}
+          </a>
+        </div>
+        <div v-else-if="accessState === 'trial'" class="status-actions">
+          <NuxtLink to="/" class="secondary-action secondary-action--compact">
+            {{ t('pricing.trialCta') }}
+          </NuxtLink>
+        </div>
       </div>
 
       <div v-if="billingInfo" class="status-billing">
@@ -454,9 +543,9 @@
         </p>
         <p v-else class="status-line">
           {{
-            status?.hasActiveSubscription
+            status?.hasActivePaidAccess
               ? t('pricing.autoRenewOff', {
-                  date: formatDate(status?.subscriptionExpiresAt),
+                  date: formatDate(status?.activeAccess?.expiresAt),
                 })
               : t('pricing.autoRenewNone')
           }}
@@ -493,9 +582,7 @@
             {{ t('pricing.disableAutoRenew') }}
           </button>
           <button
-            v-else-if="
-              billingInfo.paymentMethod && status?.hasActiveSubscription
-            "
+            v-else-if="billingInfo.paymentMethod && status?.hasActivePaidAccess"
             type="button"
             class="secondary-action secondary-action--compact"
             :disabled="cardActionPending"
@@ -543,90 +630,109 @@
       {{ errorMessage }}
     </p>
 
-    <section
-      id="plans"
-      class="plans"
-    >
+    <!-- Единый продукт «Полный доступ»: одна карточка, выбор срока -->
+    <section id="plans" class="plans">
       <GlassSkeletonStack
         v-if="plansInitialPending || statusInitialPending"
         class="plans-skeleton"
-        :heights="[320, 320, 320]"
+        :heights="[420]"
       />
-      <template v-else>
-        <article
-          v-for="plan in mainPlans"
-          :key="plan.id"
-          class="plan glass-frame glass-frame--soft"
-          :class="{ 'plan--highlighted': plan.isHighlighted }"
+      <article
+        v-else-if="selectedPass"
+        class="pass-card glass-frame glass-frame--soft"
+      >
+        <header class="plan-header pass-card-header">
+          <h2>{{ t('pricing.fullAccessTitle') }}</h2>
+          <p class="plan-description">{{ t('pricing.fullAccessSubtitle') }}</p>
+        </header>
+
+        <div
+          class="duration-picker"
+          role="radiogroup"
+          :aria-label="t('pricing.durationLabel')"
         >
-          <span v-if="plan.badge" class="badge">{{ plan.badge }}</span>
-          <header class="plan-header">
-            <h2>{{ plan.name }}</h2>
-            <p class="plan-description">{{ plan.description }}</p>
-          </header>
-          <div class="price">
-            <strong>{{ formatPrice(plan.priceRub) }} ₽</strong>
-            <span v-if="plan.interval === 'month'">
-              / {{ t('pricing.month') }}</span
-            >
-            <span v-else-if="plan.priceRub > 0">{{
-              t('pricing.oneTimePayment')
-            }}</span>
-          </div>
-          <ul class="features">
-            <li v-for="feature in plan.features" :key="feature">
-              <CheckIcon class="feature-check" aria-hidden="true" />
-              <span>{{ feature }}</span>
-            </li>
-          </ul>
-          <div class="plan-cta">
-            <button
-              v-if="
-                plan.isCheckoutEnabled &&
-                !(status?.activePlanId === 'pro_monthly' && plan.id === 'single_prep')
-              "
-              class="primary-action primary-action--compact button-loader-host"
-              type="button"
-              :disabled="
-                Boolean(checkoutPlanId) ||
-                statusPending ||
-                status?.needsAuthForCheckout
-              "
-              @click="selectPlan(plan.id)"
-            >
-              <ButtonLoader v-if="checkoutPlanId === plan.id" />
-              <span
-                class="button-loader-content"
-                :class="{
-                  'button-loader-content--loading': checkoutPlanId === plan.id,
-                }"
-              >
-                {{ t('pricing.checkout') }}
-              </span>
-            </button>
+          <button
+            v-for="plan in passPlans"
+            :key="plan.id"
+            type="button"
+            role="radio"
+            class="duration-option"
+            :class="{
+              'duration-option--selected': plan.id === selectedPassId,
+            }"
+            :aria-checked="plan.id === selectedPassId"
+            @click="selectedPassId = plan.id"
+          >
+            <strong>{{ plan.durationDays }}</strong>
+            <span>{{ t('pricing.daysShort') }}</span>
+            <em v-if="plan.badge" class="duration-badge">{{ plan.badge }}</em>
+          </button>
+        </div>
+
+        <div class="price">
+          <strong>{{ formatPrice(selectedPass.priceRub) }} ₽</strong>
+          <span>
+            {{
+              t('pricing.perDay', { amount: formatPrice(selectedPassPerDay) })
+            }}
+          </span>
+        </div>
+
+        <ul class="features">
+          <li v-for="feature in selectedPass.features" :key="feature">
+            <CheckIcon class="feature-check" aria-hidden="true" />
+            <span>{{ feature }}</span>
+          </li>
+        </ul>
+
+        <div class="plan-cta">
+          <button
+            class="primary-action primary-action--compact button-loader-host"
+            type="button"
+            :disabled="
+              Boolean(checkoutPlanId) ||
+              statusPending ||
+              status?.needsAuthForCheckout
+            "
+            @click="selectPlan(selectedPass.id)"
+          >
+            <ButtonLoader v-if="checkoutPlanId === selectedPass.id" />
             <span
-              v-else
-              class="current secondary-action secondary-action--compact"
+              class="button-loader-content"
+              :class="{
+                'button-loader-content--loading':
+                  checkoutPlanId === selectedPass.id,
+              }"
             >
               {{
-                status?.hasActiveSubscription || status?.activePlanId
-                  ? t('pricing.freePlanIncluded')
-                  : t('pricing.currentPlan')
+                status?.hasActivePaidAccess
+                  ? t('pricing.extendCta', {
+                      amount: formatPrice(selectedPass.priceRub),
+                    })
+                  : t('pricing.buyCta', {
+                      amount: formatPrice(selectedPass.priceRub),
+                    })
               }}
             </span>
-          </div>
-        </article>
-      </template>
+          </button>
+          <!-- Автопродление по умолчанию включено: информируем у кнопки,
+               управление — галочка в чекауте и тумблер в «Текущем доступе». -->
+          <p class="plan-note">{{ t('pricing.autoRenewNote') }}</p>
+          <p v-if="status?.hasActivePaidAccess" class="plan-note">
+            {{ t('pricing.extendNote') }}
+          </p>
+        </div>
+      </article>
     </section>
 
     <section
       v-if="!plansInitialPending && !statusInitialPending && minutePacks.length"
       class="packs-section"
     >
-      <div class="packs-header">
+      <header class="packs-header glass-frame glass-frame--soft">
         <h2>{{ t('pricing.minutePacksTitle') }}</h2>
         <p class="muted">{{ t('pricing.minutePacksSubtitle') }}</p>
-      </div>
+      </header>
       <p
         v-if="packsLocked"
         class="notice glass-frame glass-alert glass-alert--accent"
@@ -690,18 +796,27 @@
       :open="checkoutModalOpen"
       :plan="selectedPlan"
       :gift="giftMode"
+      :auto-renew="autoRenew"
       :recipient-email="recipientEmail"
       :sender-name="senderName"
       :recipient-email-error="recipientEmailError"
       :sender-name-error="senderNameError"
       :checkout-error="checkoutError"
       :pending="Boolean(checkoutPlanId)"
+      :confirmation-token="checkoutToken"
+      :return-url="checkoutReturnUrl"
       @update:open="updateCheckoutModalOpen"
       @update:gift="giftMode = $event"
+      @update:auto-renew="autoRenew = $event"
       @update:recipient-email="recipientEmail = $event"
       @update:sender-name="senderName = $event"
-      @clear-error="recipientEmailError = ''; senderNameError = ''; checkoutError = ''"
+      @clear-error="
+        recipientEmailError = '';
+        senderNameError = '';
+        checkoutError = '';
+      "
       @submit="submitCheckout"
+      @back="backToCheckoutForm"
     />
 
     <ConfirmModal
@@ -744,7 +859,7 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: clamp(16px, 2.4vw, 32px);
     align-items: start;
-    padding: clamp(8px, 2.2vw, 26px);
+    padding: clamp(15px, 2.2vw, 26px);
   }
 
   .status-main,
@@ -802,12 +917,9 @@
     color: var(--danger);
   }
 
-  /* --- Сетка тарифов -------------------------------------------------- */
+  /* --- Карточка «Полный доступ» --------------------------------------- */
   .plans {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: clamp(12px, 1.6vw, 16px);
-    align-items: stretch;
     scroll-margin-top: 18px;
   }
 
@@ -816,10 +928,74 @@
     width: 100%;
   }
 
-  .plans-skeleton {
-    grid-column: 1 / -1;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: clamp(12px, 1.6vw, 16px);
+  .pass-card {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    padding: clamp(15px, 2.2vw, 26px);
+  }
+
+  .pass-card-header {
+    padding-right: 0;
+  }
+
+  /* Селектор срока: сегмент-контрол из шести точек. */
+  .duration-picker {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .duration-option {
+    position: relative;
+    display: grid;
+    justify-items: center;
+    gap: 2px;
+    padding: 12px 4px 10px;
+    border: 1px solid var(--glass-border);
+    border-radius: 14px;
+    background: var(--surface-soft);
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: border-color var(--motion-fast) var(--ease-out),
+      background var(--motion-fast) var(--ease-out);
+  }
+
+  .duration-option:hover {
+    border-color: var(--glass-border-strong);
+  }
+
+  .duration-option--selected {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 12%, var(--surface-soft));
+    color: var(--text-primary);
+  }
+
+  .duration-option strong {
+    font-family: var(--font-mono);
+    font-size: 18px;
+    line-height: 1;
+    color: inherit;
+  }
+
+  .duration-option span {
+    font-size: 11px;
+  }
+
+  .duration-badge {
+    position: absolute;
+    top: -8px;
+    left: 50%;
+    transform: translateX(-50%);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--accent) 18%, var(--surface-solid));
+    color: var(--accent-2);
+    font-family: var(--font-mono);
+    font-style: normal;
+    padding: 2px 7px;
+    font-size: 9px;
+    font-weight: 900;
+    white-space: nowrap;
   }
 
   /* Карточка: flex-колонка, фичи растягиваются, CTA прижата к низу.
@@ -962,6 +1138,10 @@
     margin-top: 4px;
   }
 
+  .packs-header {
+    padding: clamp(15px, 2.2vw, 20px);
+  }
+
   .packs {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -970,15 +1150,7 @@
   }
 
   /* --- Адаптив ---------------------------------------------------------- */
-  @media (max-width: 1100px) {
-    .plans {
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-    }
-  }
-
   @media (max-width: 900px) {
-    .plans,
-    .plans-skeleton,
     .packs {
       grid-template-columns: 1fr;
     }
@@ -987,6 +1159,10 @@
       grid-template-columns: 1fr;
     }
 
+    .duration-picker {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
   }
 
   @media (max-width: 640px) {
@@ -994,6 +1170,5 @@
     .primary-action {
       width: 100%;
     }
-
   }
 </style>

@@ -10,7 +10,7 @@ function gift(attempts = 1) {
     purchaserUserId: 'user_1',
     recipientEmail: 'friend@example.com',
     senderName: 'Николай',
-    planId: 'pro_monthly',
+    planId: 'pass_30d',
     status: 'ready' as const,
     paidAt: NOW,
     claimExpiresAt: new Date('2027-01-01T10:00:00.000Z'),

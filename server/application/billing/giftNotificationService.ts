@@ -2,7 +2,7 @@ import type {
   BillingRepository,
   GiftEntitlementRecord,
 } from '@/server/interface/billingRepository';
-import { getBillingPlan } from './plans';
+import { findBillingPlan } from './plans';
 
 interface GiftEmailInput {
   to: string;
@@ -62,7 +62,10 @@ export class GiftNotificationService {
 
   private async send(gift: GiftEntitlementRecord): Promise<boolean> {
     if (!gift.claimExpiresAt) return false;
-    const plan = getBillingPlan(gift.planId);
+    // Подарок на несуществующий тариф (старые dev-данные) не должен ронять
+    // весь обход — уходит в ретраи и гаснет после пятой попытки.
+    const plan = findBillingPlan(gift.planId);
+    if (!plan) return false;
     const loginUrl = new URL('/auth', normalizedBaseUrl(this.deps.appUrl));
     loginUrl.searchParams.set('next', '/pricing?gift=received');
     return await this.deps.sendEmail({
