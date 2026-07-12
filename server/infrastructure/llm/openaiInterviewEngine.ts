@@ -25,12 +25,16 @@ import type {
   InterviewFocus,
   InterviewTrainingMode,
   QuestionHintDetails,
+  QuestionPreferenceStatus,
+  QuestionSemanticPassport,
 } from '@/shared/dto';
+import { QuestionSemanticPassportDto } from '@/shared/dto';
 import {
   sendOpenAiResponsesRequest,
   type OpenAiResponsesPurpose,
 } from './openaiResponsesClient';
 import { compactGeneratedText } from './textNormalization';
+import { logger } from '@/server/utils/logger';
 
 // Извлекает usage из ответа Responses API в наши поля.
 export function extractUsageAmounts(response: any): {
@@ -158,6 +162,88 @@ export function normalizeSampleAnswerHint(value: unknown): {
       700
     ),
   };
+}
+
+export interface GeneratedQuestionCandidate {
+  question: string;
+  semantic: QuestionSemanticPassport;
+  matchesPreferenceIds: string[];
+}
+
+export interface QuestionGenerationPreference {
+  id: string;
+  status: Extract<QuestionPreferenceStatus, 'repeat' | 'hidden'>;
+  question: string;
+  semantic: QuestionSemanticPassport | null;
+}
+
+export function selectGeneratedQuestionCandidate(
+  candidates: GeneratedQuestionCandidate[],
+  preferences: QuestionGenerationPreference[]
+): GeneratedQuestionCandidate | null {
+  return (
+    candidates.find((candidate) => {
+      if (candidate.matchesPreferenceIds.length > 0) return false;
+      return !preferences.some((preference) =>
+        semanticConceptsConflict(candidate.semantic, preference.semantic)
+      );
+    }) ?? null
+  );
+}
+
+function normalizeGeneratedQuestionCandidates(
+  raw: Record<string, unknown>
+): GeneratedQuestionCandidate[] {
+  if (!Array.isArray(raw.candidates)) return [];
+  return raw.candidates
+    .map((value): GeneratedQuestionCandidate | null => {
+      if (!value || typeof value !== 'object') return null;
+      const candidate = value as Record<string, unknown>;
+      const question =
+        typeof candidate.question === 'string' ? candidate.question.trim() : '';
+      const semantic = QuestionSemanticPassportDto.safeParse(candidate.semantic);
+      if (!question || !semantic.success) return null;
+      const matchesPreferenceIds = Array.isArray(candidate.matchesPreferenceIds)
+        ? candidate.matchesPreferenceIds
+            .filter((id): id is string => typeof id === 'string')
+            .map((id) => id.trim())
+            .filter(Boolean)
+        : [];
+      return { question, semantic: semantic.data, matchesPreferenceIds };
+    })
+    .filter((item): item is GeneratedQuestionCandidate => Boolean(item))
+    .slice(0, 2);
+}
+
+function formatQuestionPreferences(
+  preferences: QuestionGenerationPreference[]
+): string {
+  if (!preferences.length) return 'Нет.';
+  return preferences
+    .map((preference) => {
+      const semantic = preference.semantic;
+      const concept = semantic
+        ? `${semantic.conceptLabel}; key=${semantic.conceptKey}; tags=${semantic.topicTags.join(',') || 'нет'}`
+        : preference.question;
+      return `- id=${preference.id}; status=${preference.status}; concept=${concept}`;
+    })
+    .join('\n');
+}
+
+function semanticConceptsConflict(
+  candidate: QuestionSemanticPassport,
+  saved: QuestionSemanticPassport | null
+): boolean {
+  if (!saved) return false;
+  if (candidate.conceptKey === saved.conceptKey) return true;
+  const candidateTags = new Set(candidate.topicTags);
+  const savedTags = new Set(saved.topicTags);
+  if (!candidateTags.size || !savedTags.size) return false;
+  let intersection = 0;
+  for (const tag of candidateTags) {
+    if (savedTags.has(tag)) intersection += 1;
+  }
+  return intersection / Math.min(candidateTags.size, savedTags.size) >= 0.75;
 }
 
 function formatTurns(turns: InterviewTurnRecord[]): string {
@@ -453,24 +539,72 @@ export class OpenAiInterviewEngine implements InterviewEngine {
 
   async generateQuestion(
     params: GenerateQuestionParams
-  ): Promise<{ question: string }> {
+  ): Promise<{
+    question: string;
+    semantic?: QuestionSemanticPassport | null;
+  }> {
     const isInterviewerTraining =
       readTrainingMode(params.session) === 'interviewer';
-    const raw = await this.requestJson({
-      instruction: isInterviewerTraining
-        ? 'Ты редактор сценария Гласно. Сгенерируй короткую стартовую или переходную реплику AI-кандидата для тренировки интервьюера. Реплика должна дать пользователю повод задать следующий вопрос, но не проводить интервью за него. Не повторяй предыдущие реплики. Верни строго JSON вида {"question":"..."}'
-        : 'Ты профессиональный интервьюер. Сгенерируй следующий краткий вопрос для собеседования. Не повторяй предыдущие вопросы. Верни строго JSON вида {"question":"..."}',
-      userText: `${sessionContext(params)}\n\nИстория:\n${formatTurns(params.turns)}`,
-      maxOutputTokens: 220,
-      kind: 'question_gen',
-      context: usageContext(params.session),
-    });
-
-    const question = typeof raw.question === 'string' ? raw.question.trim() : '';
-    if (!question) {
-      throw apiError('E_UPSTREAM', 'Провайдер не вернул текст вопроса');
+    if (isInterviewerTraining) {
+      const raw = await this.requestJson({
+        instruction:
+          'Ты редактор сценария Гласно. Сгенерируй короткую стартовую или переходную реплику AI-кандидата для тренировки интервьюера. Реплика должна дать пользователю повод задать следующий вопрос, но не проводить интервью за него. Не повторяй предыдущие реплики. Верни строго JSON вида {"question":"..."}',
+        userText: `${sessionContext(params)}\n\nИстория:\n${formatTurns(params.turns)}`,
+        maxOutputTokens: 220,
+        kind: 'question_gen',
+        context: usageContext(params.session),
+      });
+      const question =
+        typeof raw.question === 'string' ? raw.question.trim() : '';
+      if (!question) {
+        throw apiError('E_UPSTREAM', 'Провайдер не вернул текст вопроса');
+      }
+      return { question };
     }
-    return { question };
+
+    const preferences = (params.questionPreferences ?? []).slice(0, 40);
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const raw = await this.requestJson({
+        instruction:
+          'Ты профессиональный интервьюер. Предложи ДВА разных кратких вопроса для собеседования. Не повторяй предыдущие вопросы и не создавай смысловые аналоги запрещённых или назначенных на повторение концептов. ' +
+          'Для каждого вопроса верни смысловой паспорт. conceptKey — короткий стабильный snake_case ключ смысла, conceptLabel — краткое название проверяемого знания, topicTags — 1–5 смысловых тегов, requiredContextTags — только технологии, без которых вопрос теряет смысл (для общего вопроса пустой массив), focus — одно из hr_screening, professional, behavioral, salary_negotiation или null. ' +
+          'Если кандидат совпадает с одним из переданных правил, перечисли его id в matchesPreferenceIds; такой кандидат всё равно нужен как сигнал проверки. ' +
+          'Верни строго JSON вида {"candidates":[{"question":"...","semantic":{"conceptKey":"...","conceptLabel":"...","topicTags":["..."],"requiredContextTags":["..."],"focus":"professional"},"matchesPreferenceIds":[]},{"question":"...","semantic":{...},"matchesPreferenceIds":[]}]}.',
+        userText: [
+          sessionContext(params),
+          '',
+          `История:\n${formatTurns(params.turns)}`,
+          '',
+          `Допустимые теги специализации для requiredContextTags: ${(params.questionContextTags ?? []).join(', ') || 'нет — используй пустой массив'}.`,
+          '',
+          `Правила пользователя:\n${formatQuestionPreferences(preferences)}`,
+          attempt > 0
+            ? '\nПредыдущая пара не прошла локальную проверку. Выбери две другие темы.'
+            : '',
+        ].join('\n'),
+        maxOutputTokens: 620,
+        kind: 'question_gen',
+        context: usageContext(params.session),
+      });
+      const candidates = normalizeGeneratedQuestionCandidates(raw);
+      const selected = selectGeneratedQuestionCandidate(candidates, preferences);
+      if (selected) {
+        return { question: selected.question, semantic: selected.semantic };
+      }
+      logger.warn(
+        {
+          interviewSessionId: params.session.id,
+          attempt: attempt + 1,
+          candidateCount: candidates.length,
+        },
+        'Generated interview questions conflicted with user preferences'
+      );
+    }
+
+    throw apiError(
+      'E_UPSTREAM',
+      'Не удалось подобрать вопрос без запрещённых повторов'
+    );
   }
 
   async generateQuestionHints(

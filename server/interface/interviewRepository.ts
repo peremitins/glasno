@@ -73,7 +73,7 @@ export interface CreateInterviewTurnRecordInput {
   followUpForTurnId?: string | null;
   metadata?: {
     planItemId?: string | null;
-    questionSource?: 'glasno' | 'user';
+    questionSource?: 'glasno' | 'user' | 'repeat';
     hintPack?: QuestionHintPack | null;
     [key: string]: unknown;
   } | null;

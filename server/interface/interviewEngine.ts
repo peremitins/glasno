@@ -3,6 +3,7 @@ import type {
   InterviewLevel,
   InterviewQuestionSourceMode,
   QuestionHintDetails,
+  QuestionSemanticPassport,
 } from '@/shared/dto';
 import type {
   InterviewSessionRecord,
@@ -13,6 +14,13 @@ export interface GenerateQuestionParams {
   session: InterviewSessionRecord;
   turns: InterviewTurnRecord[];
   input: CreateInterviewSessionRequest;
+  questionPreferences?: Array<{
+    id: string;
+    status: 'repeat' | 'hidden';
+    question: string;
+    semantic: QuestionSemanticPassport | null;
+  }>;
+  questionContextTags?: string[];
 }
 
 export interface EvaluateAnswerParams {
@@ -63,7 +71,10 @@ export interface InterviewEngine {
   normalizeCustomQuestions(
     params: NormalizeCustomQuestionsParams
   ): Promise<{ questions: string[] }>;
-  generateQuestion(params: GenerateQuestionParams): Promise<{ question: string }>;
+  generateQuestion(params: GenerateQuestionParams): Promise<{
+    question: string;
+    semantic?: QuestionSemanticPassport | null;
+  }>;
   generateQuestionHints(
     params: GenerateQuestionHintsParams
   ): Promise<QuestionHintDetails>;

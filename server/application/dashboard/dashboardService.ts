@@ -17,8 +17,8 @@ import { FREE_SESSIONS_LIMIT } from '@/server/application/billing/plans';
 const QUICK_SCENARIOS: DashboardQuickScenario[] = [
   {
     id: 'hr-screening',
-    title: 'HR-экран',
-    subtitle: 'Мотивация, ожидания и базовый скрининг перед этапом с руководителем.',
+    title: 'Разговор с HR',
+    subtitle: 'Мотивация, ожидания и первый отсев перед встречей с руководителем.',
     sourceType: 'profession',
     focus: 'hr_screening',
     level: 'middle',
@@ -26,8 +26,8 @@ const QUICK_SCENARIOS: DashboardQuickScenario[] = [
   },
   {
     id: 'professional',
-    title: 'Проф. вопросы',
-    subtitle: 'Хард-скиллы и практические задачи по вашей роли.',
+    title: 'Вопросы по профессии',
+    subtitle: 'Практические задачи и инструменты вашей профессии.',
     sourceType: 'profession',
     focus: 'professional',
     level: 'middle',
@@ -35,8 +35,8 @@ const QUICK_SCENARIOS: DashboardQuickScenario[] = [
   },
   {
     id: 'behavioral',
-    title: 'Кейсы STAR',
-    subtitle: 'Кейсы из опыта по структуре STAR: ситуация, задача, действие, результат.',
+    title: 'Опыт и кейсы',
+    subtitle: 'Истории из работы: ситуация, ваши действия и результат.',
     sourceType: 'profession',
     focus: 'behavioral',
     level: 'middle',
@@ -44,8 +44,8 @@ const QUICK_SCENARIOS: DashboardQuickScenario[] = [
   },
   {
     id: 'salary-negotiation',
-    title: 'Оффер и зарплата',
-    subtitle: 'Обсуждение оффера, аргументация цифры и работа с возражениями.',
+    title: 'Зарплата и оффер',
+    subtitle: 'Как назвать цифру, обосновать её и ответить на возражения.',
     sourceType: 'profession',
     focus: 'salary_negotiation',
     level: 'middle',

@@ -3,7 +3,7 @@
   // замена системному window.confirm (паттерн AlertDialog из Mentala).
   import ButtonLoader from '@/app/components/design/ButtonLoader.vue';
 
-  defineProps<{
+  const props = defineProps<{
     open: boolean;
     title: string;
     description?: string;
@@ -18,6 +18,8 @@
     (e: 'update:open', value: boolean): void;
     (e: 'confirm'): void;
   }>();
+
+  useBodyScrollLock(() => props.open);
 
   function close() {
     emit('update:open', false);
@@ -80,13 +82,18 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 16px;
+    overflow: hidden;
+    padding: clamp(16px, 5vh, 44px) 16px;
     background: color-mix(in srgb, #000 62%, transparent);
     backdrop-filter: blur(4px);
   }
 
   .confirm {
     width: min(400px, 100%);
+    max-height: 100%;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
     display: grid;
     gap: 12px;
     padding: clamp(20px, 3vw, 26px);

@@ -16,6 +16,8 @@
 
   const guide = computed(() => buildBrowserPermissionGuide(props.subject));
 
+  useBodyScrollLock(() => props.open);
+
   function close() {
     emit('update:open', false);
   }
@@ -74,15 +76,21 @@
     position: fixed;
     inset: 0;
     z-index: 1000;
-    display: grid;
-    place-items: center;
-    padding: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    padding: clamp(16px, 5vh, 44px) 18px;
     background: color-mix(in srgb, var(--app-bg) 72%, transparent);
     backdrop-filter: blur(4px);
   }
 
   .permission-dialog {
     width: min(460px, 100%);
+    max-height: 100%;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
     color: var(--text-primary);
     padding: 20px;
   }

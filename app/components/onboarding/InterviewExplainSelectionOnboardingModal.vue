@@ -13,6 +13,8 @@
     (e: 'close' | 'complete'): void;
   }>();
 
+  useBodyScrollLock(() => props.open);
+
   const dialog = ref<HTMLElement | null>(null);
   const videoError = ref(false);
   const videoSrc = '/onboarding/interview-explain-selection.mp4';
@@ -153,6 +155,7 @@
     z-index: 320;
     display: grid;
     place-items: center;
+    overflow: hidden;
     padding: clamp(12px, 2.2vw, 28px);
     background: radial-gradient(
         circle at 18% 8%,
@@ -174,8 +177,10 @@
     grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.85fr);
     gap: clamp(16px, 2.2vw, 28px);
     width: min(1120px, 100%);
-    max-height: min(92dvh, 820px);
-    overflow: hidden;
+    max-height: 100%;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
     padding: clamp(14px, 1.8vw, 22px);
     border: 1px solid var(--glass-border-strong);
     border-radius: var(--radius-lg);

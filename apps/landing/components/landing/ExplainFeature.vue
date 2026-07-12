@@ -22,7 +22,8 @@
           :src="explain.videoSrc"
           :caption="explain.videoCaption"
           sound-hint="Включите звук"
-          aspect="4 / 3"
+          :show-sound-control="false"
+          aspect="2076 / 1080"
           hide-soon
         >
           <template #poster>
@@ -74,6 +75,11 @@
     grid-template-columns: minmax(0, 0.82fr) minmax(0, 1.18fr);
     gap: clamp(32px, 5vw, 72px);
     align-items: center;
+  }
+
+  .xpl__copy,
+  .xpl__stage {
+    min-width: 0;
   }
 
   .xpl__copy {
@@ -171,16 +177,11 @@
 
   @media (max-width: 899px) {
     .xpl__inner {
-      grid-template-columns: 1fr;
+      grid-template-columns: minmax(0, 1fr);
       gap: 36px;
     }
     .xpl__copy {
       position: static;
-    }
-    /* на узком экране плотному постеру нужно больше высоты, чем 4/3 */
-    .xpl__stage :deep(.vp__stage) {
-      aspect-ratio: auto;
-      min-height: 440px;
     }
   }
 </style>

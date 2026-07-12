@@ -26,14 +26,18 @@
           data-reveal
         >
           <div class="plan__head">
+            <span
+              class="plan__badge"
+              :class="{ 'plan__badge--empty': !plan.badge }"
+              >{{ plan.badge || '·' }}</span
+            >
             <h3 class="plan__name">{{ plan.name }}</h3>
-            <span v-if="plan.badge" class="plan__badge">{{ plan.badge }}</span>
           </div>
           <p class="plan__desc">{{ plan.description }}</p>
 
           <div class="plan__price">
-            <strong class="l-tnum">{{ plan.price }}</strong>
-            <span>{{ plan.period }}</span>
+            <strong class="plan__price-value l-tnum">{{ plan.price }}</strong>
+            <span class="plan__price-period">{{ plan.period }}</span>
           </div>
 
           <a
@@ -118,17 +122,19 @@
     box-shadow: var(--l-shadow-warm);
   }
 
-  /* Шапка карточки: название + бейдж в одном ряду, бейдж в потоке */
+  /* Шапка карточки: бейдж отдельной строкой над названием — так название
+     получает всю ширину и укладывается в одну строку. Для карточек без
+     бейджа строка резервируется (--empty), чтобы высоты совпадали. */
   .plan__head {
     display: flex;
-    justify-content: space-between;
+    flex-direction: column;
     align-items: flex-start;
     gap: 12px;
   }
 
   .plan__badge {
-    position: static;
     flex: none;
+    max-width: 100%;
     white-space: nowrap;
     font-size: var(--l-fs-label);
     letter-spacing: 0.02em;
@@ -141,13 +147,14 @@
     color: var(--l-text-soft);
     background: oklch(1 0 0 / 0.06);
   }
+  .plan__badge--empty {
+    visibility: hidden;
+  }
 
   .plan__name {
     font-size: var(--l-fs-h3);
     font-weight: 600;
-    /* Резерв под 2 строки: длинное название с бейджем переносится,
-       без резерва CTA в соседних карточках уезжают по вертикали */
-    min-height: 2lh;
+    line-height: 1.2;
   }
   .plan__desc {
     margin-top: 8px;
@@ -156,18 +163,22 @@
     font-size: var(--l-fs-sm);
   }
 
+  /* Цена над периодом: период не отжимает ширину, цена не переносится */
   .plan__price {
     display: flex;
-    align-items: baseline;
-    gap: 8px;
-    margin-block: 22px 20px;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    margin-block: 20px;
   }
-  .plan__price strong {
-    font-size: clamp(2rem, 3vw, 2.6rem);
+  .plan__price-value {
+    font-size: clamp(1.85rem, 2.4vw, 2.25rem);
     font-weight: 700;
     letter-spacing: -0.03em;
+    line-height: 1.05;
+    white-space: nowrap;
   }
-  .plan__price span {
+  .plan__price-period {
     color: var(--l-text-mut);
     font-size: var(--l-fs-sm);
   }

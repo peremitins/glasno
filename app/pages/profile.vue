@@ -25,6 +25,8 @@
   const deleteDialogOpen = ref(false);
   const deleteError = ref('');
   const isDeletingAccount = ref(false);
+
+  useBodyScrollLock(() => deleteDialogOpen.value);
   const profileAuthAction = ref<'send-code' | 'verify-code' | 'logout' | null>(
     null
   );
@@ -42,6 +44,9 @@
   );
 
   const accountEmail = computed(() => auth.user?.email || '—');
+  // Telegram-интеграция пока не входит в публичный продукт. Данные и строку
+  // сохраняем, чтобы включить её без миграций после запуска интеграции.
+  const showTelegramIdentity = false;
   const telegramIdentity = computed(
     () => auth.user?.telegramUsername || auth.user?.telegramId || '—'
   );
@@ -191,7 +196,7 @@
             <dt>{{ t('profile.account.userId') }}</dt>
             <dd>{{ auth.user?.id }}</dd>
           </div>
-          <div>
+          <div v-if="showTelegramIdentity">
             <dt>{{ t('profile.account.telegram') }}</dt>
             <dd>{{ telegramIdentity }}</dd>
           </div>
@@ -205,7 +210,7 @@
           <p class="panel-label">{{ t('profile.sections.subscription') }}</p>
           <h3>
             {{
-              billingStatus?.hasActivePaidAccess
+              billingStatus?.canCreateInterview
                 ? t('billing.active')
                 : t('billing.inactive')
             }}
@@ -824,9 +829,11 @@
     position: fixed;
     inset: 0;
     z-index: 80;
-    display: grid;
-    place-items: center;
-    padding: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    padding: clamp(16px, 5vh, 44px) 20px;
     background: color-mix(in srgb, var(--app-bg) 72%, transparent);
     backdrop-filter: blur(18px);
   }
@@ -835,6 +842,10 @@
     display: grid;
     gap: 18px;
     width: min(460px, 100%);
+    max-height: 100%;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
     padding: clamp(18px, 2vw, 24px);
   }
 

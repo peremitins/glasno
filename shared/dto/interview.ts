@@ -30,7 +30,7 @@ export const InterviewTurnKindDto = z.enum(['main', 'clarification']);
 export const InterviewLanguageDto = z.enum(['ru', 'en']);
 export const InterviewSessionGoalDto = z.enum(['quick', 'standard', 'deep']);
 export const InterviewQuestionSourceModeDto = z.enum(['glasno', 'mixed', 'custom']);
-export const InterviewQuestionSourceDto = z.enum(['glasno', 'user']);
+export const InterviewQuestionSourceDto = z.enum(['glasno', 'user', 'repeat']);
 export const InterviewResponseModeDto = z.enum(['text', 'dictation', 'realtime']);
 export const InterviewHintModeDto = z.enum(['off', 'on_request', 'realtime']);
 export const InterviewPlanItemStatusDto = z.enum([
@@ -112,6 +112,19 @@ export const InterviewPlanItemDto = z.object({
   priority: InterviewPlanItemPriorityDto,
   status: InterviewPlanItemStatusDto,
   hintPack: QuestionHintPackDto.nullable(),
+  preferenceId: z.string().nullable().optional(),
+  semantic: z.lazy(() =>
+    z
+      .object({
+        conceptKey: z.string(),
+        conceptLabel: z.string(),
+        topicTags: z.array(z.string()),
+        requiredContextTags: z.array(z.string()),
+        focus: InterviewFocusDto.nullable(),
+      })
+      .nullable()
+      .optional()
+  ),
 });
 
 export const InterviewPlanDto = z.object({
@@ -198,6 +211,13 @@ export const InterviewTurnDto = z.object({
   messages: z.array(InterviewDialogueMessageDto).default([]),
   // ИИ-интервьюер предлагает перейти к следующему вопросу.
   suggestMoveOn: z.boolean().default(false),
+  preference: z
+    .object({
+      id: z.string(),
+      status: z.enum(['repeat', 'mastered', 'hidden']),
+    })
+    .nullable()
+    .default(null),
 });
 
 export const InterviewStateResponseDto = z.object({

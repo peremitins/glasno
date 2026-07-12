@@ -29,9 +29,15 @@ import type {
 import {
   buildHintPack,
   buildInterviewPlanMetadata,
+  injectRepeatPreferences,
   parseInterviewSessionMetadata,
   resolveNextPlannedQuestion,
 } from './interviewPlan';
+import type { QuestionPreferenceRepository } from '@/server/interface/questionPreferenceRepository';
+import {
+  buildQuestionContext,
+  matchesQuestionContext,
+} from '@/shared/questionContext';
 import {
   avatarFromMode,
   modeFromFaceId,
@@ -44,6 +50,7 @@ export class InterviewService {
       repository: InterviewRepository;
       engine: InterviewEngine;
       hhClient: HhClient | null;
+      questionPreferenceRepository?: QuestionPreferenceRepository;
     }
   ) {}
 
@@ -65,11 +72,40 @@ export class InterviewService {
       vacancyRaw: preparedSource.vacancyRaw,
     });
 
-    const metadata = buildInterviewPlanMetadata({
+    let metadata = buildInterviewPlanMetadata({
       input,
       role: input.role || preparedSource.role,
       vacancyTitle: preparedSource.vacancyTitle,
     });
+    if (
+      input.trainingMode === 'candidate' &&
+      this.deps.questionPreferenceRepository
+    ) {
+      const context = buildQuestionContext({
+        role:
+          input.role ||
+          preparedSource.role ||
+          preparedSource.vacancyTitle ||
+          'Не указана',
+        level: input.level,
+        specialization:
+          input.source.type === 'profession'
+            ? input.source.specialization
+            : null,
+        vacancyText: preparedSource.vacancyRaw,
+        focus: metadata.focus,
+      });
+      const preferences = await this.deps.questionPreferenceRepository.listForOwner({
+        anonymousSessionId: params.anonymousSessionId,
+        userId: params.userId ?? null,
+      });
+      metadata = injectRepeatPreferences(
+        metadata,
+        preferences.filter((preference) =>
+          matchesQuestionContext(preference, context)
+        )
+      );
+    }
 
     const session = await this.deps.repository.createSession({
       anonymousSessionId: params.anonymousSessionId,
@@ -656,6 +692,11 @@ export class InterviewService {
     let hintPack = planned.hintPack;
 
     if (planned.source === 'glasno') {
+      const questionContext = this.getSessionQuestionContext(session);
+      const questionPreferences = await this.getGenerationPreferences(
+        session,
+        questionContext
+      );
       const generated = await this.deps.engine.generateQuestion({
         session,
         turns,
@@ -686,8 +727,11 @@ export class InterviewService {
           interviewerAvatarId: session.interviewerAvatarId,
           interviewerFaceId: metadata.interviewerFaceId,
         },
+        questionPreferences,
+        questionContextTags: questionContext.contextTags,
       });
       question = generated.question;
+      planned.semantic = generated.semantic ?? null;
       hintPack = buildHintPack({
         question,
         role: session.role,
@@ -695,7 +739,7 @@ export class InterviewService {
       });
     }
 
-    await this.deps.repository.createTurn({
+    const createdTurn = await this.deps.repository.createTurn({
       sessionId: session.id,
       index: mainTurns.length + 1,
       kind: 'main',
@@ -704,8 +748,54 @@ export class InterviewService {
         planItemId: planned.planItemId,
         questionSource: planned.source,
         hintPack,
+        preferenceId: planned.preferenceId ?? null,
+        semantic: planned.semantic ?? null,
       },
     });
+    if (
+      planned.source === 'repeat' &&
+      planned.preferenceId &&
+      this.deps.questionPreferenceRepository
+    ) {
+      await this.deps.questionPreferenceRepository.markPracticed(
+        [planned.preferenceId],
+        createdTurn.createdAt
+      );
+    }
+  }
+
+  private getSessionQuestionContext(session: InterviewSessionRecord) {
+    const metadata = parseInterviewSessionMetadata(session.metadata);
+    return buildQuestionContext({
+      role: session.role || session.vacancyTitle || 'Не указана',
+      level: session.level || 'middle',
+      vacancyText: session.vacancyRaw,
+      focus: metadata.focus,
+    });
+  }
+
+  private async getGenerationPreferences(
+    session: InterviewSessionRecord,
+    context: ReturnType<typeof buildQuestionContext>
+  ) {
+    const repository = this.deps.questionPreferenceRepository;
+    if (!repository || session.trainingMode !== 'candidate') return [];
+    const preferences = await repository.listForOwner({
+      anonymousSessionId: session.anonymousSessionId,
+      userId: session.userId,
+    });
+    return preferences
+      .filter(
+        (preference) =>
+          (preference.status === 'repeat' || preference.status === 'hidden') &&
+          matchesQuestionContext(preference, context)
+      )
+      .map((preference) => ({
+        id: preference.id,
+        status: preference.status as 'repeat' | 'hidden',
+        question: preference.question,
+        semantic: preference.semantic,
+      }));
   }
 
   private async getStateForSession(
@@ -852,6 +942,7 @@ function toTurnDto(turn: InterviewTurnRecord): InterviewTurn {
     createdAt: toIso(turn.createdAt)!,
     messages: metadata.dialogue,
     suggestMoveOn: metadata.suggestMoveOn,
+    preference: metadata.preference,
   };
 }
 
@@ -949,10 +1040,11 @@ function toPlanDto(
 
 function normalizeTurnMetadata(metadata: unknown): {
   planItemId: string | null;
-  questionSource: 'glasno' | 'user';
+  questionSource: 'glasno' | 'user' | 'repeat';
   hintPack: QuestionHintPack | null;
   dialogue: InterviewDialogueMessage[];
   suggestMoveOn: boolean;
+  preference: { id: string; status: 'repeat' | 'mastered' | 'hidden' } | null;
 } {
   if (!metadata || typeof metadata !== 'object') {
     return {
@@ -961,6 +1053,7 @@ function normalizeTurnMetadata(metadata: unknown): {
       hintPack: null,
       dialogue: [],
       suggestMoveOn: false,
+      preference: null,
     };
   }
   const raw = metadata as {
@@ -969,20 +1062,41 @@ function normalizeTurnMetadata(metadata: unknown): {
     hintPack?: unknown;
     dialogue?: unknown;
     suggestMoveOn?: unknown;
+    preference?: unknown;
   };
   return {
     planItemId:
       typeof raw.planItemId === 'string' && raw.planItemId.trim()
         ? raw.planItemId
         : null,
-    questionSource: raw.questionSource === 'user' ? 'user' : 'glasno',
+    questionSource:
+      raw.questionSource === 'user' || raw.questionSource === 'repeat'
+        ? raw.questionSource
+        : 'glasno',
     hintPack:
       raw.hintPack && typeof raw.hintPack === 'object'
         ? (raw.hintPack as QuestionHintPack)
         : null,
     dialogue: parseDialogue(raw.dialogue),
     suggestMoveOn: raw.suggestMoveOn === true,
+    preference: normalizeQuestionPreferenceSummary(raw.preference),
   };
+}
+
+function normalizeQuestionPreferenceSummary(
+  value: unknown
+): { id: string; status: 'repeat' | 'mastered' | 'hidden' } | null {
+  if (!value || typeof value !== 'object') return null;
+  const raw = value as { id?: unknown; status?: unknown };
+  if (typeof raw.id !== 'string' || !raw.id.trim()) return null;
+  if (
+    raw.status !== 'repeat' &&
+    raw.status !== 'mastered' &&
+    raw.status !== 'hidden'
+  ) {
+    return null;
+  }
+  return { id: raw.id, status: raw.status };
 }
 
 function toState(

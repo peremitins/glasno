@@ -13,6 +13,7 @@ import type {
   MagicLoginTokenRecord,
   UpsertTelegramUserInput,
 } from '@/server/interface/authRepository';
+import { planAnonymousPreferenceMigration } from '@/server/application/questionPreferences/ownership';
 
 type UserRow = typeof schema.users.$inferSelect;
 type AuthSessionRow = typeof schema.authSessions.$inferSelect;
@@ -196,6 +197,9 @@ export class DrizzleAuthRepository implements AuthRepository {
 
   async anonymizeUserAccount(userId: string, now: Date): Promise<boolean> {
     const [updated] = await this.db.transaction(async (tx) => {
+      await tx
+        .delete(schema.interviewQuestionPreferences)
+        .where(eq(schema.interviewQuestionPreferences.userId, userId));
       const ownedSessions = await tx
         .select({ id: schema.interviewSessions.id })
         .from(schema.interviewSessions)
@@ -315,17 +319,97 @@ export class DrizzleAuthRepository implements AuthRepository {
     anonymousSessionId: string,
     userId: string
   ): Promise<number> {
-    const rows = await this.db
-      .update(schema.interviewSessions)
-      .set({ userId })
-      .where(
-        and(
-          eq(schema.interviewSessions.anonymousSessionId, anonymousSessionId),
-          isNull(schema.interviewSessions.userId)
+    return this.db.transaction(async (tx) => {
+      const rows = await tx
+        .update(schema.interviewSessions)
+        .set({ userId })
+        .where(
+          and(
+            eq(schema.interviewSessions.anonymousSessionId, anonymousSessionId),
+            isNull(schema.interviewSessions.userId)
+          )
         )
-      )
-      .returning({ id: schema.interviewSessions.id });
-    return rows.length;
+        .returning({ id: schema.interviewSessions.id });
+
+      const anonymousPreferences = await tx
+        .select()
+        .from(schema.interviewQuestionPreferences)
+        .where(
+          and(
+            eq(
+              schema.interviewQuestionPreferences.anonymousSessionId,
+              anonymousSessionId
+            ),
+            isNull(schema.interviewQuestionPreferences.userId)
+          )
+        );
+      const userPreferences = await tx
+        .select()
+        .from(schema.interviewQuestionPreferences)
+        .where(eq(schema.interviewQuestionPreferences.userId, userId));
+      const migration = planAnonymousPreferenceMigration(
+        anonymousPreferences,
+        userPreferences
+      );
+
+      for (const replacement of migration.replace) {
+        const source = anonymousPreferences.find(
+          (item) => item.id === replacement.sourceId
+        );
+        if (!source) continue;
+        await tx
+          .update(schema.interviewQuestionPreferences)
+          .set({
+            status: source.status,
+            question: source.question,
+            semantic: source.semantic,
+            roleLabel: source.roleLabel,
+            contextTags: source.contextTags,
+            focus: source.focus,
+            sourceSessionId: source.sourceSessionId,
+            sourceTurnId: source.sourceTurnId,
+            lastPracticedAt: source.lastPracticedAt,
+            practiceCount: source.practiceCount,
+            updatedAt: source.updatedAt,
+          })
+          .where(
+            eq(
+              schema.interviewQuestionPreferences.id,
+              replacement.targetId
+            )
+          );
+        await tx
+          .delete(schema.interviewQuestionPreferences)
+          .where(
+            eq(
+              schema.interviewQuestionPreferences.id,
+              replacement.sourceId
+            )
+          );
+      }
+      if (migration.deleteIds.length) {
+        await tx
+          .delete(schema.interviewQuestionPreferences)
+          .where(
+            inArray(
+              schema.interviewQuestionPreferences.id,
+              migration.deleteIds
+            )
+          );
+      }
+      if (migration.attachIds.length) {
+        await tx
+          .update(schema.interviewQuestionPreferences)
+          .set({ userId, updatedAt: new Date() })
+          .where(
+            inArray(
+              schema.interviewQuestionPreferences.id,
+              migration.attachIds
+            )
+          );
+      }
+      return rows.length;
+    });
   }
 
   async createAuthSession(
