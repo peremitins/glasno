@@ -18,6 +18,7 @@
     InterviewStateResponse,
     LearningTermContext,
     QuestionHintPack,
+    QuestionPreference,
   } from '@/shared/dto';
   import {
     VideoIcon,
@@ -43,6 +44,7 @@
   import GlassSkeletonStack from '@/app/components/design/GlassSkeletonStack.vue';
   import ButtonLoader from '@/app/components/design/ButtonLoader.vue';
   import InterviewExplainSelectionOnboardingModal from '@/app/components/onboarding/InterviewExplainSelectionOnboardingModal.vue';
+  import QuestionPreferenceDropdown from '@/app/components/interview/QuestionPreferenceDropdown.vue';
   import { useInterviewExplainSelectionOnboarding } from '@/app/composables/useInterviewExplainSelectionOnboarding';
   import {
     RealtimeInterviewChatAdapter,
@@ -207,6 +209,16 @@
       ? t('interview.session.clarification')
       : t('interview.session.question');
   });
+
+  function handleQuestionPreferenceUpdated(preference: QuestionPreference) {
+    const current = state.value?.currentTurn;
+    if (!state.value || !current) return;
+    const summary = { id: preference.id, status: preference.status };
+    state.value.currentTurn = { ...current, preference: summary };
+    state.value.turns = state.value.turns.map((turn) =>
+      turn.id === current.id ? { ...turn, preference: summary } : turn
+    );
+  }
   const replyPlaceholder = computed(() =>
     t(
       isInterviewerTraining.value
@@ -1121,6 +1133,7 @@
   // --- Выбор интервьюера (внешность + тон) прямо в кабинете ---
   // Лицо кодирует пол и тон; выбор меняет и фото, и манеру ИИ на лету.
   const interviewerPickerOpen = ref(false);
+  useBodyScrollLock(() => interviewerPickerOpen.value);
   const isChangingInterviewer = ref(false);
   const changingInterviewerFaceId = ref<InterviewerFaceId | null>(null);
   const failedThumbs = ref<Set<string>>(new Set());
@@ -1436,17 +1449,26 @@
                 manual-selection
               />
             </p>
-            <button
-              v-if="isTtsEnabled"
-              v-tooltip="t('voice.tts.listen')"
-              class="listen-mini"
-              type="button"
-              :disabled="isSpeakingQuestion || realtimeVoiceLocked"
-              :aria-label="t('voice.tts.listen')"
-              @click="speakQuestion"
-            >
-              <SpeakerLoudIcon aria-hidden="true" />
-            </button>
+            <div class="question-actions">
+              <button
+                v-if="isTtsEnabled"
+                v-tooltip="t('voice.tts.listen')"
+                class="listen-mini"
+                type="button"
+                :disabled="isSpeakingQuestion || realtimeVoiceLocked"
+                :aria-label="t('voice.tts.listen')"
+                @click="speakQuestion"
+              >
+                <SpeakerLoudIcon aria-hidden="true" />
+              </button>
+              <QuestionPreferenceDropdown
+                v-if="currentTurn.kind === 'main' && !isInterviewerTraining"
+                :session-id="sessionId"
+                :turn-id="currentTurn.id"
+                :model-value="currentTurn.preference?.status ?? null"
+                @updated="handleQuestionPreferenceUpdated"
+              />
+            </div>
           </div>
 
           <!-- Нижний док с иконками (управление звонком) -->
@@ -2633,7 +2655,7 @@
     grid-template-columns: minmax(0, 1fr) auto;
     grid-template-areas:
       'badge .'
-      'question listen';
+      'question actions';
     align-items: start;
     column-gap: 14px;
     row-gap: 8px;
@@ -2658,8 +2680,14 @@
     overflow-wrap: anywhere;
   }
 
+  .question-actions {
+    grid-area: actions;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
   .listen-mini {
-    grid-area: listen;
     display: inline-grid;
     place-items: center;
     width: 42px;
@@ -3274,7 +3302,7 @@
     .now-question {
       grid-template-columns: minmax(0, 1fr) auto;
       grid-template-areas:
-        'badge listen'
+        'badge actions'
         'question question';
       align-items: start;
       padding: 12px;
@@ -3334,15 +3362,18 @@
     z-index: 300;
     display: grid;
     place-items: center;
-    padding: 18px;
+    overflow: hidden;
+    padding: clamp(18px, 5vh, 48px) 18px;
     background: color-mix(in srgb, var(--app-bg) 72%, transparent);
     backdrop-filter: blur(3px);
   }
 
   .picker-modal {
     width: min(560px, 100%);
-    max-height: min(86dvh, 720px);
+    max-height: 100%;
+    overflow-x: hidden;
     overflow-y: auto;
+    overscroll-behavior: contain;
     display: flex;
     flex-direction: column;
     gap: 16px;

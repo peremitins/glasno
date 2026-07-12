@@ -3,6 +3,7 @@ import {
   buildHintPack,
   buildInterviewPlanMetadata,
   getSessionGoalConfig,
+  injectRepeatPreferences,
   resolveNextPlannedQuestion,
 } from './interviewPlan';
 
@@ -139,5 +140,57 @@ describe('interviewPlan', () => {
     expect(hintPack.bullets.length).toBeGreaterThanOrEqual(3);
     expect(hintPack.terms).toContain('B2B sales manager');
     expect(hintPack.strongDirection).toContain('сложных переговорах');
+  });
+
+  it('injects repeats only into free AI slots and keeps the one-third quota', () => {
+    const metadata = buildInterviewPlanMetadata({
+      input: {
+        source: { type: 'profession', role: 'Frontend-разработчик' },
+        level: 'middle',
+        sessionGoal: 'standard',
+        questionSourceMode: 'mixed',
+        customQuestionsText: 'Расскажите о вашем основном проекте?',
+        responseMode: 'text',
+        hintMode: 'off',
+        language: 'ru',
+        interviewerMode: 'neutral',
+        interviewerAvatarId: 'neutral-pro',
+      },
+      role: 'Frontend-разработчик',
+    });
+
+    const updated = injectRepeatPreferences(metadata, [
+      {
+        id: 'pref_1',
+        status: 'repeat',
+        question: 'Как браузер строит DOM и CSSOM?',
+        semantic: null,
+        lastPracticedAt: null,
+        createdAt: new Date('2026-07-01T00:00:00.000Z'),
+      },
+      {
+        id: 'pref_2',
+        status: 'repeat',
+        question: 'Чем event loop отличается от очереди микрозадач?',
+        semantic: null,
+        lastPracticedAt: null,
+        createdAt: new Date('2026-07-02T00:00:00.000Z'),
+      },
+      {
+        id: 'pref_3',
+        status: 'repeat',
+        question: 'Как работает делегирование событий?',
+        semantic: null,
+        lastPracticedAt: null,
+        createdAt: new Date('2026-07-03T00:00:00.000Z'),
+      },
+    ] as any);
+
+    expect(updated.plan.items.filter((item) => item.source === 'user')).toHaveLength(1);
+    expect(updated.plan.items.filter((item) => item.source === 'repeat')).toHaveLength(2);
+    expect(updated.plan.items.find((item) => item.source === 'repeat')).toMatchObject({
+      preferenceId: 'pref_1',
+      question: 'Как браузер строит DOM и CSSOM?',
+    });
   });
 });

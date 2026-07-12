@@ -27,6 +27,30 @@ export interface ProfessionSelectionResult {
   focusInput: boolean;
 }
 
+// Классификация ввода в едином поле «Вакансия или роль» на главной:
+// одно поле принимает ссылку, свободное описание или короткую должность.
+export type QuickSourceKind = 'empty' | 'url' | 'text' | 'role';
+
+// Нормализует ввод к URL, если он похож на ссылку (с протоколом или как
+// «домен/путь»). Иначе — null. Используется и для UI-подсказки, и для сборки
+// source перед отправкой, чтобы фронт и поле не расходились в трактовке.
+export function normalizeVacancyUrl(value: string): string | null {
+  const trimmed = value.trim();
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  if (/^[\w.-]+\.[a-zа-яё]{2,}(\/\S*)?$/iu.test(trimmed)) {
+    return `https://${trimmed}`;
+  }
+  return null;
+}
+
+export function classifyQuickSource(value: string): QuickSourceKind {
+  const trimmed = value.trim();
+  if (!trimmed) return 'empty';
+  if (normalizeVacancyUrl(trimmed)) return 'url';
+  if (trimmed.length >= 40 || trimmed.includes('\n')) return 'text';
+  return 'role';
+}
+
 export function isManualInterviewSourceReady(
   input: Pick<ManualInterviewSourceInput, 'role' | 'vacancyText'>
 ): boolean {

@@ -113,7 +113,7 @@ export class AuthService {
 
     await this.deps.repository.consumeEmailLoginCode(codeRecord.id);
     const user = await this.deps.repository.upsertEmailUser(email);
-    return this.finishLogin(user);
+    return this.finishLogin(user, params.anonymousSessionId);
   }
 
   async verifyTelegramLogin(params: {
@@ -141,7 +141,7 @@ export class AuthService {
       displayName: displayName || params.payload.username || null,
     });
 
-    return this.finishLogin(user);
+    return this.finishLogin(user, params.anonymousSessionId);
   }
 
   async createMagicLoginToken(
@@ -178,7 +178,7 @@ export class AuthService {
         telegramId: record.telegramId,
       }));
 
-    return this.finishLogin(user);
+    return this.finishLogin(user, params.anonymousSessionId);
   }
 
   async deleteAccount(userId: string): Promise<DeleteAccountResponse> {
@@ -192,8 +192,19 @@ export class AuthService {
     return { ok: true };
   }
 
-  private async finishLogin(user: AuthUserRecord): Promise<AuthLoginResult> {
+  private async finishLogin(
+    user: AuthUserRecord,
+    anonymousSessionId: string
+  ): Promise<AuthLoginResult> {
     const promoted = await this.ensureAdminRole(user);
+
+    // Переносим историю и персональные настройки вопросов до выдачи auth-cookie:
+    // после входа чтение идёт уже по userId, и данные гостя должны быть доступны
+    // в том же ответе/следующем запросе.
+    await this.deps.repository.migrateAnonymousSessionsToUser(
+      anonymousSessionId,
+      promoted.id
+    );
 
     const createdSession = await this.deps.sessionService.createForUser(
       promoted.id

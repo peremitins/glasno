@@ -1,11 +1,6 @@
 <script setup lang="ts">
-  import { ref } from 'vue';
-  import {
-    PauseIcon,
-    PlayIcon,
-    SpeakerLoudIcon,
-    SpeakerOffIcon,
-  } from '@radix-icons/vue';
+  import { onBeforeUnmount, onMounted, ref } from 'vue';
+  import { SpeakerLoudIcon, SpeakerOffIcon } from '@radix-icons/vue';
 
   const props = withDefaults(
     defineProps<{
@@ -14,6 +9,8 @@
       poster?: string;
       caption?: string;
       soundHint?: string;
+      /** Показывать кнопку управления звуком. */
+      showSoundControl?: boolean;
       /** CSS aspect-ratio, напр. '16 / 10' */
       aspect?: string;
       /** Скрыть плашку «Запись скоро появится» (для плотных постеров) */
@@ -24,39 +21,36 @@
       poster: '',
       caption: '',
       soundHint: 'Включите звук',
+      showSoundControl: true,
       aspect: '16 / 10',
       hideSoon: false,
     }
   );
 
+  const stageEl = ref<HTMLElement | null>(null);
   const videoEl = ref<HTMLVideoElement | null>(null);
   const started = ref(false);
-  const playing = ref(false);
   const muted = ref(true);
 
   const hasVideo = Boolean(props.src);
+  let observer: IntersectionObserver | null = null;
 
-  async function start() {
-    if (!hasVideo || !videoEl.value) return;
-    started.value = true;
+  async function playWhenVisible() {
+    const video = videoEl.value;
+    if (!video) return;
+
     try {
-      await videoEl.value.play();
-      playing.value = true;
+      await video.play();
+      started.value = true;
     } catch {
-      playing.value = false;
+      // Автозапуск может быть запрещён браузером, хотя видео замьючено.
+      // В этом случае оставляем статичный кадр без лишних элементов управления.
     }
   }
 
-  function togglePlay() {
-    const el = videoEl.value;
-    if (!el) return;
-    if (el.paused) {
-      void el.play();
-      playing.value = true;
-    } else {
-      el.pause();
-      playing.value = false;
-    }
+  function pauseWhenHidden() {
+    videoEl.value?.pause();
+    started.value = false;
   }
 
   function toggleSound() {
@@ -64,11 +58,35 @@
     muted.value = !muted.value;
     if (el) el.muted = muted.value;
   }
+
+  onMounted(() => {
+    if (!hasVideo || !stageEl.value || typeof IntersectionObserver === 'undefined') {
+      return;
+    }
+
+    observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry?.isIntersecting) {
+          void playWhenVisible();
+        } else {
+          pauseWhenHidden();
+        }
+      },
+      { threshold: 0.35 }
+    );
+    observer.observe(stageEl.value);
+  });
+
+  onBeforeUnmount(() => {
+    observer?.disconnect();
+    pauseWhenHidden();
+  });
 </script>
 
 <template>
   <figure class="vp">
     <div
+      ref="stageEl"
       class="vp__stage"
       :class="{ 'vp__stage--live': started }"
       :style="{ aspectRatio: aspect }"
@@ -83,7 +101,6 @@
         loop
         playsinline
         preload="none"
-        @click="togglePlay"
       >
         <source :src="src">
       </video>
@@ -92,41 +109,23 @@
       <div v-show="!started" class="vp__poster">
         <slot name="poster" />
 
-        <button
-          class="vp__play"
-          type="button"
-          :aria-label="hasVideo ? 'Воспроизвести' : 'Запись скоро появится'"
-          @click="start"
-        >
-          <PlayIcon aria-hidden="true" />
-        </button>
-
         <span v-if="!hasVideo && !hideSoon" class="vp__soon">
           Запись интервью скоро появится
         </span>
       </div>
 
       <!-- Контролы поверх играющего видео -->
-      <div v-if="hasVideo && started" class="vp__controls">
-        <button
-          class="vp__ctrl"
-          type="button"
-          :aria-label="playing ? 'Пауза' : 'Играть'"
-          @click="togglePlay"
-        >
-          <PauseIcon v-if="playing" aria-hidden="true" />
-          <PlayIcon v-else aria-hidden="true" />
-        </button>
+      <div v-if="hasVideo && started && showSoundControl" class="vp__controls">
         <button
           class="vp__ctrl vp__ctrl--sound"
           type="button"
           :aria-pressed="!muted"
           :aria-label="muted ? 'Включить звук' : 'Выключить звук'"
+          :title="muted ? soundHint : 'Выключить звук'"
           @click="toggleSound"
         >
           <SpeakerOffIcon v-if="muted" aria-hidden="true" />
           <SpeakerLoudIcon v-else aria-hidden="true" />
-          <span>{{ muted ? soundHint : 'Звук включён' }}</span>
         </button>
       </div>
     </div>
@@ -159,7 +158,6 @@
     width: 100%;
     height: 100%;
     object-fit: cover;
-    cursor: pointer;
   }
 
   .vp__poster {
@@ -170,36 +168,6 @@
   .vp__poster > :first-child {
     position: absolute;
     inset: 0;
-  }
-
-  .vp__play {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    display: grid;
-    place-items: center;
-    width: clamp(56px, 7vw, 76px);
-    aspect-ratio: 1;
-    border-radius: var(--l-r-pill);
-    border: 1px solid var(--l-line-warm);
-    background: var(--l-warm-solid);
-    color: var(--l-warm-ink);
-    box-shadow: var(--l-shadow-warm);
-    transition:
-      transform var(--l-dur-1) var(--l-ease),
-      background var(--l-dur-1) var(--l-ease);
-  }
-
-  .vp__play svg {
-    width: 42%;
-    height: 42%;
-    margin-left: 6%;
-  }
-
-  .vp__play:hover {
-    transform: translate(-50%, -50%) scale(1.06);
-    background: var(--l-warm);
   }
 
   .vp__soon {
@@ -219,7 +187,7 @@
 
   .vp__controls {
     position: absolute;
-    left: clamp(12px, 2vw, 20px);
+    right: clamp(12px, 2vw, 20px);
     bottom: clamp(12px, 2vw, 20px);
     display: flex;
     align-items: center;
@@ -229,14 +197,14 @@
   .vp__ctrl {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
-    height: 42px;
-    padding-inline: 14px;
-    border-radius: var(--l-r-pill);
+    justify-content: center;
+    width: 38px;
+    height: 38px;
+    padding: 0;
+    border-radius: 50%;
     border: 1px solid var(--l-line-hi);
     background: oklch(0.145 0.01 260 / 0.72);
     color: var(--l-text);
-    font-size: var(--l-fs-sm);
     backdrop-filter: blur(10px);
     transition: border-color var(--l-dur-1) var(--l-ease);
   }

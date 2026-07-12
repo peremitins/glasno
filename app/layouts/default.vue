@@ -4,10 +4,10 @@
     ClockIcon,
     DoubleArrowLeftIcon,
     DoubleArrowRightIcon,
-    GearIcon,
     HomeIcon,
     MagicWandIcon,
     MoonIcon,
+    MixerHorizontalIcon,
     PersonIcon,
     PlusCircledIcon,
     Share1Icon,
@@ -66,9 +66,29 @@
     { to: '/', key: 'dashboard', icon: HomeIcon },
     { to: '/interview/new', key: 'newInterview', icon: PlusCircledIcon },
     { to: '/history', key: 'history', icon: ClockIcon },
+    {
+      to: '/question-settings',
+      key: 'questionSettings',
+      icon: MixerHorizontalIcon,
+    },
     { to: '/pricing', key: 'pricing', icon: BarChartIcon },
-    { to: '/profile', key: 'profile', icon: PersonIcon },
   ];
+  // Нижняя навигация повторяет порядок десктопа: главная → новое интервью →
+  // история → вопросы → тарифы, профиль в самом конце. «Настройки вопросов»
+  // на мобильном сокращаем до «Вопросы», чтобы подпись не обрезалась.
+  const mobileNav = nav
+    .filter((item) =>
+      ['dashboard', 'newInterview', 'history', 'questionSettings', 'pricing'].includes(
+        item.key
+      )
+    )
+    .map((item) => ({
+      ...item,
+      labelKey:
+        item.key === 'questionSettings'
+          ? 'nav.questionSettingsShort'
+          : `nav.${item.key}`,
+    }));
 
   async function shareService() {
     if (sharePending.value) return;
@@ -149,7 +169,7 @@
 
       <nav class="nav" aria-label="Основная навигация">
         <NuxtLink
-          v-for="item in nav.slice(0, 4)"
+          v-for="item in nav"
           :key="item.to"
           v-tooltip="isSidebarCollapsed ? t(`nav.${item.key}`) : undefined"
           :to="item.to"
@@ -272,25 +292,21 @@
       aria-label="Мобильная навигация"
     >
       <NuxtLink
-        v-for="item in nav.slice(0, 4)"
+        v-for="item in mobileNav"
         :key="item.to"
         :to="item.to"
         class="bottom-item"
         active-class="bottom-item--active"
       >
         <component :is="item.icon" aria-hidden="true" />
-        <small>{{ t(`nav.${item.key}`) }}</small>
-      </NuxtLink>
-      <NuxtLink to="/pricing?checkout=gift&plan=pass_30d" class="bottom-item">
-        <MagicWandIcon aria-hidden="true" />
-        <small>{{ t('layout.giftAction') }}</small>
+        <small>{{ t(item.labelKey) }}</small>
       </NuxtLink>
       <NuxtLink
         to="/profile"
         class="bottom-item"
         active-class="bottom-item--active"
       >
-        <GearIcon aria-hidden="true" />
+        <PersonIcon aria-hidden="true" />
         <small>{{ t('nav.profile') }}</small>
       </NuxtLink>
     </nav>

@@ -10,6 +10,7 @@ import {
   index,
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
 
 // МИНИМАЛЬНАЯ стартовая схема. Расширяем по мере реализации фич.
 // Принцип Mentala: не удалять/не переименовывать поля без миграционного
@@ -106,6 +107,59 @@ export const interviewTurns = pgTable('interview_turns', {
   metadata: jsonb('metadata'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
+
+// Персональные правила для основных вопросов интервью. Анонимный id хранится
+// всегда, userId добавляется после входа — это позволяет не терять настройки
+// гостя и при этом выбирать их по аккаунту на других устройствах.
+export const interviewQuestionPreferences = pgTable(
+  'interview_question_preferences',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    userId: uuid('user_id').references(() => users.id),
+    anonymousSessionId: text('anonymous_session_id').notNull(),
+    status: text('status').notNull(), // repeat | mastered | hidden
+    question: text('question').notNull(),
+    conceptKey: text('concept_key').notNull(),
+    semantic: jsonb('semantic'),
+    roleKey: text('role_key').notNull(),
+    roleLabel: text('role_label').notNull(),
+    level: text('level').notNull(),
+    contextTags: jsonb('context_tags').notNull().default([]),
+    focus: text('focus'),
+    sourceSessionId: uuid('source_session_id').references(
+      () => interviewSessions.id,
+      { onDelete: 'set null' }
+    ),
+    sourceTurnId: uuid('source_turn_id').references(() => interviewTurns.id, {
+      onDelete: 'set null',
+    }),
+    lastPracticedAt: timestamp('last_practiced_at', { withTimezone: true }),
+    practiceCount: integer('practice_count').default(0).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index('question_preferences_user_status_idx').on(
+      table.userId,
+      table.status
+    ),
+    index('question_preferences_anon_status_idx').on(
+      table.anonymousSessionId,
+      table.status
+    ),
+    uniqueIndex('question_preferences_user_concept_unique')
+      .on(table.userId, table.roleKey, table.level, table.conceptKey)
+      .where(sql`${table.userId} is not null`),
+    uniqueIndex('question_preferences_anon_concept_unique')
+      .on(
+        table.anonymousSessionId,
+        table.roleKey,
+        table.level,
+        table.conceptKey
+      )
+      .where(sql`${table.userId} is null`),
+  ]
+);
 
 // Итоговый разбор сессии (оценки по критериям + рекомендации).
 export const interviewReports = pgTable('interview_reports', {

@@ -6,6 +6,7 @@ import {
   normalizeSampleAnswerHint,
   normalizeQuestionHintDetails,
   parseJsonObject,
+  selectGeneratedQuestionCandidate,
 } from './openaiInterviewEngine';
 import type { ConverseParams } from '@/server/interface/interviewEngine';
 
@@ -188,5 +189,50 @@ describe('openai interview engine helpers', () => {
     expect(text).not.toContain('Какой именно продукт?');
     expect(text).toContain('Текущий вопрос: Как вы запускали сложный продукт?');
     expect(text).toContain('Кандидат: Я отвечал за go-to-market.');
+  });
+
+  it('selects a safe semantic candidate and rejects hidden concept matches', () => {
+    const selected = selectGeneratedQuestionCandidate(
+      [
+        {
+          question: 'Как браузер строит DOM и CSSOM?',
+          semantic: {
+            conceptKey: 'browser_rendering',
+            conceptLabel: 'Построение DOM и CSSOM',
+            topicTags: ['dom', 'cssom'],
+            requiredContextTags: [],
+            focus: 'professional',
+          },
+          matchesPreferenceIds: ['hidden_1'],
+        },
+        {
+          question: 'Как вы уменьшаете размер JavaScript-бандла?',
+          semantic: {
+            conceptKey: 'javascript_bundle_optimization',
+            conceptLabel: 'Оптимизация размера JavaScript-бандла',
+            topicTags: ['javascript', 'bundling'],
+            requiredContextTags: [],
+            focus: 'professional',
+          },
+          matchesPreferenceIds: [],
+        },
+      ],
+      [
+        {
+          id: 'hidden_1',
+          status: 'hidden',
+          question: 'Объясните построение DOM и CSSOM.',
+          semantic: {
+            conceptKey: 'browser_rendering',
+            conceptLabel: 'Построение DOM и CSSOM',
+            topicTags: ['dom', 'cssom'],
+            requiredContextTags: [],
+            focus: 'professional',
+          },
+        },
+      ]
+    );
+
+    expect(selected?.question).toContain('бандла');
   });
 });

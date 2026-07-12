@@ -36,6 +36,7 @@
   }>();
 
   const { t } = useI18n();
+  useBodyScrollLock(() => props.open);
   const emailInput = ref<HTMLInputElement | null>(null);
   const {
     mount: mountWidget,
@@ -301,7 +302,8 @@
     z-index: 230;
     display: grid;
     place-items: center;
-    padding: 16px;
+    overflow: hidden;
+    padding: clamp(16px, 5vh, 40px) 16px;
     background: color-mix(in srgb, var(--surface-solid) 72%, transparent);
     backdrop-filter: blur(8px);
   }
@@ -310,9 +312,10 @@
     display: grid;
     gap: 18px;
     width: min(430px, 100%);
-    max-height: min(720px, calc(100dvh - 32px));
+    max-height: 100%;
     padding: clamp(20px, 4vw, 30px);
     overflow-y: auto;
+    overscroll-behavior: contain;
     overflow-x: hidden;
     background: var(--surface-solid);
   }

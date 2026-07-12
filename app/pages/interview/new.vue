@@ -7,6 +7,7 @@
     CubeIcon,
     FileTextIcon,
     Link2Icon,
+    LockClosedIcon,
     QuestionMarkCircledIcon,
   } from '@radix-icons/vue';
   import {
@@ -42,6 +43,7 @@
   import GlassSkeletonStack from '@/app/components/design/GlassSkeletonStack.vue';
   import VoiceTextarea from '@/app/components/form/VoiceTextarea.vue';
   import ButtonLoader from '@/app/components/design/ButtonLoader.vue';
+  import PaywallModal from '@/app/components/billing/PaywallModal.vue';
   import {
     buildManualInterviewSource,
     isManualInterviewSourceReady,
@@ -77,6 +79,61 @@
   const { t } = useI18n();
   const route = useRoute();
   const api = useAPI();
+  const billing = useBillingStatus();
+
+  onMounted(() => {
+    void billing.ensureLoaded();
+  });
+
+  // Все форматы интервью в порядке возрастания длительности. Отдельная
+  // константа (не sessionGoalOptions.map) — иначе watch ниже дёргает getter
+  // до инициализации sessionGoalOptions и падает с TDZ-ошибкой.
+  const SESSION_GOAL_VALUES: InterviewSessionGoal[] = [
+    'quick',
+    'standard',
+    'deep',
+  ];
+
+  // Форматы, недоступные без активного пропуска (Free — только «Быстро»).
+  // Пока статус не загружен — считаем всё доступным: превентивная блокировка,
+  // финальную проверку делает бэкенд (assertCanCreateInterview).
+  const lockedSessionGoals = computed<InterviewSessionGoal[]>(() => {
+    const status = billing.status.value;
+    if (!status || status.unlimited) return [];
+    return SESSION_GOAL_VALUES.filter(
+      (goal) => !status.allowedSessionGoals.includes(goal)
+    );
+  });
+
+  function isSessionGoalLocked(goal: InterviewSessionGoal): boolean {
+    return lockedSessionGoals.value.includes(goal);
+  }
+
+  const paywallOpen = ref(false);
+
+  // Бесплатная попытка исчерпана и активного пропуска нет: запуск любого
+  // формата заблокирован — на кнопке показываем бриллиант и открываем пейволл
+  // вместо старта. Настройки при этом остаются доступными для просмотра.
+  const isLaunchLocked = computed(() => {
+    const status = billing.status.value;
+    return Boolean(status) && !status!.unlimited && !status!.canCreateInterview;
+  });
+
+  function selectSessionGoal(goal: InterviewSessionGoal) {
+    if (isSessionGoalLocked(goal)) {
+      paywallOpen.value = true;
+      return;
+    }
+    form.sessionGoal = goal;
+  }
+
+  // Если выбранный формат оказался платным (статус подгрузился позже) —
+  // мягко откатываем на бесплатный «Быстро», чтобы не упереться в ошибку.
+  watch(lockedSessionGoals, (locked) => {
+    if (locked.includes(form.sessionGoal)) {
+      form.sessionGoal = 'quick';
+    }
+  });
 
   const FOCUS_VALUES: InterviewFocus[] = [
     'hr_screening',
@@ -793,6 +850,10 @@
   }
 
   async function submit() {
+    if (isLaunchLocked.value) {
+      paywallOpen.value = true;
+      return;
+    }
     if (!canSubmit.value) return;
 
     isSubmitting.value = true;
@@ -1347,16 +1408,31 @@
               class="goal-card"
               :class="{
                 'goal-card--active': form.sessionGoal === option.value,
+                'goal-card--locked': isSessionGoalLocked(option.value),
               }"
               role="radio"
               :aria-checked="form.sessionGoal === option.value"
-              @click="form.sessionGoal = option.value"
+              :aria-disabled="isSessionGoalLocked(option.value)"
+              @click="selectSessionGoal(option.value)"
             >
               <strong>{{ t(option.title) }}</strong>
               <span>{{ t(option.description) }}</span>
               <small>{{ t(option.meta) }}</small>
+              <span
+                v-if="isSessionGoalLocked(option.value)"
+                class="goal-card__lock"
+              >
+                <LockClosedIcon aria-hidden="true" />
+                {{ t('interview.goal.lockedBadge') }}
+              </span>
             </button>
           </div>
+          <p v-if="lockedSessionGoals.length" class="goal-locked-hint">
+            {{ t('interview.goal.lockedHint') }}
+            <NuxtLink to="/pricing">{{
+              t('interview.goal.lockedAction')
+            }}</NuxtLink>
+          </p>
         </section>
 
         <section class="parameter-group">
@@ -1645,25 +1721,40 @@
       </div>
 
       <div class="sticky-start-bar__actions">
-        <p v-if="submitBlockerMessage && !isSubmitting" class="actions-hint">
+        <p
+          v-if="submitBlockerMessage && !isSubmitting && !isLaunchLocked"
+          class="actions-hint"
+        >
           {{ submitBlockerMessage }}
+        </p>
+        <p v-else-if="isLaunchLocked" class="actions-hint actions-hint--locked">
+          {{ t('interview.new.actions.lockedHint') }}
         </p>
         <button
           class="primary-action start-button button-loader-host"
+          :class="{ 'start-button--locked': isLaunchLocked }"
           type="submit"
-          :disabled="!canSubmit"
+          :disabled="isLaunchLocked ? isSubmitting : !canSubmit"
         >
           <ButtonLoader v-if="isSubmitting" />
           <span
             class="button-loader-content"
             :class="{ 'button-loader-content--loading': isSubmitting }"
           >
+            <span
+              v-if="isLaunchLocked"
+              class="start-button__diamond"
+              aria-hidden="true"
+              >💎</span
+            >
             {{
-              t(
-                isInterviewerTraining
-                  ? 'interview.new.actions.startInterviewer'
-                  : 'interview.new.actions.start'
-              )
+              isLaunchLocked
+                ? t('interview.new.actions.unlock')
+                : t(
+                    isInterviewerTraining
+                      ? 'interview.new.actions.startInterviewer'
+                      : 'interview.new.actions.start'
+                  )
             }}
             <span class="primary-action__icon" aria-hidden="true">
               <ArrowRightIcon />
@@ -1672,6 +1763,8 @@
         </button>
       </div>
     </section>
+
+    <PaywallModal v-model:open="paywallOpen" mode="plans" plans-variant="full" />
 
     <div
       v-if="isSubmitting"
@@ -2521,6 +2614,59 @@
     font-weight: 900;
   }
 
+  .goal-card--locked {
+    cursor: pointer;
+    opacity: 0.62;
+  }
+
+  .goal-card--locked:hover {
+    border-color: color-mix(in srgb, var(--accent) 40%, var(--glass-border));
+    background: var(--surface-soft);
+    box-shadow: none;
+    transform: none;
+    opacity: 0.82;
+  }
+
+  .goal-card--locked::after {
+    display: none;
+  }
+
+  .goal-card__lock {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    justify-self: start;
+    margin-top: 4px;
+    border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--glass-border));
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--accent) 12%, var(--surface-soft));
+    color: var(--accent-2);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 900;
+    letter-spacing: 0;
+    padding: 3px 8px;
+    text-transform: uppercase;
+  }
+
+  .goal-card__lock svg {
+    width: 11px;
+    height: 11px;
+  }
+
+  .goal-locked-hint {
+    grid-column: 1 / -1;
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.45;
+  }
+
+  .goal-locked-hint a {
+    color: var(--accent-2);
+    font-weight: 900;
+    white-space: nowrap;
+  }
+
   .goal-card:hover,
   .goal-card--active,
   .focus-chip:hover,
@@ -2744,6 +2890,16 @@
 
   .start-button {
     min-width: min(100%, 300px);
+  }
+
+  .actions-hint--locked {
+    color: var(--accent-2);
+  }
+
+  .start-button__diamond {
+    margin-right: 2px;
+    font-size: 15px;
+    line-height: 1;
   }
 
   .interview-start-overlay {
