@@ -16,4 +16,13 @@ describe('profile page loading state', () => {
     expect(source).toContain('profile-skeleton');
     expect(source).toContain('v-if="auth.isAuthenticated && profileBillingInitialPending"');
   });
+
+  it('shows access while the free interview is still available', () => {
+    expect(source).toContain('billingStatus?.canCreateInterview');
+  });
+
+  it('keeps the Telegram identity row hidden without removing it', () => {
+    expect(source).toContain('const showTelegramIdentity = false');
+    expect(source).toContain('v-if="showTelegramIdentity"');
+  });
 });

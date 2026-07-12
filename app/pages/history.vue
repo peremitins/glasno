@@ -31,6 +31,8 @@
       data.value?.items.find((item) => item.id === deleteTargetId.value) ?? null
   );
 
+  useBodyScrollLock(() => Boolean(deleteTarget.value));
+
   function formatDate(value: string) {
     return new Intl.DateTimeFormat('ru-RU', {
       day: '2-digit',
@@ -365,9 +367,11 @@
     position: fixed;
     inset: 0;
     z-index: 80;
-    display: grid;
-    place-items: center;
-    padding: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    padding: clamp(16px, 5vh, 44px) 20px;
     background: color-mix(in srgb, var(--app-bg) 72%, transparent);
     backdrop-filter: blur(18px);
   }
@@ -376,6 +380,10 @@
     display: grid;
     gap: 18px;
     width: min(440px, 100%);
+    max-height: 100%;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
     padding: clamp(18px, 2vw, 24px);
   }
 

@@ -4,10 +4,11 @@
     BarChartIcon,
     CheckCircledIcon,
     FileTextIcon,
+    GearIcon,
     LightningBoltIcon,
     RocketIcon,
   } from '@radix-icons/vue';
-  import { computed, reactive, ref } from 'vue';
+  import { computed, onMounted, reactive, ref } from 'vue';
   import { useI18n } from 'vue-i18n';
   import type {
     CreateInterviewSessionRequestInput,
@@ -18,9 +19,30 @@
   import ButtonLoader from '@/app/components/design/ButtonLoader.vue';
   import GlassSkeletonStack from '@/app/components/design/GlassSkeletonStack.vue';
   import TextWithInterviewTerms from '@/app/components/design/TextWithInterviewTerms.vue';
+  import QuickStartSourceField from '@/app/components/dashboard/QuickStartSourceField.vue';
+  import QuickStartResumeField from '@/app/components/dashboard/QuickStartResumeField.vue';
+  import PaywallModal from '@/app/components/billing/PaywallModal.vue';
+  import {
+    classifyQuickSource,
+    normalizeVacancyUrl,
+  } from '@/app/utils/interviewSource';
 
   const { t } = useI18n();
   const api = useAPI();
+  const billing = useBillingStatus();
+
+  onMounted(() => {
+    void billing.ensureLoaded();
+  });
+
+  const paywallOpen = ref(false);
+
+  // Бесплатная попытка исчерпана и активного пропуска нет — быстрый старт
+  // блокируется: показываем бриллиант и открываем пейволл вместо запуска.
+  const isLaunchLocked = computed(() => {
+    const status = billing.status.value;
+    return Boolean(status) && !status!.unlimited && !status!.canCreateInterview;
+  });
 
   const { data: summary, pending } = await useLazyAsyncData(
     'dashboard-summary',
@@ -36,11 +58,15 @@
 
   const hasSessions = computed(() => (summary.value?.totals.sessions ?? 0) > 0);
 
-  const quickLauncherDefaults = [
-    'Стандарт · 15 мин',
-    t('dashboard.mixedDefault'),
-    t('dashboard.levelDefault'),
-  ];
+  // Быстрый старт всегда запускает бесплатный тестовый формат (3 вопроса).
+  // «Бесплатно» показываем только тем, у кого ещё нет активного пропуска.
+  const quickLauncherDefaults = computed(() => {
+    const chips = [t('dashboard.launcherChipQuick'), t('dashboard.mixedDefault')];
+    if (!billing.hasActivePaidAccess.value) {
+      chips.push(t('dashboard.launcherChipFree'));
+    }
+    return chips;
+  });
 
   const stats = computed(() => {
     const totals = summary.value?.totals;
@@ -134,30 +160,22 @@
     };
   }
 
-  function normalizeUrlLike(value: string): string | null {
-    const trimmed = value.trim();
-    if (/^https?:\/\//i.test(trimmed)) return trimmed;
-    if (/^[\w.-]+\.[a-zа-яё]{2,}(\/\S*)?$/iu.test(trimmed)) {
-      return `https://${trimmed}`;
-    }
-    return null;
-  }
-
   function buildDashboardSource():
     | CreateInterviewSessionRequestInput['source']
     | null {
     const value = dashboardQuickForm.sourceText.trim();
     if (value.length < 2) return null;
 
-    const url = normalizeUrlLike(value);
-    if (url) {
+    const kind = classifyQuickSource(value);
+
+    if (kind === 'url') {
       return {
         type: 'hh_url',
-        url,
+        url: normalizeVacancyUrl(value) ?? value,
       };
     }
 
-    if (value.length >= 40 || value.includes('\n')) {
+    if (kind === 'text') {
       return {
         type: 'text',
         text: value,
@@ -173,6 +191,11 @@
   const quickStartReady = computed(() => Boolean(buildDashboardSource()));
 
   async function startQuickInterview() {
+    if (isLaunchLocked.value) {
+      paywallOpen.value = true;
+      return;
+    }
+
     const source = buildDashboardSource();
     if (!source) {
       quickStartError.value = t('dashboard.launcherNeedSource');
@@ -191,7 +214,7 @@
         source,
         resumeText: dashboardQuickForm.resumeText.trim() || undefined,
         level: 'middle',
-        sessionGoal: 'standard',
+        sessionGoal: 'quick',
         questionSourceMode: 'mixed',
         language: 'ru',
         interviewerMode: 'neutral',
@@ -234,49 +257,58 @@
           </div>
 
           <form class="launcher-form" @submit.prevent="startQuickInterview">
-            <div class="field">
-              <label for="dashboard-source">{{
-                t('dashboard.launcherInputLabel')
-              }}</label>
-              <input
-                id="dashboard-source"
-                v-model="dashboardQuickForm.sourceText"
-                class="text-control"
-                type="text"
-                :placeholder="t('dashboard.launcherInputPlaceholder')"
-              />
-            </div>
+            <QuickStartSourceField
+              id="dashboard-source"
+              v-model="dashboardQuickForm.sourceText"
+              :label="t('dashboard.launcherInputLabel')"
+              :placeholder="t('dashboard.launcherInputPlaceholder')"
+            />
 
-            <div class="field">
-              <label for="dashboard-resume">{{
-                t('dashboard.launcherResumeLabel')
-              }}</label>
-              <textarea
-                id="dashboard-resume"
-                v-model="dashboardQuickForm.resumeText"
-                class="text-control"
-                rows="3"
-                :placeholder="t('dashboard.launcherResumePlaceholder')"
-              />
-            </div>
+            <QuickStartResumeField
+              id="dashboard-resume"
+              :label="t('dashboard.launcherResumeLabel')"
+              :placeholder="t('dashboard.launcherResumePlaceholder')"
+              @update:model-value="dashboardQuickForm.resumeText = $event"
+            />
 
             <div class="launcher-footer">
               <div class="summary-chips">
                 <span v-for="item in quickLauncherDefaults" :key="item">
                   {{ item }}
                 </span>
+                <NuxtLink
+                  v-tooltip="t('dashboard.configure')"
+                  class="chip-config"
+                  to="/interview/new"
+                  :aria-label="t('dashboard.configure')"
+                >
+                  <GearIcon aria-hidden="true" />
+                </NuxtLink>
               </div>
               <button
                 class="primary-action button-loader-host"
+                :class="{ 'primary-action--locked': isLaunchLocked }"
                 type="submit"
-                :disabled="isSubmitting || !quickStartReady"
+                :disabled="
+                  isSubmitting || (!isLaunchLocked && !quickStartReady)
+                "
               >
                 <ButtonLoader v-if="isSubmitting" />
                 <span
                   class="button-loader-content"
                   :class="{ 'button-loader-content--loading': isSubmitting }"
                 >
-                  {{ t('dashboard.launcherStart') }}
+                  <span
+                    v-if="isLaunchLocked"
+                    class="launcher-diamond"
+                    aria-hidden="true"
+                    >💎</span
+                  >
+                  {{
+                    isLaunchLocked
+                      ? t('dashboard.launcherUnlock')
+                      : t('dashboard.launcherStart')
+                  }}
                   <span class="primary-action__icon" aria-hidden="true">
                     <ArrowRightIcon />
                   </span>
@@ -287,9 +319,6 @@
             <p v-if="quickStartError" class="form-error">
               {{ quickStartError }}
             </p>
-            <NuxtLink class="detail-link" to="/interview/new">
-              {{ t('dashboard.configure') }}
-            </NuxtLink>
           </form>
         </article>
 
@@ -404,18 +433,12 @@
               class="launcher-form launcher-form--compact"
               @submit.prevent="startQuickInterview"
             >
-              <div class="field">
-                <label for="dashboard-source-returning">{{
-                  t('dashboard.launcherInputLabel')
-                }}</label>
-                <input
-                  id="dashboard-source-returning"
-                  v-model="dashboardQuickForm.sourceText"
-                  class="text-control"
-                  type="text"
-                  :placeholder="t('dashboard.launcherInputPlaceholder')"
-                />
-              </div>
+              <QuickStartSourceField
+                id="dashboard-source-returning"
+                v-model="dashboardQuickForm.sourceText"
+                :label="t('dashboard.launcherInputLabel')"
+                :placeholder="t('dashboard.launcherInputPlaceholder')"
+              />
               <div class="summary-chips">
                 <span v-for="item in quickLauncherDefaults" :key="item">
                   {{ item }}
@@ -427,15 +450,28 @@
                 </p>
                 <button
                   class="primary-action button-loader-host"
+                  :class="{ 'primary-action--locked': isLaunchLocked }"
                   type="submit"
-                  :disabled="isSubmitting || !quickStartReady"
+                  :disabled="
+                    isSubmitting || (!isLaunchLocked && !quickStartReady)
+                  "
                 >
                   <ButtonLoader v-if="isSubmitting" />
                   <span
                     class="button-loader-content"
                     :class="{ 'button-loader-content--loading': isSubmitting }"
                   >
-                    {{ t('dashboard.launcherStart') }}
+                    <span
+                      v-if="isLaunchLocked"
+                      class="launcher-diamond"
+                      aria-hidden="true"
+                      >💎</span
+                    >
+                    {{
+                      isLaunchLocked
+                        ? t('dashboard.launcherUnlock')
+                        : t('dashboard.launcherStart')
+                    }}
                     <span class="primary-action__icon" aria-hidden="true">
                       <ArrowRightIcon />
                     </span>
@@ -507,6 +543,8 @@
         </section>
       </section>
     </template>
+
+    <PaywallModal v-model:open="paywallOpen" mode="plans" plans-variant="full" />
   </div>
 </template>
 
@@ -608,9 +646,19 @@
 
   .launcher-footer {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
     gap: 12px;
-    align-items: center;
+  }
+
+  /* Чипсы-настройки идут одной строкой на всю ширину, кнопка — под ними
+     справа. Раньше чипсы делили строку с кнопкой и переносились в столбик. */
+  .launcher-footer .primary-action {
+    justify-self: end;
+  }
+
+  .launcher-diamond {
+    margin-right: 2px;
+    font-size: 15px;
+    line-height: 1;
   }
 
   .summary-chips {
@@ -629,6 +677,36 @@
     font-weight: 850;
     padding: 6px 10px;
     white-space: nowrap;
+  }
+
+  /* Шестерёнка «Настроить подробнее» — в той же строке, что и чипсы. */
+  .chip-config {
+    display: inline-grid;
+    flex: 0 0 auto;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    border: 1px solid var(--glass-border);
+    border-radius: 999px;
+    background: var(--surface-soft);
+    color: var(--accent-2);
+    text-decoration: none;
+    transition: border-color var(--motion-normal) var(--ease-out),
+      background var(--motion-normal) var(--ease-out),
+      color var(--motion-normal) var(--ease-out),
+      transform var(--motion-normal) var(--ease-out);
+  }
+
+  .chip-config:hover {
+    transform: translateY(-1px);
+    border-color: color-mix(in srgb, var(--accent) 52%, var(--glass-border));
+    background: var(--surface-raised);
+    color: var(--text-primary);
+  }
+
+  .chip-config svg {
+    width: 15px;
+    height: 15px;
   }
 
   .form-error {

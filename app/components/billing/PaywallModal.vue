@@ -16,11 +16,16 @@
   const props = defineProps<{
     open: boolean;
     mode: 'minutes' | 'plans';
+    // 'compact' — три ключевых срока (по умолчанию, для realtime-пейволла);
+    // 'full' — вся линейка пропусков (пейволл при исчерпанной попытке).
+    plansVariant?: 'compact' | 'full';
   }>();
   const emit = defineEmits<{ (e: 'update:open', value: boolean): void }>();
 
   const { t } = useI18n();
   const api = useAPI();
+
+  useBodyScrollLock(() => props.open);
 
   const plansData = ref<BillingPlansResponse | null>(null);
   const plansPending = ref(false);
@@ -83,9 +88,17 @@
     }
   }
 
-  // В модалке — три ключевых срока (входной/основной/выгодный), чтобы не
-  // перегружать быстрый выбор; все шесть — на странице тарифов.
-  const PAYWALL_PASS_IDS = ['pass_7d', 'pass_30d', 'pass_90d'];
+  // 'compact' — входной/основной/выгодный срок, чтобы не перегружать быстрый
+  // выбор. 'full' — вся линейка пропусков от 7 дней до года.
+  const COMPACT_PASS_IDS = ['pass_7d', 'pass_30d', 'pass_90d'];
+  const FULL_PASS_IDS = [
+    'pass_7d',
+    'pass_15d',
+    'pass_30d',
+    'pass_90d',
+    'pass_180d',
+    'pass_365d',
+  ];
 
   const items = computed(() => {
     const plans = plansData.value?.plans || [];
@@ -94,9 +107,11 @@
         (plan) => plan.type === 'minute_pack' && plan.isCheckoutEnabled
       );
     }
-    return PAYWALL_PASS_IDS.map((id) =>
-      plans.find((plan) => plan.id === id && plan.isCheckoutEnabled)
-    ).filter((plan): plan is NonNullable<typeof plan> => Boolean(plan));
+    const passIds =
+      props.plansVariant === 'full' ? FULL_PASS_IDS : COMPACT_PASS_IDS;
+    return passIds
+      .map((id) => plans.find((plan) => plan.id === id && plan.isCheckoutEnabled))
+      .filter((plan): plan is NonNullable<typeof plan> => Boolean(plan));
   });
 
   const title = computed(() =>
@@ -217,7 +232,9 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 16px;
+    /* Overlay не скроллит — только держит отступ от краёв экрана. */
+    overflow: hidden;
+    padding: clamp(16px, 5vh, 44px) 16px;
     background: color-mix(in srgb, #000 62%, transparent);
     backdrop-filter: blur(4px);
   }
@@ -225,6 +242,11 @@
   .paywall {
     position: relative;
     width: min(440px, 100%);
+    /* Модалка целиком вмещается в экран, а скролл — внутри неё. */
+    max-height: 100%;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
     display: grid;
     gap: 12px;
     padding: clamp(20px, 3vw, 26px);

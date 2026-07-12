@@ -94,6 +94,152 @@ function createInMemoryRepository() {
 }
 
 describe('InterviewService', () => {
+  it('starts with a matching repeat and excludes repeat/hidden concepts from later generation', async () => {
+    const repository = createInMemoryRepository();
+    const engine = {
+      converse: vi.fn(),
+      converseStream: vi.fn(),
+      normalizeCustomQuestions: vi.fn(),
+      generateQuestion: vi.fn().mockResolvedValue({
+        question: 'Как вы оптимизируете JavaScript-бандл?',
+        semantic: {
+          conceptKey: 'bundle_optimization',
+          conceptLabel: 'Оптимизация бандла',
+          topicTags: ['javascript'],
+          requiredContextTags: [],
+          focus: 'professional',
+        },
+      }),
+      evaluateAnswer: vi.fn(),
+      generateQuestionHints: vi.fn(),
+      generateSampleAnswerHint: vi.fn(),
+    };
+    const now = new Date('2026-07-12T00:00:00.000Z');
+    const preferences = [
+      {
+        id: 'repeat_1',
+        anonymousSessionId: 'anon_1',
+        userId: null,
+        status: 'repeat',
+        question: 'Как браузер строит DOM и CSSOM?',
+        conceptKey: 'browser_rendering',
+        semantic: {
+          conceptKey: 'browser_rendering',
+          conceptLabel: 'Построение DOM и CSSOM',
+          topicTags: ['dom', 'cssom'],
+          requiredContextTags: [],
+          focus: 'professional',
+        },
+        roleKey: 'it-frontend',
+        roleLabel: 'Frontend-разработчик',
+        level: 'middle',
+        contextTags: [],
+        focus: 'professional',
+        sourceSessionId: null,
+        sourceTurnId: null,
+        lastPracticedAt: null,
+        practiceCount: 0,
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        id: 'hidden_1',
+        anonymousSessionId: 'anon_1',
+        userId: null,
+        status: 'hidden',
+        question: 'Что такое CSS?',
+        conceptKey: 'css_basics',
+        semantic: null,
+        roleKey: 'it-frontend',
+        roleLabel: 'Frontend-разработчик',
+        level: 'middle',
+        contextTags: [],
+        focus: 'professional',
+        sourceSessionId: null,
+        sourceTurnId: null,
+        lastPracticedAt: null,
+        practiceCount: 0,
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        id: 'mastered_1',
+        anonymousSessionId: 'anon_1',
+        userId: null,
+        status: 'mastered',
+        question: 'Что такое HTML?',
+        conceptKey: 'html_basics',
+        semantic: null,
+        roleKey: 'it-frontend',
+        roleLabel: 'Frontend-разработчик',
+        level: 'middle',
+        contextTags: [],
+        focus: 'professional',
+        sourceSessionId: null,
+        sourceTurnId: null,
+        lastPracticedAt: null,
+        practiceCount: 0,
+        createdAt: now,
+        updatedAt: now,
+      },
+    ] as any[];
+    const questionPreferenceRepository = {
+      listForOwner: vi.fn().mockResolvedValue(preferences),
+      markPracticed: vi.fn(),
+    };
+    const service = new InterviewService({
+      repository,
+      engine,
+      hhClient: null,
+      questionPreferenceRepository: questionPreferenceRepository as any,
+    });
+
+    const created = await service.createSession({
+      anonymousSessionId: 'anon_1',
+      input: {
+        source: { type: 'profession', role: 'Frontend-разработчик' },
+        level: 'middle',
+        sessionGoal: 'quick',
+        responseMode: 'text',
+        hintMode: 'off',
+        language: 'ru',
+        interviewerMode: 'neutral',
+        interviewerAvatarId: 'neutral-pro',
+        focus: 'professional',
+      },
+    });
+
+    expect(created.currentTurn).toMatchObject({
+      question: 'Как браузер строит DOM и CSSOM?',
+      questionSource: 'repeat',
+    });
+    expect(engine.generateQuestion).not.toHaveBeenCalled();
+    expect(questionPreferenceRepository.markPracticed).toHaveBeenCalledWith(
+      ['repeat_1'],
+      expect.any(Date)
+    );
+
+    await service.nextQuestion({
+      anonymousSessionId: 'anon_1',
+      sessionId: created.session.id,
+      input: { turnId: created.currentTurn!.id },
+    });
+
+    expect(engine.generateQuestion).toHaveBeenCalledWith(
+      expect.objectContaining({
+        questionPreferences: expect.arrayContaining([
+          expect.objectContaining({ id: 'repeat_1', status: 'repeat' }),
+          expect.objectContaining({ id: 'hidden_1', status: 'hidden' }),
+        ]),
+      })
+    );
+    const passedPreferences = engine.generateQuestion.mock.calls[0]![0]
+      .questionPreferences;
+    expect(passedPreferences).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: 'mastered_1' })])
+    );
+  });
+
   it('creates a running anonymous interview session with the first question', async () => {
     const repository = createInMemoryRepository();
     const engine = {

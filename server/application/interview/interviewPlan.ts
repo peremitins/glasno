@@ -13,8 +13,14 @@ import type {
   InterviewQuestionSource,
   InterviewQuestionSourceMode,
   QuestionHintPack,
+  QuestionSemanticPassport,
   RealtimeSessionLimits,
 } from '@/shared/dto';
+import type { QuestionPreferenceRecord } from '@/server/interface/questionPreferenceRepository';
+import {
+  getRepeatQuestionLimit,
+  selectRepeatPreferences,
+} from '@/server/application/questionPreferences/scheduling';
 import type { InterviewTurnRecord } from '@/server/interface/interviewRepository';
 import {
   defaultFaceForMode,
@@ -45,6 +51,8 @@ export interface PlannedQuestion {
   source: InterviewQuestionSource;
   question: string;
   hintPack: QuestionHintPack;
+  preferenceId?: string | null;
+  semantic?: QuestionSemanticPassport | null;
 }
 
 const SESSION_GOAL_CONFIG: Record<
@@ -258,6 +266,8 @@ export function resolveNextPlannedQuestion(params: {
       hintPack:
         nextUserItem.hintPack ??
         buildHintPack({ question: nextUserItem.question }),
+      preferenceId: nextUserItem.preferenceId ?? null,
+      semantic: nextUserItem.semantic ?? null,
     };
   }
 
@@ -265,17 +275,72 @@ export function resolveNextPlannedQuestion(params: {
     return null;
   }
 
-  const nextGlasnoItem = params.metadata.plan.items.find(
-    (item) => item.source === 'glasno' && !askedPlanItemIds.has(item.id)
+  const nextGeneratedItem = params.metadata.plan.items.find(
+    (item) =>
+      (item.source === 'glasno' || item.source === 'repeat') &&
+      !askedPlanItemIds.has(item.id)
   );
 
-  if (!nextGlasnoItem) return null;
+  if (!nextGeneratedItem) return null;
+
+  if (nextGeneratedItem.source === 'repeat' && nextGeneratedItem.question) {
+    return {
+      planItemId: nextGeneratedItem.id,
+      source: 'repeat',
+      question: nextGeneratedItem.question,
+      hintPack:
+        nextGeneratedItem.hintPack ??
+        buildHintPack({ question: nextGeneratedItem.question }),
+      preferenceId: nextGeneratedItem.preferenceId ?? null,
+      semantic: nextGeneratedItem.semantic ?? null,
+    };
+  }
 
   return {
-    planItemId: nextGlasnoItem.id,
+    planItemId: nextGeneratedItem.id,
     source: 'glasno',
     question: '',
     hintPack: buildHintPack({ question: '' }),
+  };
+}
+
+export function injectRepeatPreferences(
+  metadata: InterviewSessionMetadata,
+  preferences: QuestionPreferenceRecord[]
+): InterviewSessionMetadata {
+  if (metadata.trainingMode !== 'candidate') return metadata;
+  const userQuestionCount = metadata.plan.items.filter(
+    (item) => item.source === 'user'
+  ).length;
+  const limit = getRepeatQuestionLimit(
+    metadata.plan.items.length,
+    userQuestionCount
+  );
+  const selected = selectRepeatPreferences(
+    preferences.filter((item) => item.status === 'repeat'),
+    limit
+  );
+  if (!selected.length) return metadata;
+
+  let repeatIndex = 0;
+  const items = metadata.plan.items.map((item) => {
+    const preference = item.source === 'glasno' ? selected[repeatIndex] : null;
+    if (!preference) return item;
+    repeatIndex += 1;
+    return {
+      ...item,
+      id: `plan_repeat_${preference.id}`,
+      source: 'repeat' as const,
+      question: preference.question,
+      preferenceId: preference.id,
+      semantic: preference.semantic,
+      hintPack: buildHintPack({ question: preference.question }),
+    };
+  });
+
+  return {
+    ...metadata,
+    plan: { ...metadata.plan, items },
   };
 }
 
