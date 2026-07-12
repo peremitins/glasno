@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Шаблон LaunchAgent для единого shared-сервера Serena проекта Гласно.
+  Скопировать в ~/Library/LaunchAgents/app.glasno.serena.plist, поправив пути
+  под свою машину (домашний каталог, версия node в PATH), затем:
+    launchctl load -w ~/Library/LaunchAgents/app.glasno.serena.plist
+  Подробности — в .docs/SERENA.md.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>app.glasno.serena</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/peremitin/.local/bin/serena</string>
+    <string>start-mcp-server</string>
+    <string>--transport</string>
+    <string>streamable-http</string>
+    <string>--host</string>
+    <string>127.0.0.1</string>
+    <string>--port</string>
+    <string>9121</string>
+    <string>--project</string>
+    <string>/Users/peremitin/Desktop/dev/jobai</string>
+    <string>--context</string>
+    <string>ide</string>
+    <string>--enable-web-dashboard</string>
+    <string>true</string>
+    <string>--open-web-dashboard</string>
+    <string>false</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/Users/peremitin/.nvm/versions/node/v22.17.0/bin:/Users/peremitin/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>HOME</key>
+    <string>/Users/peremitin</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/Users/peremitin/Library/Logs/serena-glasno.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/peremitin/Library/Logs/serena-glasno.err.log</string>
+</dict>
+</plist>

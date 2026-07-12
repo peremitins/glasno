@@ -1,0 +1,1 @@
+scenario,run,mode,session_id,started_at,model,reasoning,permission_mode,tool_calls,full_file_reads,bytes_read,duration_seconds,accuracy,retries,compaction,input_tokens,output_tokens,notes
