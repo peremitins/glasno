@@ -134,6 +134,9 @@ export default defineNuxtConfig({
     // деплой-уведомлений (см. .docs/DEPLOY.md), временное решение.
     telegramAlertsBotToken: '',
     telegramAlertsChatId: '',
+    // Прямой api.telegram.org может быть заблокирован с прод-сервера (РФ) —
+    // прокси-хост (например, Cloudflare Worker) для проброса запросов.
+    telegramAlertsApiHost: '',
     authEmailCodeSecret: '',
     emailHashPepper: '',
     // Значения S3 намеренно серверные: URL объекта выдаётся только защищённым

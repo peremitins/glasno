@@ -7,6 +7,7 @@ import { TelegramAlertsService } from './telegramAlertsService';
 interface TelegramAlertsRuntimeConfig {
   telegramAlertsBotToken?: unknown;
   telegramAlertsChatId?: unknown;
+  telegramAlertsApiHost?: unknown;
 }
 
 export function createTelegramAlertsService(event: H3Event): TelegramAlertsService {
@@ -20,6 +21,7 @@ export function createTelegramAlertsServiceFromConfig(
     new TelegramAlertsClient({
       botToken: (config.telegramAlertsBotToken as string) || '',
       chatId: (config.telegramAlertsChatId as string) || '',
+      apiHost: (config.telegramAlertsApiHost as string) || '',
     })
   );
 }

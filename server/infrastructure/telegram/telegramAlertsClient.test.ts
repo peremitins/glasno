@@ -47,6 +47,40 @@ describe('TelegramAlertsClient', () => {
     expect(call.body).not.toHaveProperty('parse_mode');
   });
 
+  it('использует кастомный apiHost вместо api.telegram.org, если он задан', async () => {
+    // Прямой доступ к api.telegram.org может быть заблокирован с прод-сервера
+    // (РФ-инфраструктура) — тогда используется проксирующий хост (например,
+    // Cloudflare Worker), пробрасывающий запросы к Telegram Bot API.
+    fetchMock.mockResolvedValueOnce({ ok: true });
+    const client = new TelegramAlertsClient({
+      botToken: 'bot-token-123',
+      chatId: '-100500',
+      apiHost: 'my-proxy.workers.dev',
+    });
+
+    await client.send('привет');
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://my-proxy.workers.dev/botbot-token-123/sendMessage',
+      expect.anything()
+    );
+  });
+
+  it('по умолчанию использует api.telegram.org, если apiHost не задан', async () => {
+    fetchMock.mockResolvedValueOnce({ ok: true });
+    const client = new TelegramAlertsClient({
+      botToken: 'bot-token-123',
+      chatId: '-100500',
+    });
+
+    await client.send('привет');
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.telegram.org/botbot-token-123/sendMessage',
+      expect.anything()
+    );
+  });
+
   it('не отправляет запрос, если botToken не задан', async () => {
     const client = new TelegramAlertsClient({ botToken: '', chatId: '-100500' });
 
