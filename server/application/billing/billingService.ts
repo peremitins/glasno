@@ -39,6 +39,7 @@ import {
   sendRenewalFailedEmail,
   sendRenewalNoticeEmail,
 } from './renewalEmailSender';
+import type { TelegramAlertsService } from '@/server/application/telegram/telegramAlertsService';
 
 // Политика ретраев автосписания (ТЗ тарифы v2, раздел 3): попытка в дату
 // продления, повтор через 24 часа, максимум 3 попытки — затем автопродление
@@ -65,6 +66,7 @@ export class BillingService {
     private readonly deps: {
       repository: BillingRepository;
       config: BillingServiceConfig;
+      telegramAlerts?: TelegramAlertsService;
     }
   ) {
     this.access = new BillingAccessService({
@@ -824,7 +826,7 @@ export class BillingService {
               cardExpiryYear: verified.paymentMethod.cardExpiryYear,
             }
           : null;
-      await this.deps.repository.fulfillPaidOrder({
+      const fulfillResult = await this.deps.repository.fulfillPaidOrder({
         orderId: order.id,
         providerPaymentId: verified.id,
         plan: {
@@ -836,6 +838,11 @@ export class BillingService {
         autoRenew: order.metadata?.autoRenew === true,
         paymentMethod: savedMethod,
       });
+      // Только на реальную первую выдачу доступа — не на повторный вебхук/поллинг
+      // уже выполненного заказа (fulfillPaidOrder идемпотентен).
+      if (fulfillResult.fulfilled) {
+        await this.notifyBillingPurchaseTelegram(order, plan);
+      }
     } else if (paymentOk && !plan) {
       // Заказ на несуществующий тариф (данные из старой dev-схемы):
       // доступ не выдаём, оставляем след для разбора.
@@ -865,6 +872,36 @@ export class BillingService {
       shouldContinuePolling: isPendingPaymentStatus(verified.status),
       userId: order.userId,
     });
+  }
+
+  private async notifyBillingPurchaseTelegram(
+    order: PaymentOrderRecord,
+    plan: BillingPlanConfig
+  ): Promise<void> {
+    if (!this.deps.telegramAlerts) return;
+    const email = await this.deps.repository.findUserEmail(order.userId);
+    const user = {
+      id: order.userId,
+      email,
+      telegramId: null,
+      telegramUsername: null,
+      displayName: null,
+    };
+    if (plan.type === 'minute_pack') {
+      await this.deps.telegramAlerts.notifyVoiceMinutesPurchased({
+        user,
+        planName: plan.name,
+        minutes: plan.realtimeVoiceMinutes,
+        amountRub: order.amountRub,
+      });
+    } else {
+      await this.deps.telegramAlerts.notifySubscriptionPurchased({
+        user,
+        planName: plan.name,
+        amountRub: order.amountRub,
+        isRenewal: order.metadata?.renewal === true,
+      });
+    }
   }
 
   private async buildCheckoutStatus(params: {

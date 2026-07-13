@@ -13,6 +13,7 @@ import type {
   MagicLoginTokenRecord,
   UpsertEmailUserInput,
   UpsertTelegramUserInput,
+  UpsertUserResult,
 } from '@/server/interface/authRepository';
 import { planAnonymousPreferenceMigration } from '@/server/application/questionPreferences/ownership';
 
@@ -143,7 +144,7 @@ export class DrizzleAuthRepository implements AuthRepository {
     return row ? mapUser(row) : null;
   }
 
-  async upsertEmailUser(input: UpsertEmailUserInput): Promise<AuthUserRecord> {
+  async upsertEmailUser(input: UpsertEmailUserInput): Promise<UpsertUserResult> {
     const { email, displayName } = input;
     const now = new Date();
     const [existing] = await this.db
@@ -161,7 +162,7 @@ export class DrizzleAuthRepository implements AuthRepository {
         })
         .where(eq(schema.users.id, existing.id))
         .returning();
-      return mapUser(requireRow(updated, 'user'));
+      return { user: mapUser(requireRow(updated, 'user')), isNew: false };
     }
 
     const [created] = await this.db
@@ -174,7 +175,7 @@ export class DrizzleAuthRepository implements AuthRepository {
         updatedAt: now,
       })
       .returning();
-    return mapUser(requireRow(created, 'user'));
+    return { user: mapUser(requireRow(created, 'user')), isNew: true };
   }
 
   async setUserRole(userId: string, role: UserRole): Promise<AuthUserRecord> {
@@ -212,7 +213,7 @@ export class DrizzleAuthRepository implements AuthRepository {
 
   async upsertTelegramUser(
     input: UpsertTelegramUserInput
-  ): Promise<AuthUserRecord> {
+  ): Promise<UpsertUserResult> {
     const now = new Date();
     const [existing] = await this.db
       .select()
@@ -231,7 +232,7 @@ export class DrizzleAuthRepository implements AuthRepository {
         .set(buildExistingTelegramUserUpdate(input, existing, now))
         .where(eq(schema.users.id, existing.id))
         .returning();
-      return mapUser(requireRow(updated, 'user'));
+      return { user: mapUser(requireRow(updated, 'user')), isNew: false };
     }
 
     const [created] = await this.db
@@ -244,7 +245,7 @@ export class DrizzleAuthRepository implements AuthRepository {
         updatedAt: now,
       })
       .returning();
-    return mapUser(requireRow(created, 'user'));
+    return { user: mapUser(requireRow(created, 'user')), isNew: true };
   }
 
   async anonymizeUserAccount(userId: string, now: Date): Promise<boolean> {
