@@ -1,8 +1,43 @@
 import type { H3Event } from 'h3';
 import { DrizzleAuthRepository } from '@/server/infrastructure/auth/drizzleAuthRepository';
+import { normalizeAvatarImage } from '@/server/infrastructure/files/normalizeAvatarImage';
+import {
+  resolveS3AvatarStorageConfig,
+  S3AvatarStorage,
+} from '@/server/infrastructure/storage/s3AvatarStorage';
 import { apiError } from '@/server/utils/errors';
 import { AuthService } from './authService';
 import { AuthSessionService } from './authSessionService';
+
+let cachedAvatarStorage:
+  | { key: string; storage: S3AvatarStorage }
+  | undefined;
+
+// S3-клиент хранит keep-alive соединения. Кэш живёт на уровне Nitro-процесса,
+// а не отдельного HTTP-запроса, чтобы не создавать новый клиент для каждой
+// операции с аватаром.
+export function getCachedAvatarStorage(
+  runtimeConfig: Record<string, unknown>
+): S3AvatarStorage {
+  const storageConfig = resolveS3AvatarStorageConfig(runtimeConfig);
+  const key = JSON.stringify([
+    storageConfig.endpoint,
+    storageConfig.region,
+    storageConfig.bucket,
+    storageConfig.accessKeyId,
+    storageConfig.secretAccessKey,
+  ]);
+
+  if (cachedAvatarStorage?.key === key) {
+    return cachedAvatarStorage.storage;
+  }
+
+  // При смене настроек не оставляем открытые сокеты предыдущего клиента.
+  cachedAvatarStorage?.storage.destroy();
+  const storage = new S3AvatarStorage(storageConfig);
+  cachedAvatarStorage = { key, storage };
+  return storage;
+}
 
 function getSessionSecret(event: H3Event): string {
   const config = useRuntimeConfig(event);
@@ -48,6 +83,9 @@ export function createAuthService(event: H3Event) {
     adminTelegramIds: parseCsvEnv(process.env.ADMIN_TELEGRAM_IDS),
     testLoginEmails: parseCsvEnv(process.env.AUTH_TEST_LOGIN_EMAILS),
     testLoginCode: process.env.AUTH_TEST_LOGIN_CODE || '',
+    avatarImageProcessor: { normalize: normalizeAvatarImage },
+    createAvatarStorage: () =>
+      getCachedAvatarStorage(config as Record<string, unknown>),
   });
 }
 

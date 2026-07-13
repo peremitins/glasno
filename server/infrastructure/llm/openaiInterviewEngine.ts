@@ -30,6 +30,7 @@ import type {
 } from '@/shared/dto';
 import { QuestionSemanticPassportDto } from '@/shared/dto';
 import {
+  isRelayEnabled,
   sendOpenAiResponsesRequest,
   type OpenAiResponsesPurpose,
 } from './openaiResponsesClient';
@@ -717,6 +718,17 @@ export class OpenAiInterviewEngine implements InterviewEngine {
   ): AsyncGenerator<string, { suggestMoveOn: boolean }, void> {
     if (!this.options.apiKey) {
       throw apiError('E_UPSTREAM', 'Провайдер обработки не настроен');
+    }
+
+    // Прод (РФ) достаёт OpenAI только через AI-relay, а relay проксирует лишь
+    // POST /v1/responses (JSON), без SSE-стриминга. Прямой стриминговый вызов
+    // ниже идёт в api.openai.com напрямую и на проде падал с «Не удалось
+    // сгенерировать ответ интервьюера». Поэтому при включённом relay
+    // деградируем на нестриминговый relay-путь: тот же ответ, но одним куском.
+    if (isRelayEnabled()) {
+      const { reply, suggestMoveOn } = await this.converse(params);
+      if (reply) yield reply;
+      return { suggestMoveOn };
     }
 
     const instruction =

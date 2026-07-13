@@ -1,6 +1,7 @@
 <script setup lang="ts">
   import { computed, onMounted, ref, watch } from 'vue';
   import { useI18n } from 'vue-i18n';
+  import { toast } from 'vue-sonner';
   import { CheckIcon } from '@radix-icons/vue';
   import GlassSkeletonStack from '@/app/components/design/GlassSkeletonStack.vue';
   import ButtonLoader from '@/app/components/design/ButtonLoader.vue';
@@ -368,8 +369,10 @@
     try {
       await api('/api/billing/payment-method/unbind', { method: 'POST' });
       await refreshStatus();
+      toast.success(t('pricing.unbindSuccess'));
     } catch {
       errorMessage.value = t('pricing.unbindError');
+      toast.error(t('pricing.unbindError'));
     } finally {
       cardActionPending.value = false;
     }

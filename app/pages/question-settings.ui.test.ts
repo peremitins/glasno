@@ -18,6 +18,15 @@ describe('question preference UI', () => {
     expect(session).toContain('<QuestionPreferenceDropdown');
   });
 
+  it('uses a settings icon for the question preference trigger', () => {
+    const component = read(
+      'app/components/interview/QuestionPreferenceMenu.vue'
+    );
+
+    expect(component).toContain('GearIcon');
+    expect(component).not.toContain('SewingPinIcon');
+  });
+
   it('provides a separate settings page with filters and deletion', () => {
     const page = read('app/pages/question-settings.vue');
     const layout = read('app/layouts/default.vue');

@@ -68,6 +68,16 @@ export default defineEventHandler(async (event) => {
     }
   } catch (err) {
     if (isApiError(err)) {
+      // Логируем и код, и cause: у upstream-ошибок (E_UPSTREAM) реальная
+      // причина провайдера/relay лежит в data.cause и иначе теряется в проде.
+      logger.error(
+        {
+          code: err.data.code,
+          cause: err.data.details ?? null,
+          requestId: event.context.requestId,
+        },
+        'Interview reply stream api error'
+      );
       writeError(err.data.code, err.data.message);
     } else {
       logger.error({ err, requestId: event.context.requestId }, 'Interview reply stream error');

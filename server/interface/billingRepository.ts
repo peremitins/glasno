@@ -249,6 +249,14 @@ export interface BillingRepository {
     userId: string,
     now?: Date
   ): Promise<RealtimeMinuteBalance>;
+  // Идемпотентная выдача бесплатных триал-минут голоса: один грант на
+  // пользователя (guard по sourceType='trial'). Повторный вызов — no-op.
+  ensureTrialRealtimeGrant(params: {
+    userId: string;
+    totalSeconds: number;
+    planId: string;
+    expiresAt: Date;
+  }): Promise<void>;
   // Списание секунд с активных грантов (FIFO по сроку истечения).
   debitRealtimeSeconds(params: {
     userId: string;

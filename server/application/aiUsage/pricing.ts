@@ -70,6 +70,16 @@ export const OPENAI_PRICING: Record<string, ModelPricing> = {
     audioOutputPerMTokensUsd: 64,
     note: 'verify: realtime аудио тарифицируется по аудио-токенам/секундам',
   },
+  // gpt-realtime-mini: ~3× дешевле флагмана по аудио ($10/$20 против $32/$64).
+  // Текстовые ставки — оценка, уточнить по платёжке.
+  'gpt-realtime-mini': {
+    ...ZERO,
+    inputPerMTokensUsd: 0.6,
+    outputPerMTokensUsd: 2.4,
+    audioInputPerMTokensUsd: 10,
+    audioOutputPerMTokensUsd: 20,
+    note: 'verify: gpt-realtime-mini аудио $10/$20; текстовые ставки уточнить',
+  },
 };
 
 // Снимаем суффикс с датой/версией: gpt-4o-mini-2024-07-18 -> gpt-4o-mini.

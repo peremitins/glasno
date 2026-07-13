@@ -63,6 +63,7 @@
     isNextQuestionVoiceCommand,
   } from '@/app/utils/interviewVoiceCommand';
   import { useRealtimeVoiceUiStore } from '@/app/stores/realtimeVoiceUi';
+  import { useAuthStore } from '@/app/stores/auth';
   import { resolveTtsVoiceForFace } from '@/shared/interviewerVoice';
   import { CSRF_COOKIE_NAME } from '@/shared/constants';
   import { useAudioPermissionGate } from '@/app/composables/useAudioPermissionGate';
@@ -81,6 +82,7 @@
   const { t } = useI18n();
   const route = useRoute();
   const api = useAPI();
+  const auth = useAuthStore();
   const runtimeConfig = useRuntimeConfig();
   const tts = useTTS();
   const micPermissionGate = useMicPermissionGate();
@@ -199,6 +201,9 @@
       }`
     );
   });
+  const participantName = computed(
+    () => auth.user?.displayName?.trim() || t('interview.session.you')
+  );
   const currentTurnLabel = computed(() => {
     if (isInterviewerTraining.value) {
       return currentTurn.value?.kind === 'clarification'
@@ -1413,10 +1418,11 @@
             >
               <LocalCameraPreview
                 :active="cameraEnabled"
+                :avatar-url="auth.user?.avatarUrl"
                 @active-change="handleCameraActiveChange"
                 @start-failed="handleCameraStartFailed"
               />
-              <span class="vtile-name">{{ t('interview.session.you') }}</span>
+              <span class="vtile-name">{{ participantName }}</span>
               <!-- «Можно говорить» — у того, кто проходит собеседование.
                    Показываем, когда голосовое соединение установлено; при речи
                    меняем текст на «Говорит» (плюс амбиентная подсветка рамки). -->

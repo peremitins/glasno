@@ -23,6 +23,8 @@ export const users = pgTable('users', {
   telegramUsername: text('telegram_username'),
   email: text('email').unique(),
   displayName: text('display_name'),
+  // Версия меняется после каждой загрузки и инвалидирует URL приватного API.
+  avatarVersion: text('avatar_version'),
   role: text('role').default('user').notNull(),
   onboarding: jsonb('onboarding').notNull().default({}),
   emailVerifiedAt: timestamp('email_verified_at', { withTimezone: true }),

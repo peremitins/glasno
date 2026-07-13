@@ -2,6 +2,8 @@ import { z } from 'zod';
 
 export const UserRoleDto = z.enum(['user', 'admin']);
 
+export const DisplayNameDto = z.string().trim().max(80);
+
 export const AuthUserOnboardingDto = z
   .object({
     interviewExplainSelection: z.boolean().default(false),
@@ -16,6 +18,8 @@ export const AuthUserDto = z.object({
   telegramId: z.string().nullable(),
   telegramUsername: z.string().nullable(),
   displayName: z.string().nullable(),
+  // URL указывает на авторизованный API-маршрут, а не на публичный объект S3.
+  avatarUrl: z.string().nullable().default(null),
   role: UserRoleDto,
   onboarding: AuthUserOnboardingDto,
   emailVerifiedAt: z.string().nullable(),
@@ -40,10 +44,22 @@ export const EmailLoginStartResponseDto = z.object({
 export const EmailLoginVerifyRequestDto = z.object({
   email: z.string().trim().email().max(320),
   code: z.string().trim().regex(/^\d{6}$/),
+  // Имя можно указать только в момент успешной проверки кода. Сервис
+  // сохранит его исключительно для нового email-аккаунта.
+  displayName: DisplayNameDto.optional(),
 });
 
 export const AuthLoginResponseDto = z.object({
   ok: z.literal(true),
+  user: AuthUserDto,
+});
+
+export const UpdateProfileRequestDto = z.object({
+  // Пустая строка имеет смысл «очистить имя» и нормализуется сервисом в null.
+  displayName: DisplayNameDto.nullable(),
+});
+
+export const AuthProfileResponseDto = z.object({
   user: AuthUserDto,
 });
 
@@ -70,6 +86,7 @@ export const DeleteAccountResponseDto = z.object({
 });
 
 export type UserRole = z.infer<typeof UserRoleDto>;
+export type DisplayName = z.infer<typeof DisplayNameDto>;
 export type AuthUserOnboarding = z.infer<typeof AuthUserOnboardingDto>;
 export type AuthUser = z.infer<typeof AuthUserDto>;
 export type AuthMeResponse = z.infer<typeof AuthMeResponseDto>;
@@ -83,6 +100,8 @@ export type EmailLoginVerifyRequest = z.infer<
   typeof EmailLoginVerifyRequestDto
 >;
 export type AuthLoginResponse = z.infer<typeof AuthLoginResponseDto>;
+export type UpdateProfileRequest = z.infer<typeof UpdateProfileRequestDto>;
+export type AuthProfileResponse = z.infer<typeof AuthProfileResponseDto>;
 export type TelegramLoginRequest = z.infer<typeof TelegramLoginRequestDto>;
 export type MagicLoginConsumeQuery = z.infer<typeof MagicLoginConsumeQueryDto>;
 export type LogoutResponse = z.infer<typeof LogoutResponseDto>;

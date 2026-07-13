@@ -50,22 +50,29 @@ export function createWebSpeechEngine(): SpeechEngine {
     instance.lang = language;
     instance.interimResults = true;
     instance.continuous = true;
+    const finalizedResultIndexes = new Set<number>();
 
     instance.onresult = (event: any) => {
       let newFinal = '';
-      let latestInterim = '';
-      for (let index = event.resultIndex; index < event.results.length; index += 1) {
+      const interimSegments: string[] = [];
+      for (let index = 0; index < event.results.length; index += 1) {
         const result = event.results[index];
         const text = result[0]?.transcript || '';
         if (result.isFinal) {
-          newFinal += text;
+          if (!finalizedResultIndexes.has(index)) {
+            newFinal += text;
+            finalizedResultIndexes.add(index);
+          }
         } else {
-          latestInterim = text;
+          interimSegments.push(text);
         }
       }
 
       const finalText = newFinal.trim();
-      const interimText = latestInterim.trim();
+      const interimText = interimSegments
+        .map((segment) => segment.trim())
+        .filter(Boolean)
+        .join(' ');
       if (finalText || interimText) {
         lastSpeechAtMs = Date.now();
       }
