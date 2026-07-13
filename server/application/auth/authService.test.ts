@@ -13,12 +13,20 @@ function createRepository() {
   const codes: any[] = [];
   const sessions: any[] = [];
   const migrated: Array<{ anonymousSessionId: string; userId: string }> = [];
+  const accountDeletionOrder: string[] = [];
 
   return {
     users,
     codes,
     sessions,
     migrated,
+    accountDeletionOrder,
+    async withUserAvatarLock<T>(
+      _userId: string,
+      callback: (repository: never) => Promise<T>
+    ): Promise<T> {
+      return callback(this as never);
+    },
     async createEmailLoginCode(input: any) {
       const code = {
         id: `code_${codes.length + 1}`,
@@ -48,18 +56,49 @@ function createRepository() {
       const code = codes.find((item) => item.id === id);
       if (code) code.consumedAt = new Date('2026-06-28T10:01:00.000Z');
     },
-    async upsertEmailUser(email: string) {
+    async upsertEmailUser(input: { email: string; displayName?: string | null }) {
+      const { email, displayName } = input;
       const existing = users.find((user) => user.email === email);
-      if (existing) return existing;
+      if (existing) {
+        existing.emailVerifiedAt = new Date('2026-06-28T10:01:00.000Z');
+        return existing;
+      }
       const user = {
         id: `user_${users.length + 1}`,
         email,
         telegramId: null,
         telegramUsername: null,
-        displayName: email,
+        displayName: displayName ?? null,
+        avatarVersion: null,
         role: 'user',
         onboarding: {},
         emailVerifiedAt: new Date('2026-06-28T10:01:00.000Z'),
+        createdAt: new Date('2026-06-28T10:01:00.000Z'),
+        updatedAt: new Date('2026-06-28T10:01:00.000Z'),
+        deletedAt: null,
+      };
+      users.push(user);
+      return user;
+    },
+    async upsertTelegramUser(input: any) {
+      const existing = users.find(
+        (user) => user.telegramId === input.telegramId
+      );
+      if (existing) {
+        existing.telegramUsername =
+          input.telegramUsername ?? existing.telegramUsername;
+        return existing;
+      }
+      const user = {
+        id: `user_${users.length + 1}`,
+        email: null,
+        telegramId: input.telegramId,
+        telegramUsername: input.telegramUsername ?? null,
+        displayName: input.displayName ?? input.telegramUsername ?? null,
+        avatarVersion: null,
+        role: 'user',
+        onboarding: {},
+        emailVerifiedAt: null,
         createdAt: new Date('2026-06-28T10:01:00.000Z'),
         updatedAt: new Date('2026-06-28T10:01:00.000Z'),
         deletedAt: null,
@@ -92,10 +131,12 @@ function createRepository() {
     async anonymizeUserAccount(userId: string, now: Date) {
       const user = users.find((item) => item.id === userId);
       if (!user || user.deletedAt) return false;
+      accountDeletionOrder.push('anonymizeUserAccount');
       user.email = null;
       user.telegramId = null;
       user.telegramUsername = null;
       user.displayName = null;
+      user.avatarVersion = null;
       user.role = 'user';
       user.deletedAt = now;
       user.updatedAt = now;
@@ -213,6 +254,73 @@ describe('AuthService', () => {
     vi.useRealTimers();
   });
 
+  it('сохраняет имя только при первом email-входе и не перезаписывает его', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-28T10:00:00.000Z'));
+
+    const repository = createRepository();
+    const service = new AuthService({
+      repository: repository as any,
+      sessionService: new AuthSessionService({
+        repository: repository as any,
+        sessionSecret: 'session-secret',
+      }),
+      authEmailCodeSecret: 'code-secret',
+      emailHashPepper: 'email-pepper',
+      telegramBotToken: '',
+      exposeDevCode: true,
+    });
+
+    const first = await service.startEmailLogin({ email: 'name@example.com' });
+    const created = await service.verifyEmailLogin({
+      email: 'name@example.com',
+      code: first.devCode!,
+      displayName: '  Анна  ',
+      anonymousSessionId: 'anon_name_first',
+    });
+    const second = await service.startEmailLogin({ email: 'name@example.com' });
+    const loggedInAgain = await service.verifyEmailLogin({
+      email: 'name@example.com',
+      code: second.devCode!,
+      displayName: 'Другое имя',
+      anonymousSessionId: 'anon_name_second',
+    });
+
+    expect(created.user.displayName).toBe('Анна');
+    expect(loggedInAgain.user.displayName).toBe('Анна');
+
+    vi.useRealTimers();
+  });
+
+  it('не сохраняет пустое имя при создании email-профиля', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-28T10:00:00.000Z'));
+
+    const repository = createRepository();
+    const service = new AuthService({
+      repository: repository as any,
+      sessionService: new AuthSessionService({
+        repository: repository as any,
+        sessionSecret: 'session-secret',
+      }),
+      authEmailCodeSecret: 'code-secret',
+      emailHashPepper: 'email-pepper',
+      telegramBotToken: '',
+      exposeDevCode: true,
+    });
+
+    const started = await service.startEmailLogin({ email: 'blank@example.com' });
+    const verified = await service.verifyEmailLogin({
+      email: 'blank@example.com',
+      code: started.devCode!,
+      displayName: '   ',
+      anonymousSessionId: 'anon_blank',
+    });
+
+    expect(verified.user.displayName).toBeNull();
+    vi.useRealTimers();
+  });
+
   it('anonymizes account data and makes the user unavailable for future sessions', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-06-28T11:00:00.000Z'));
@@ -229,6 +337,13 @@ describe('AuthService', () => {
       emailHashPepper: 'email-pepper',
       telegramBotToken: '',
       exposeDevCode: true,
+      createAvatarStorage: () => ({
+        putAvatar: async () => {},
+        getAvatar: async () => null,
+        deleteAvatar: async (userId: string) => {
+          repository.accountDeletionOrder.push(`deleteAvatar:${userId}`);
+        },
+      }),
     });
 
     const started = await service.startEmailLogin({ email: 'delete@example.com' });
@@ -241,6 +356,10 @@ describe('AuthService', () => {
     await expect(service.deleteAccount(verified.user.id)).resolves.toEqual({
       ok: true,
     });
+    expect(repository.accountDeletionOrder).toEqual([
+      `deleteAvatar:${verified.user.id}`,
+      'anonymizeUserAccount',
+    ]);
     await expect(repository.findUserById(verified.user.id)).resolves.toBeNull();
     expect(repository.users[0]).toMatchObject({
       email: null,

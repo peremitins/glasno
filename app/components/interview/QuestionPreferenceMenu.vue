@@ -2,8 +2,8 @@
   import {
     CheckIcon,
     EyeNoneIcon,
+    GearIcon,
     ReloadIcon,
-    SewingPinIcon,
   } from '@radix-icons/vue';
   import {
     DropdownMenuContent,
@@ -71,7 +71,7 @@
         :disabled="loading"
         :aria-label="loading ? 'Сохраняем настройку вопроса' : 'Настроить вопрос'"
       >
-        <SewingPinIcon aria-hidden="true" />
+        <GearIcon aria-hidden="true" />
         <span v-if="!compact">Настроить</span>
       </button>
     </DropdownMenuTrigger>

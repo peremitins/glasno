@@ -41,12 +41,6 @@
     step.value === 'code' ? t('auth.verifyTitle') : t('auth.signinTitle')
   );
 
-  const authSubtitle = computed(() =>
-    step.value === 'code'
-      ? t('auth.verifySubtitle', { email: codeEmail.value })
-      : t('auth.signinSubtitle')
-  );
-
   function nextPath(): string {
     return resolveSafeNextPath(route.query.next);
   }
@@ -175,12 +169,11 @@
                   width="40"
                   height="40"
                   aria-hidden="true"
-                >
+                />
               </span>
               <span>{{ t('app.name') }}</span>
             </NuxtLink>
             <h2>{{ authTitle }}</h2>
-            <p>{{ authSubtitle }}</p>
           </div>
 
           <div class="auth-toolbar">
@@ -215,7 +208,7 @@
                 spellcheck="false"
                 :placeholder="t('auth.emailPlaceholder')"
                 required
-              >
+              />
             </div>
           </div>
 
@@ -263,7 +256,7 @@
               placeholder="000000"
               required
               @input="onCodeInput"
-            >
+            />
           </div>
 
           <div class="code-meta">
@@ -326,13 +319,17 @@
 
         <p class="legal">
           {{ t('auth.legalPrefix') }}
-          <a :href="termsOfServiceUrl" target="_blank" rel="noopener noreferrer">
+          <a
+            :href="termsOfServiceUrl"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
             {{ t('auth.termsLink') }}
           </a>
           {{ t('auth.legalBetween') }}
           <a :href="privacyPolicyUrl" target="_blank" rel="noopener noreferrer">
-            {{ t('auth.privacyLink') }}
-          </a>{{ t('auth.legalSuffix') }}
+            {{ t('auth.privacyLink') }} </a
+          >{{ t('auth.legalSuffix') }}
         </p>
       </article>
     </section>
@@ -507,10 +504,30 @@
     gap: 10px;
   }
 
+  .field {
+    gap: 5px;
+  }
+
   .field label {
     color: var(--text-secondary);
     font-size: 13px;
     font-weight: 900;
+  }
+
+  .field-optional,
+  .field-hint {
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  .field-optional {
+    margin-left: 4px;
+  }
+
+  .field-hint {
+    margin: -2px 0 0;
+    line-height: 1.4;
   }
 
   .code-input {

@@ -1764,7 +1764,7 @@
       </div>
     </section>
 
-    <PaywallModal v-model:open="paywallOpen" mode="plans" plans-variant="full" />
+    <PaywallModal v-model:open="paywallOpen" mode="plans" />
 
     <div
       v-if="isSubmitting"

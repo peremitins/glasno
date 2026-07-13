@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, inArray, isNull, or } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray, isNull, or, sql } from 'drizzle-orm';
 import type { UserRole } from '@/shared/dto';
 import { getDb, schema } from '@/server/infrastructure/db/client';
 import { apiError } from '@/server/utils/errors';
@@ -11,6 +11,7 @@ import type {
   CreateMagicLoginTokenInput,
   EmailLoginCodeRecord,
   MagicLoginTokenRecord,
+  UpsertEmailUserInput,
   UpsertTelegramUserInput,
 } from '@/server/interface/authRepository';
 import { planAnonymousPreferenceMigration } from '@/server/application/questionPreferences/ownership';
@@ -27,6 +28,7 @@ function mapUser(row: UserRow): AuthUserRecord {
     telegramId: row.telegramId,
     telegramUsername: row.telegramUsername,
     displayName: row.displayName,
+    avatarVersion: row.avatarVersion,
     role: row.role as UserRole,
     onboarding: normalizeOnboardingRecord(row.onboarding),
     emailVerifiedAt: row.emailVerifiedAt,
@@ -84,8 +86,37 @@ function requireRow<T>(row: T | undefined, entity: string): T {
   return row;
 }
 
+// Telegram может обновлять username, но не имя: имя пользователь редактирует
+// сам в профиле, и повторный Telegram-вход не должен его восстановить.
+export function buildExistingTelegramUserUpdate(
+  input: UpsertTelegramUserInput,
+  existing: Pick<AuthUserRecord, 'telegramUsername'>,
+  now: Date
+) {
+  return {
+    telegramUsername: input.telegramUsername ?? existing.telegramUsername,
+    updatedAt: now,
+  };
+}
+
 export class DrizzleAuthRepository implements AuthRepository {
-  private readonly db = getDb();
+  constructor(private readonly db = getDb()) {}
+
+  async withUserAvatarLock<T>(
+    userId: string,
+    callback: (repository: AuthRepository) => Promise<T>
+  ): Promise<T> {
+    return this.db.transaction(async (tx) => {
+      // Не фильтруем deleted_at: удалённую строку тоже нужно заблокировать,
+      // чтобы параллельная загрузка не могла снова записать объект в S3.
+      await tx.execute(
+        sql`select ${schema.users.id} from ${schema.users} where ${schema.users.id} = ${userId} for update`
+      );
+      return callback(
+        new DrizzleAuthRepository(tx as unknown as ReturnType<typeof getDb>)
+      );
+    });
+  }
 
   async findUserById(id: string): Promise<AuthUserRecord | null> {
     const [row] = await this.db
@@ -112,7 +143,8 @@ export class DrizzleAuthRepository implements AuthRepository {
     return row ? mapUser(row) : null;
   }
 
-  async upsertEmailUser(email: string): Promise<AuthUserRecord> {
+  async upsertEmailUser(input: UpsertEmailUserInput): Promise<AuthUserRecord> {
+    const { email, displayName } = input;
     const now = new Date();
     const [existing] = await this.db
       .select()
@@ -136,7 +168,7 @@ export class DrizzleAuthRepository implements AuthRepository {
       .insert(schema.users)
       .values({
         email,
-        displayName: null,
+        displayName: displayName ?? null,
         role: 'user',
         emailVerifiedAt: now,
         updatedAt: now,
@@ -152,6 +184,30 @@ export class DrizzleAuthRepository implements AuthRepository {
       .where(eq(schema.users.id, userId))
       .returning();
     return mapUser(requireRow(updated, 'user'));
+  }
+
+  async updateDisplayName(
+    userId: string,
+    displayName: string | null
+  ): Promise<AuthUserRecord | null> {
+    const [updated] = await this.db
+      .update(schema.users)
+      .set({ displayName, updatedAt: new Date() })
+      .where(and(eq(schema.users.id, userId), isNull(schema.users.deletedAt)))
+      .returning();
+    return updated ? mapUser(updated) : null;
+  }
+
+  async setAvatarVersion(
+    userId: string,
+    avatarVersion: string | null
+  ): Promise<AuthUserRecord | null> {
+    const [updated] = await this.db
+      .update(schema.users)
+      .set({ avatarVersion, updatedAt: new Date() })
+      .where(and(eq(schema.users.id, userId), isNull(schema.users.deletedAt)))
+      .returning();
+    return updated ? mapUser(updated) : null;
   }
 
   async upsertTelegramUser(
@@ -172,11 +228,7 @@ export class DrizzleAuthRepository implements AuthRepository {
     if (existing) {
       const [updated] = await this.db
         .update(schema.users)
-        .set({
-          telegramUsername: input.telegramUsername ?? existing.telegramUsername,
-          displayName: input.displayName ?? existing.displayName,
-          updatedAt: now,
-        })
+        .set(buildExistingTelegramUserUpdate(input, existing, now))
         .where(eq(schema.users.id, existing.id))
         .returning();
       return mapUser(requireRow(updated, 'user'));
@@ -255,6 +307,7 @@ export class DrizzleAuthRepository implements AuthRepository {
           telegramId: null,
           telegramUsername: null,
           displayName: null,
+          avatarVersion: null,
           role: 'user',
           deletedAt: now,
           updatedAt: now,

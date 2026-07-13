@@ -13,9 +13,12 @@ import {
   ALL_SESSION_GOALS,
   FREE_ALLOWED_SESSION_GOALS,
   FREE_SESSIONS_LIMIT,
+  FREE_TRIAL_VOICE_MINUTES,
+  FREE_TRIAL_VOICE_TTL_DAYS,
   SESSION_CREATION_BURST_LIMIT,
   SESSION_CREATION_BURST_WINDOW_MS,
   SESSION_CREATION_DAILY_LIMIT,
+  TRIAL_VOICE_GRANT_PLAN_ID,
   findBillingPlan,
   getPassPlans,
   type SessionGoalAccess,
@@ -39,6 +42,7 @@ export class BillingAccessService {
         | 'countOwnerSessionsSince'
         | 'findAccessByUserId'
         | 'getRealtimeMinuteBalance'
+        | 'ensureTrialRealtimeGrant'
         | 'findPaymentMethodByUserId'
         | 'findUserEmail'
         | 'claimReadyGiftsByEmail'
@@ -62,6 +66,19 @@ export class BillingAccessService {
             realtimeVoiceMinutes: plan.realtimeVoiceMinutes,
             priceRub: plan.priceRub,
           })),
+        });
+      }
+
+      // Триал-минуты голоса. Выдаём до расчёта баланса, чтобы getRealtimeMinuteBalance
+      // ниже уже увидел грант. Админам не нужно — у них безлимит (ветка ниже).
+      if (owner.role !== 'admin') {
+        await this.deps.repository.ensureTrialRealtimeGrant({
+          userId: owner.userId,
+          totalSeconds: FREE_TRIAL_VOICE_MINUTES * 60,
+          planId: TRIAL_VOICE_GRANT_PLAN_ID,
+          expiresAt: new Date(
+            now.getTime() + FREE_TRIAL_VOICE_TTL_DAYS * 24 * 60 * 60 * 1000
+          ),
         });
       }
     }

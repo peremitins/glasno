@@ -199,7 +199,7 @@ export function resolveRealtimeConfig(
     model:
       normalizeString(runtimeConfig.realtimeModel) ||
       normalizeString(env.NUXT_OPENAI_REALTIME_MODEL) ||
-      'gpt-realtime',
+      'gpt-realtime-mini',
     voice:
       normalizeString(runtimeConfig.realtimeVoice) ||
       normalizeString(env.NUXT_OPENAI_REALTIME_VOICE) ||

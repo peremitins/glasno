@@ -726,6 +726,37 @@ export class DrizzleBillingRepository implements BillingRepository {
     };
   }
 
+  async ensureTrialRealtimeGrant(params: {
+    userId: string;
+    totalSeconds: number;
+    planId: string;
+    expiresAt: Date;
+  }): Promise<void> {
+    // Идемпотентность: один триал-грант на пользователя. Guard по sourceType,
+    // а не по planId, чтобы будущая смена planId не выдала повторный трайл.
+    // Гонка «два одновременных getStatus у нового юзера» теоретически может
+    // создать второй грант — цена ошибки мала (10 лишних минут единожды),
+    // поэтому обходимся проверкой без отдельного unique-индекса.
+    const [existing] = await this.db
+      .select({ id: schema.realtimeMinuteGrants.id })
+      .from(schema.realtimeMinuteGrants)
+      .where(
+        and(
+          eq(schema.realtimeMinuteGrants.userId, params.userId),
+          eq(schema.realtimeMinuteGrants.sourceType, 'trial')
+        )
+      )
+      .limit(1);
+    if (existing) return;
+    await this.db.insert(schema.realtimeMinuteGrants).values({
+      userId: params.userId,
+      planId: params.planId,
+      sourceType: 'trial',
+      totalSeconds: params.totalSeconds,
+      expiresAt: params.expiresAt,
+    });
+  }
+
   async debitRealtimeSeconds(params: {
     userId: string;
     seconds: number;

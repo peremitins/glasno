@@ -6,7 +6,7 @@ import { useCameraPermissionGate } from '@/app/composables/useCameraPermissionGa
 // Камера полностью управляется родителем через prop `active`.
 // Своей кнопки у компонента нет — единственный переключатель живёт
 // в нижнем доке экрана собеседования (как в Zoom/Телемост).
-const props = defineProps<{ active?: boolean }>();
+const props = defineProps<{ active?: boolean; avatarUrl?: string | null }>();
 const emit = defineEmits<{
   'active-change': [value: boolean];
   'start-failed': [];
@@ -19,6 +19,7 @@ const videoRef = ref<HTMLVideoElement | null>(null);
 const stream = ref<MediaStream | null>(null);
 const errorMessage = ref('');
 const isStarting = ref(false);
+const avatarFailed = ref(false);
 
 const isActive = computed(() => Boolean(stream.value));
 
@@ -89,6 +90,13 @@ watch(
   }
 );
 
+watch(
+  () => props.avatarUrl,
+  () => {
+    avatarFailed.value = false;
+  }
+);
+
 onMounted(() => {
   if (props.active) void startCamera();
 });
@@ -106,7 +114,16 @@ onBeforeUnmount(stopCamera);
       muted
       aria-label="local camera"
     />
-    <div v-if="!isActive" class="placeholder">
+    <div v-if="!isActive && avatarUrl && !avatarFailed" class="placeholder">
+      <img
+        class="avatar avatar--image"
+        :src="avatarUrl"
+        alt=""
+        @error="avatarFailed = true"
+      >
+      <span class="placeholder-text">{{ errorMessage || t('camera.idle') }}</span>
+    </div>
+    <div v-else-if="!isActive" class="placeholder">
       <span class="avatar" aria-hidden="true">
         <svg viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">
           <defs>
@@ -190,6 +207,10 @@ onBeforeUnmount(stopCamera);
 .avatar svg {
   width: 100%;
   height: 100%;
+}
+
+.avatar--image {
+  object-fit: cover;
 }
 
 .placeholder-text {

@@ -73,6 +73,24 @@ docker compose up -d postgres redis landing
 `web` поднимется первым деплоем из CI. Сертификаты Traefik выпустит сам, когда
 DNS укажет на сервер.
 
+## Приватные аватары (S3-compatible Object Storage)
+
+Аватары пользователей хранятся в отдельном **private** bucket по ключу
+`avatars/<userId>.webp`. Публичный доступ к bucket и публичные URL отключены:
+приложение отдаёт изображение только через авторизованный
+`GET /api/auth/profile/avatar`.
+
+В `/opt/glasno/prod/.env` заполнить `STORAGE_ENDPOINT`, `STORAGE_REGION`,
+`ACCESS_KEY_ID`, `SECRET_ACCESS_KEY` и `STORAGE_BUCKET`. Ключу доступа выдать
+только `GetObject`, `PutObject` и `DeleteObject` на ресурс
+`<bucket>/avatars/*`; `ListBucket`, доступ к другим префиксам и клиентские
+ключи не нужны.
+
+Если в bucket включено versioning, настроить lifecycle: удалять noncurrent
+versions объектов `avatars/*` через короткий срок после замены/удаления и
+очищать delete markers. Иначе старые фотографии останутся в истории версий
+после замены или удаления аватара.
+
 ## DNS (Porkbun)
 
 A-записи (TTL 600), все → `158.160.94.97`:
