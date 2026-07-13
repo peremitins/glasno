@@ -6,6 +6,7 @@ export interface AuthUserRecord {
   telegramId: string | null;
   telegramUsername: string | null;
   displayName: string | null;
+  avatarVersion: string | null;
   role: UserRole;
   onboarding: Record<string, unknown>;
   emailVerifiedAt: Date | null;
@@ -63,6 +64,11 @@ export interface UpsertTelegramUserInput {
   displayName?: string | null;
 }
 
+export interface UpsertEmailUserInput {
+  email: string;
+  displayName?: string | null;
+}
+
 export interface CreateMagicLoginTokenInput {
   telegramId: string;
   tokenHash: string;
@@ -70,10 +76,24 @@ export interface CreateMagicLoginTokenInput {
 }
 
 export interface AuthRepository {
+  // Сериализует операции с одним детерминированным S3-ключом аватара даже
+  // между несколькими приложениями/blue-green репликами.
+  withUserAvatarLock<T>(
+    userId: string,
+    callback: (repository: AuthRepository) => Promise<T>
+  ): Promise<T>;
   findUserById(id: string): Promise<AuthUserRecord | null>;
   findUserByTelegramId(telegramId: string): Promise<AuthUserRecord | null>;
-  upsertEmailUser(email: string): Promise<AuthUserRecord>;
+  upsertEmailUser(input: UpsertEmailUserInput): Promise<AuthUserRecord>;
   upsertTelegramUser(input: UpsertTelegramUserInput): Promise<AuthUserRecord>;
+  updateDisplayName(
+    userId: string,
+    displayName: string | null
+  ): Promise<AuthUserRecord | null>;
+  setAvatarVersion(
+    userId: string,
+    avatarVersion: string | null
+  ): Promise<AuthUserRecord | null>;
   setUserRole(userId: string, role: UserRole): Promise<AuthUserRecord>;
   anonymizeUserAccount(userId: string, now: Date): Promise<boolean>;
 

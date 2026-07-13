@@ -23,7 +23,7 @@ export default defineNuxtConfig({
     componentDir: '@/app/components/ui',
   },
 
-  css: ['@/app/assets/css/main.css'],
+  css: ['@/app/assets/css/main.css', 'vue-sonner/style.css'],
 
   vite: {
     plugins: [tailwindcss()],
@@ -122,7 +122,7 @@ export default defineNuxtConfig({
     openaiApiKey: '',
     openaiModel: 'gpt-5.4-nano', // была 'gpt-4o-mini' (заменено 2026-07: дешевле/сильнее преемник)
     openaiLearningModel: 'gpt-5-nano', // подсказки-термины: самая дешёвая модель
-    realtimeModel: 'gpt-realtime',
+    realtimeModel: 'gpt-realtime-mini', // mini ~3× дешевле флагмана, голоса marin/cedar поддерживаются (2026-07)
     realtimeVoice: 'marin',
     realtimeTranscriptionModel: 'gpt-4o-mini-transcribe',
     ttsModel: 'gpt-4o-mini-tts',
@@ -132,6 +132,13 @@ export default defineNuxtConfig({
     telegramBotToken: '',
     authEmailCodeSecret: '',
     emailHashPepper: '',
+    // Значения S3 намеренно серверные: URL объекта выдаётся только защищённым
+    // API-маршрутом, ключи никогда не попадают в public runtimeConfig.
+    storageEndpoint: '',
+    storageRegion: '',
+    storageBucket: '',
+    storageAccessKeyId: '',
+    storageSecretAccessKey: '',
     hhApiBaseUrl: 'https://api.hh.ru',
     hhAccessToken: '',
     hhClientId: '',

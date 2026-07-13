@@ -1,12 +1,23 @@
 <script setup lang="ts">
   import {
+    CheckIcon,
+    Cross2Icon,
     ExitIcon,
     FileTextIcon,
     FontFamilyIcon,
+    Pencil2Icon,
     PersonIcon,
     TrashIcon,
+    UploadIcon,
   } from '@radix-icons/vue';
-  import { computed, onMounted, reactive, ref } from 'vue';
+  import {
+    computed,
+    onBeforeUnmount,
+    onMounted,
+    reactive,
+    ref,
+    watch,
+  } from 'vue';
   import { useI18n } from 'vue-i18n';
   import GlassSkeletonStack from '@/app/components/design/GlassSkeletonStack.vue';
   import ButtonLoader from '@/app/components/design/ButtonLoader.vue';
@@ -25,6 +36,23 @@
   const deleteDialogOpen = ref(false);
   const deleteError = ref('');
   const isDeletingAccount = ref(false);
+  const isDisplayNameEditing = ref(false);
+  const profileDisplayName = ref('');
+  const displayNameError = ref('');
+  const isSavingDisplayName = ref(false);
+  const avatarInput = ref<HTMLInputElement | null>(null);
+  const avatarFile = ref<File | null>(null);
+  const avatarPreviewUrl = ref<string | null>(null);
+  const avatarPreviewFailed = ref(false);
+  const avatarError = ref('');
+  const isSavingAvatar = ref(false);
+  const isDeletingAvatar = ref(false);
+  const profileMutationKind = ref<
+    'display-name' | 'avatar-upload' | 'avatar-delete' | null
+  >(null);
+
+  const MAX_AVATAR_SIZE_BYTES = 5 * 1024 * 1024;
+  const AVATAR_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 
   useBodyScrollLock(() => deleteDialogOpen.value);
   const profileAuthAction = ref<'send-code' | 'verify-code' | 'logout' | null>(
@@ -44,6 +72,22 @@
   );
 
   const accountEmail = computed(() => auth.user?.email || '—');
+  const accountDisplayName = computed(
+    () => auth.user?.displayName?.trim() || ''
+  );
+  const avatarSrc = computed(
+    () => avatarPreviewUrl.value || auth.user?.avatarUrl || null
+  );
+  const hasSavedAvatar = computed(() => Boolean(auth.user?.avatarUrl));
+  const isProfileMutationPending = computed(
+    () => profileMutationKind.value !== null
+  );
+  const isProfileActionPending = computed(
+    () =>
+      isProfileMutationPending.value ||
+      Boolean(profileAuthAction.value) ||
+      isDeletingAccount.value
+  );
   // Telegram-интеграция пока не входит в публичный продукт. Данные и строку
   // сохраняем, чтобы включить её без миграций после запуска интеграции.
   const showTelegramIdentity = false;
@@ -81,6 +125,17 @@
   onMounted(() => {
     auth.fetchMe().catch(() => {});
   });
+
+  onBeforeUnmount(() => {
+    revokeAvatarPreview();
+  });
+
+  watch(
+    () => auth.user?.avatarUrl,
+    () => {
+      avatarPreviewFailed.value = false;
+    }
+  );
 
   function formatDate(value: string | null | undefined) {
     if (!value) return '';
@@ -123,7 +178,7 @@
   }
 
   async function logout() {
-    if (profileAuthAction.value) return;
+    if (isProfileActionPending.value) return;
     profileAuthAction.value = 'logout';
     try {
       await auth.logout();
@@ -137,7 +192,155 @@
     }
   }
 
+  function beginProfileMutation(
+    kind: 'display-name' | 'avatar-upload' | 'avatar-delete'
+  ) {
+    if (isProfileActionPending.value) {
+      return false;
+    }
+    profileMutationKind.value = kind;
+    return true;
+  }
+
+  function finishProfileMutation(
+    kind: 'display-name' | 'avatar-upload' | 'avatar-delete'
+  ) {
+    if (profileMutationKind.value === kind) {
+      profileMutationKind.value = null;
+    }
+  }
+
+  function startDisplayNameEdit() {
+    if (isProfileActionPending.value) return;
+    profileDisplayName.value = accountDisplayName.value;
+    displayNameError.value = '';
+    isDisplayNameEditing.value = true;
+  }
+
+  function cancelDisplayNameEdit() {
+    if (isProfileActionPending.value) return;
+    profileDisplayName.value = accountDisplayName.value;
+    displayNameError.value = '';
+    isDisplayNameEditing.value = false;
+  }
+
+  async function saveDisplayName() {
+    if (!beginProfileMutation('display-name')) return;
+    isSavingDisplayName.value = true;
+    displayNameError.value = '';
+
+    try {
+      await auth.updateProfile(profileDisplayName.value.trim() || null);
+      isDisplayNameEditing.value = false;
+    } catch {
+      displayNameError.value =
+        auth.errorMessage || t('profile.identity.saveNameError');
+    } finally {
+      isSavingDisplayName.value = false;
+      finishProfileMutation('display-name');
+    }
+  }
+
+  function revokeAvatarPreview() {
+    if (
+      avatarPreviewUrl.value &&
+      typeof URL !== 'undefined' &&
+      typeof URL.revokeObjectURL === 'function'
+    ) {
+      URL.revokeObjectURL(avatarPreviewUrl.value);
+    }
+    avatarPreviewUrl.value = null;
+  }
+
+  function resetAvatarSelection() {
+    revokeAvatarPreview();
+    avatarFile.value = null;
+    avatarPreviewFailed.value = false;
+    avatarError.value = '';
+    if (avatarInput.value) avatarInput.value.value = '';
+  }
+
+  function clearAvatarSelection() {
+    if (isProfileActionPending.value) return;
+    resetAvatarSelection();
+  }
+
+  function isSupportedAvatarFile(file: File) {
+    return (
+      AVATAR_MIME_TYPES.has(file.type) || /\.(jpe?g|png|webp)$/i.test(file.name)
+    );
+  }
+
+  function openAvatarPicker() {
+    if (isProfileActionPending.value) return;
+    avatarInput.value?.click();
+  }
+
+  function onAvatarChange(event: Event) {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = '';
+    if (isProfileActionPending.value) return;
+    if (!file) return;
+
+    avatarError.value = '';
+    if (!isSupportedAvatarFile(file)) {
+      avatarError.value = t('profile.avatar.invalidType');
+      return;
+    }
+    if (file.size > MAX_AVATAR_SIZE_BYTES) {
+      avatarError.value = t('profile.avatar.tooLarge');
+      return;
+    }
+    if (
+      typeof URL === 'undefined' ||
+      typeof URL.createObjectURL !== 'function'
+    ) {
+      avatarError.value = t('profile.avatar.previewError');
+      return;
+    }
+
+    revokeAvatarPreview();
+    avatarFile.value = file;
+    avatarPreviewUrl.value = URL.createObjectURL(file);
+    avatarPreviewFailed.value = false;
+  }
+
+  async function saveAvatar() {
+    const file = avatarFile.value;
+    if (!file || !beginProfileMutation('avatar-upload')) return;
+    isSavingAvatar.value = true;
+    avatarError.value = '';
+
+    try {
+      await auth.uploadAvatar(file);
+      resetAvatarSelection();
+    } catch {
+      avatarError.value = auth.errorMessage || t('profile.avatar.uploadError');
+    } finally {
+      isSavingAvatar.value = false;
+      finishProfileMutation('avatar-upload');
+    }
+  }
+
+  async function deleteAvatar() {
+    if (!hasSavedAvatar.value || !beginProfileMutation('avatar-delete')) return;
+    isDeletingAvatar.value = true;
+    avatarError.value = '';
+
+    try {
+      await auth.deleteAvatar();
+      resetAvatarSelection();
+    } catch {
+      avatarError.value = auth.errorMessage || t('profile.avatar.deleteError');
+    } finally {
+      isDeletingAvatar.value = false;
+      finishProfileMutation('avatar-delete');
+    }
+  }
+
   function confirmDeleteAccount() {
+    if (isProfileActionPending.value) return;
     deleteError.value = '';
     deleteDialogOpen.value = true;
   }
@@ -149,7 +352,7 @@
   }
 
   async function deleteAccount() {
-    if (isDeletingAccount.value) return;
+    if (isProfileActionPending.value) return;
     isDeletingAccount.value = true;
     deleteError.value = '';
 
@@ -178,29 +381,214 @@
 
     <div v-else-if="auth.isAuthenticated" class="profile-shell">
       <section class="profile-card account-card glass-frame glass-frame--soft">
-        <div class="profile-card__head">
-          <span class="profile-card__icon" aria-hidden="true">
-            <PersonIcon />
-          </span>
-          <span v-if="auth.user?.role === 'admin'" class="role">
-            {{ t('profile.account.adminRole') }}
-          </span>
+        <div class="profile-avatar-settings">
+          <div
+            class="profile-avatar"
+            :class="{
+              'profile-avatar--empty': !avatarSrc || avatarPreviewFailed,
+            }"
+          >
+            <img
+              v-if="avatarSrc && !avatarPreviewFailed"
+              :src="avatarSrc"
+              alt=""
+              @error="avatarPreviewFailed = true"
+            />
+            <span v-else class="profile-avatar__placeholder" aria-hidden="true">
+              <PersonIcon />
+            </span>
+          </div>
+
+          <div class="profile-avatar-settings__content">
+            <div class="profile-avatar-settings__head">
+              <div>
+                <p class="profile-field-label">
+                  {{ t('profile.avatar.title') }}
+                </p>
+                <p class="muted profile-avatar-hint">
+                  {{ t('profile.avatar.hint') }}
+                </p>
+              </div>
+              <span v-if="auth.user?.role === 'admin'" class="role">
+                {{ t('profile.account.adminRole') }}
+              </span>
+            </div>
+
+            <input
+              ref="avatarInput"
+              class="profile-avatar-input"
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              :disabled="isProfileActionPending"
+              tabindex="-1"
+              aria-hidden="true"
+              @change="onAvatarChange"
+            />
+
+            <p v-if="avatarFile" class="profile-avatar-file">
+              {{ t('profile.avatar.selectedFile', { file: avatarFile.name }) }}
+            </p>
+
+            <div class="profile-avatar-actions">
+              <template v-if="avatarFile">
+                <button
+                  class="primary-action primary-action--compact button-loader-host"
+                  type="button"
+                  :disabled="isProfileActionPending"
+                  @click="saveAvatar"
+                >
+                  <ButtonLoader v-if="isSavingAvatar" />
+                  <span
+                    class="button-loader-content"
+                    :class="{
+                      'button-loader-content--loading': isSavingAvatar,
+                    }"
+                  >
+                    <UploadIcon aria-hidden="true" />
+                    {{ t('profile.avatar.save') }}
+                  </span>
+                </button>
+                <button
+                  class="secondary-action secondary-action--compact"
+                  type="button"
+                  :disabled="isProfileActionPending"
+                  @click="clearAvatarSelection"
+                >
+                  <Cross2Icon aria-hidden="true" />
+                  {{ t('profile.avatar.cancel') }}
+                </button>
+              </template>
+
+              <template v-else>
+                <button
+                  class="secondary-action secondary-action--compact"
+                  type="button"
+                  :disabled="isProfileActionPending"
+                  @click="openAvatarPicker"
+                >
+                  <UploadIcon aria-hidden="true" />
+                  {{
+                    hasSavedAvatar
+                      ? t('profile.avatar.change')
+                      : t('profile.avatar.upload')
+                  }}
+                </button>
+                <button
+                  v-if="hasSavedAvatar"
+                  class="delete-action button-loader-host"
+                  type="button"
+                  :disabled="isProfileActionPending"
+                  @click="deleteAvatar"
+                >
+                  <ButtonLoader v-if="isDeletingAvatar" />
+                  <span
+                    class="button-loader-content"
+                    :class="{
+                      'button-loader-content--loading': isDeletingAvatar,
+                    }"
+                  >
+                    <TrashIcon aria-hidden="true" />
+                    {{ t('profile.avatar.delete') }}
+                  </span>
+                </button>
+              </template>
+            </div>
+
+            <p v-if="avatarError" class="profile-inline-error" role="alert">
+              {{ avatarError }}
+            </p>
+          </div>
         </div>
 
-        <dl class="details">
-          <div>
-            <dt>{{ t('profile.account.email') }}</dt>
-            <dd>{{ accountEmail }}</dd>
+        <div class="profile-account-data">
+          <div class="profile-name-row">
+            <p class="profile-field-label">
+              {{ t('profile.identity.name') }}
+            </p>
+            <div class="profile-name-copy">
+              <form
+                v-if="isDisplayNameEditing"
+                class="profile-name-form"
+                @submit.prevent="saveDisplayName"
+              >
+                <input
+                  id="profile-display-name"
+                  v-model="profileDisplayName"
+                  :aria-label="t('profile.identity.name')"
+                  class="soft-control"
+                  type="text"
+                  autocomplete="name"
+                  :maxlength="80"
+                  :placeholder="t('profile.identity.namePlaceholder')"
+                  :disabled="isProfileActionPending"
+                />
+                <div class="profile-inline-actions">
+                  <button
+                    class="primary-action primary-action--compact button-loader-host"
+                    type="submit"
+                    :disabled="isProfileActionPending"
+                  >
+                    <ButtonLoader v-if="isSavingDisplayName" />
+                    <span
+                      class="button-loader-content"
+                      :class="{
+                        'button-loader-content--loading': isSavingDisplayName,
+                      }"
+                    >
+                      <CheckIcon aria-hidden="true" />
+                      {{ t('profile.identity.save') }}
+                    </span>
+                  </button>
+                  <button
+                    class="secondary-action secondary-action--compact"
+                    type="button"
+                    :disabled="isProfileActionPending"
+                    @click="cancelDisplayNameEdit"
+                  >
+                    {{ t('profile.identity.cancel') }}
+                  </button>
+                </div>
+              </form>
+              <p v-else class="profile-name-value">
+                {{ accountDisplayName || t('profile.identity.nameEmpty') }}
+              </p>
+              <p
+                v-if="displayNameError"
+                class="profile-inline-error"
+                role="alert"
+              >
+                {{ displayNameError }}
+              </p>
+            </div>
+
+            <button
+              v-if="!isDisplayNameEditing"
+              class="profile-edit-name profile-icon-action"
+              type="button"
+              :aria-label="t('profile.identity.edit')"
+              :title="t('profile.identity.edit')"
+              :disabled="isProfileActionPending"
+              @click="startDisplayNameEdit"
+            >
+              <Pencil2Icon aria-hidden="true" />
+            </button>
           </div>
-          <div>
-            <dt>{{ t('profile.account.userId') }}</dt>
-            <dd>{{ auth.user?.id }}</dd>
-          </div>
-          <div v-if="showTelegramIdentity">
-            <dt>{{ t('profile.account.telegram') }}</dt>
-            <dd>{{ telegramIdentity }}</dd>
-          </div>
-        </dl>
+
+          <dl class="details">
+            <div>
+              <dt>{{ t('profile.account.email') }}</dt>
+              <dd>{{ accountEmail }}</dd>
+            </div>
+            <div v-if="auth.user?.role === 'admin'">
+              <dt>{{ t('profile.account.userId') }}</dt>
+              <dd>{{ auth.user?.id }}</dd>
+            </div>
+            <div v-if="showTelegramIdentity">
+              <dt>{{ t('profile.account.telegram') }}</dt>
+              <dd>{{ telegramIdentity }}</dd>
+            </div>
+          </dl>
+        </div>
       </section>
 
       <section
@@ -307,7 +695,7 @@
           <button
             class="secondary-action secondary-action--compact button-loader-host"
             type="button"
-            :disabled="auth.isSubmitting"
+            :disabled="auth.isSubmitting || isProfileActionPending"
             @click="logout"
           >
             <ButtonLoader v-if="profileAuthAction === 'logout'" />
@@ -325,7 +713,7 @@
           <button
             class="delete-action"
             type="button"
-            :disabled="auth.isSubmitting"
+            :disabled="auth.isSubmitting || isProfileActionPending"
             @click="confirmDeleteAccount"
           >
             <TrashIcon aria-hidden="true" />
@@ -435,7 +823,7 @@
             <button
               type="button"
               class="secondary-action secondary-action--compact"
-              :disabled="isDeletingAccount"
+              :disabled="isProfileActionPending"
               @click="cancelDeleteAccount"
             >
               {{ t('profile.delete.cancel') }}
@@ -443,7 +831,7 @@
             <button
               type="button"
               class="delete-action button-loader-host"
-              :disabled="isDeletingAccount"
+              :disabled="isProfileActionPending"
               @click="deleteAccount"
             >
               <ButtonLoader v-if="isDeletingAccount" />
@@ -508,6 +896,204 @@
   .profile-card {
     display: grid;
     gap: 18px;
+  }
+
+  .profile-avatar {
+    display: grid;
+    place-items: center;
+    width: 76px;
+    aspect-ratio: 1;
+    overflow: hidden;
+    border: 1px solid var(--glass-border);
+    border-radius: 50%;
+    background: var(--surface-raised);
+    box-shadow: inset 0 1px 0 var(--inner-highlight);
+  }
+
+  .profile-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .profile-avatar__placeholder {
+    display: grid;
+    place-items: center;
+    width: 100%;
+    height: 100%;
+    color: var(--text-muted);
+  }
+
+  .profile-avatar__placeholder svg {
+    width: 32px;
+    height: 32px;
+  }
+
+  .profile-avatar-settings__content {
+    display: grid;
+    min-width: 0;
+    gap: 10px;
+  }
+
+  .profile-avatar-settings__head,
+  .profile-avatar-actions,
+  .profile-inline-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .profile-avatar-settings__head {
+    justify-content: space-between;
+  }
+
+  .profile-avatar-settings__head {
+    align-items: flex-start;
+  }
+
+  .profile-name-row {
+    position: relative;
+    display: grid;
+    grid-template-columns: 128px minmax(0, 1fr) auto;
+    gap: 14px;
+    align-items: center;
+  }
+
+  .profile-name-copy {
+    min-width: 0;
+  }
+
+  .profile-field-label {
+    margin: 0;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 900;
+  }
+
+  .profile-name-value {
+    margin: 0;
+    color: var(--text-primary);
+    font-size: 17px;
+    font-weight: 800;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+  }
+
+  .profile-name-form {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    min-width: min(100%, 360px);
+  }
+
+  .profile-name-form input {
+    min-width: 0;
+    padding: 9px 11px;
+  }
+
+  .profile-inline-actions,
+  .profile-avatar-actions {
+    flex-wrap: wrap;
+  }
+
+  .profile-inline-actions .button-loader-content,
+  .profile-avatar-actions .button-loader-content {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+  }
+
+  .profile-edit-name {
+    flex: 0 0 auto;
+    align-self: center;
+  }
+
+  .profile-icon-action {
+    display: grid;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border: 1px solid var(--glass-border);
+    border-radius: 50%;
+    background: var(--surface-soft);
+    color: var(--text-primary);
+    cursor: pointer;
+    place-items: center;
+    transition: background var(--motion-fast) var(--ease-out),
+      border-color var(--motion-fast) var(--ease-out),
+      transform var(--motion-fast) var(--ease-out);
+
+    @media (max-width: 640px) {
+      position: absolute;
+      bottom: 10px;
+      right: 0;
+    }
+  }
+
+  .profile-icon-action:hover {
+    border-color: var(--glass-border-strong);
+    background: var(--surface-raised);
+    transform: translateY(-1px);
+  }
+
+  .profile-icon-action:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+
+  .profile-icon-action svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  .profile-avatar-settings {
+    display: grid;
+    grid-template-columns: 76px minmax(0, 1fr);
+    gap: 14px;
+    align-items: start;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--glass-border);
+  }
+
+  .profile-avatar-hint {
+    margin: 4px 0 0;
+    font-size: 13px;
+  }
+
+  .profile-avatar-input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .profile-avatar-file {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 700;
+    overflow-wrap: anywhere;
+  }
+
+  .profile-inline-error {
+    margin: 8px 0 0;
+    color: var(--danger);
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1.4;
+  }
+
+  .profile-account-data {
+    display: grid;
+  }
+
+  .profile-account-data .profile-name-row {
+    padding: 11px 0;
+    border-bottom: 1px solid
+      color-mix(in srgb, var(--glass-border) 70%, transparent);
   }
 
   .profile-card--wide {
@@ -577,7 +1163,6 @@
   .details {
     display: grid;
     margin: 0;
-    border-top: 1px solid var(--glass-border);
   }
 
   .details div {
@@ -784,6 +1369,22 @@
     font-weight: 700;
   }
 
+  .field-optional,
+  .field-hint {
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  .field-optional {
+    margin-left: 4px;
+  }
+
+  .field-hint {
+    margin: -2px 0 0;
+    line-height: 1.4;
+  }
+
   input {
     width: 100%;
     padding: 12px 14px;
@@ -881,6 +1482,28 @@
       grid-template-columns: 38px minmax(0, 1fr);
     }
 
+    .profile-avatar-settings {
+      grid-template-columns: 62px minmax(0, 1fr);
+    }
+
+    .profile-avatar {
+      width: 62px;
+    }
+
+    .profile-avatar__placeholder svg {
+      width: 28px;
+      height: 28px;
+    }
+
+    .profile-avatar-settings__head {
+      align-items: flex-start;
+    }
+
+    .profile-name-form {
+      grid-template-columns: 1fr;
+      min-width: 0;
+    }
+
     .profile-card__icon,
     .settings-row__icon {
       width: 38px;
@@ -893,6 +1516,11 @@
     }
 
     .details div {
+      grid-template-columns: 1fr;
+      gap: 5px;
+    }
+
+    .profile-name-row {
       grid-template-columns: 1fr;
       gap: 5px;
     }
@@ -917,7 +1545,9 @@
     }
 
     .danger-actions,
-    .actions {
+    .actions,
+    .profile-inline-actions,
+    .profile-avatar-actions {
       width: 100%;
     }
 

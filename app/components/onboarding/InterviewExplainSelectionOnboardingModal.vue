@@ -1,6 +1,6 @@
 <script setup lang="ts">
   import { computed, nextTick, ref, watch } from 'vue';
-  import { CheckIcon, Cross2Icon, MagicWandIcon } from '@radix-icons/vue';
+  import { Cross2Icon, MagicWandIcon } from '@radix-icons/vue';
   import ButtonLoader from '@/app/components/design/ButtonLoader.vue';
 
   const props = defineProps<{
@@ -81,34 +81,15 @@
 
           <div class="interview-onboarding__content">
             <span class="interview-onboarding__kicker">
-              Быстрая расшифровка
+              Быстрая подсказка
             </span>
             <h2 id="interview-onboarding-title">
-              Можно выделить любой текст и сразу получить объяснение
+              Выделите текст и получите объяснение
             </h2>
             <p>
-              В вопросе, ответе или подсказке выделите непонятное слово,
-              формулировку или целое предложение. Кнопка «Объяснить» откроет
-              короткий разбор прямо в контексте текущего интервью.
+              Не поняли слово или формулировку в интервью? Выделите и сразу
+              увидите короткое объяснение.
             </p>
-
-            <div
-              class="interview-onboarding__steps"
-              aria-label="Как работает объяснение"
-            >
-              <span>
-                <CheckIcon aria-hidden="true" />
-                Выделите фрагмент
-              </span>
-              <span>
-                <CheckIcon aria-hidden="true" />
-                Нажмите «Объяснить»
-              </span>
-              <span>
-                <CheckIcon aria-hidden="true" />
-                Продолжайте ответ без переключения вкладок
-              </span>
-            </div>
 
             <p v-if="hasError" class="interview-onboarding__error">
               {{
@@ -229,6 +210,7 @@
 
   .interview-onboarding__media {
     position: relative;
+    aspect-ratio: 2076 / 1080;
     min-width: 0;
     overflow: hidden;
     border: 1px solid var(--glass-border);
@@ -241,8 +223,7 @@
     display: block;
     width: 100%;
     height: 100%;
-    min-height: min(56dvh, 560px);
-    object-fit: contain;
+    object-fit: cover;
     background: var(--app-bg);
   }
 
@@ -308,33 +289,6 @@
     color: var(--text-secondary);
     font-size: clamp(14px, 1.35vw, 16px);
     line-height: 1.55;
-  }
-
-  .interview-onboarding__steps {
-    display: grid;
-    gap: 10px;
-    margin-top: 22px;
-  }
-
-  .interview-onboarding__steps span {
-    display: grid;
-    grid-template-columns: 24px minmax(0, 1fr);
-    align-items: center;
-    gap: 10px;
-    min-width: 0;
-    color: var(--text-primary);
-    font-size: 14px;
-    font-weight: 760;
-    overflow-wrap: anywhere;
-  }
-
-  .interview-onboarding__steps svg {
-    width: 24px;
-    height: 24px;
-    padding: 5px;
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--success) 16%, transparent);
-    color: var(--success);
   }
 
   .interview-onboarding__error {

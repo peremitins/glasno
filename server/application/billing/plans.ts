@@ -14,6 +14,18 @@ export interface BillingPlanConfig extends BillingPlan {
 // карточка — состояние онбординга, отображается в блоке «Текущий доступ».
 export const FREE_SESSIONS_LIMIT = 1;
 export const FREE_ALLOWED_SESSION_GOALS: SessionGoalAccess[] = ['quick'];
+
+// Бесплатный трайл получает минуты живого голоса (Realtime Voice), чтобы
+// попробовать главную фичу ещё до оплаты — это ключевой драйвер конверсии.
+// Себестоимость gpt-realtime ≈ 9–12 ₽/мин, поэтому трайл намеренно небольшой:
+// 5 минут ≈ 45–60 ₽ на юзера. Выдаётся один раз на пользователя как обычный
+// грант минут (sourceType='trial'), поэтому весь учёт/списание/анти-гонка
+// работают той же логикой, что и покупки.
+export const FREE_TRIAL_VOICE_MINUTES = 5;
+// Срок жизни триал-гранта. Расход ограничен минутами, а не сроком; TTL нужен
+// лишь чтобы грант не «протух» до первого интервью — берём длинный запас.
+export const FREE_TRIAL_VOICE_TTL_DAYS = 365;
+export const TRIAL_VOICE_GRANT_PLAN_ID = 'trial';
 export const ALL_SESSION_GOALS: SessionGoalAccess[] = [
   'quick',
   'standard',

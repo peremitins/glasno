@@ -55,6 +55,7 @@ function createRepository(
         remainingSeconds: 0,
       }
     ),
+    ensureTrialRealtimeGrant: vi.fn().mockResolvedValue(undefined),
     findPaymentMethodByUserId: vi.fn().mockResolvedValue(null),
     findUserEmail: vi.fn().mockResolvedValue('friend@example.com'),
     claimReadyGiftsByEmail: vi.fn().mockResolvedValue([]),
@@ -85,6 +86,44 @@ describe('BillingAccessService', () => {
         ]),
       })
     );
+  });
+
+  it('issues a one-time trial voice grant for an authenticated user', async () => {
+    const repository = createRepository();
+    const service = new BillingAccessService({ repository });
+
+    await service.getStatus({ anonymousSessionId: 'anon_1', userId: 'user_1' });
+
+    expect(repository.ensureTrialRealtimeGrant).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 'user_1',
+        totalSeconds: 5 * 60,
+        planId: 'trial',
+        expiresAt: expect.any(Date),
+      })
+    );
+  });
+
+  it('does not grant trial voice minutes to anonymous visitors', async () => {
+    const repository = createRepository();
+    const service = new BillingAccessService({ repository });
+
+    await service.getStatus({ anonymousSessionId: 'anon_1', userId: null });
+
+    expect(repository.ensureTrialRealtimeGrant).not.toHaveBeenCalled();
+  });
+
+  it('does not grant trial voice minutes to admins (unlimited already)', async () => {
+    const repository = createRepository();
+    const service = new BillingAccessService({ repository });
+
+    await service.getStatus({
+      anonymousSessionId: 'anon_admin',
+      userId: 'admin_1',
+      role: 'admin',
+    });
+
+    expect(repository.ensureTrialRealtimeGrant).not.toHaveBeenCalled();
   });
 
   it('allows the first anonymous interview as trial', async () => {

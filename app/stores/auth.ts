@@ -3,6 +3,7 @@ import { computed, ref } from 'vue';
 import type {
   AuthLoginResponse,
   AuthMeResponse,
+  AuthProfileResponse,
   AuthUser,
   DeleteAccountResponse,
   EmailLoginStartResponse,
@@ -66,7 +67,11 @@ export const useAuthStore = defineStore('auth', () => {
     return startEmailLogin(email);
   }
 
-  async function verifyEmailLogin(email: string, code: string) {
+  async function verifyEmailLogin(
+    email: string,
+    code: string,
+    displayName?: string
+  ) {
     isSubmitting.value = true;
     errorMessage.value = '';
     try {
@@ -74,7 +79,7 @@ export const useAuthStore = defineStore('auth', () => {
         '/api/auth/email/verify',
         {
           method: 'POST',
-          body: { email, code },
+          body: { email, code, displayName },
         }
       );
       user.value = response.user;
@@ -93,6 +98,62 @@ export const useAuthStore = defineStore('auth', () => {
     try {
       await useAPI()('/api/auth/logout', { method: 'POST' });
       reset();
+    } catch (err) {
+      errorMessage.value = extractApiError(err);
+      throw err;
+    } finally {
+      isSubmitting.value = false;
+    }
+  }
+
+  async function updateProfile(displayName: string | null) {
+    isSubmitting.value = true;
+    errorMessage.value = '';
+    try {
+      const response = await useAPI()<AuthProfileResponse>('/api/auth/profile', {
+        method: 'PATCH',
+        body: { displayName },
+      });
+      user.value = response.user;
+      return response;
+    } catch (err) {
+      errorMessage.value = extractApiError(err);
+      throw err;
+    } finally {
+      isSubmitting.value = false;
+    }
+  }
+
+  async function uploadAvatar(file: File) {
+    isSubmitting.value = true;
+    errorMessage.value = '';
+    try {
+      const body = new FormData();
+      body.append('file', file);
+      const response = await useAPI()<AuthProfileResponse>(
+        '/api/auth/profile/avatar',
+        { method: 'POST', body }
+      );
+      user.value = response.user;
+      return response;
+    } catch (err) {
+      errorMessage.value = extractApiError(err);
+      throw err;
+    } finally {
+      isSubmitting.value = false;
+    }
+  }
+
+  async function deleteAvatar() {
+    isSubmitting.value = true;
+    errorMessage.value = '';
+    try {
+      const response = await useAPI()<AuthProfileResponse>(
+        '/api/auth/profile/avatar',
+        { method: 'DELETE' }
+      );
+      user.value = response.user;
+      return response;
     } catch (err) {
       errorMessage.value = extractApiError(err);
       throw err;
@@ -132,6 +193,9 @@ export const useAuthStore = defineStore('auth', () => {
     startEmailLogin,
     startEmailRegistration,
     verifyEmailLogin,
+    updateProfile,
+    uploadAvatar,
+    deleteAvatar,
     logout,
     deleteAccount,
   };

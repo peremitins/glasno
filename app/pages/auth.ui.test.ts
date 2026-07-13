@@ -22,4 +22,10 @@ describe('auth page', () => {
     expect(authPage).toContain("t('auth.termsLink')");
     expect(authPage).toContain("t('auth.privacyLink')");
   });
+
+  it('does not ask for a name in the passwordless flow', () => {
+    expect(authPage).not.toContain('v-model="displayName"');
+    expect(authPage).not.toContain("t('auth.displayNameLabel')");
+    expect(authPage).toContain('auth.verifyEmailLogin(codeEmail.value, clean)');
+  });
 });
