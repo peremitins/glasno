@@ -127,6 +127,7 @@ function createRepository(order = createOrder()) {
       consumedSeconds: 0,
       remainingSeconds: 0,
     }),
+    ensureTrialRealtimeGrant: vi.fn().mockResolvedValue(undefined),
     debitRealtimeSeconds: vi.fn().mockResolvedValue(undefined),
     createPaymentOrder: vi.fn(),
     createGiftPaymentOrder: vi.fn(),
@@ -586,16 +587,36 @@ describe('BillingService checkout guards', () => {
     vi.useRealTimers();
   });
 
-  it('blocks minute pack purchase without an active pass', async () => {
+  it('allows a trial user to buy a minute pack without an active pass', async () => {
     const repository = createRepository();
+    repository.createPaymentOrder.mockResolvedValue(
+      createOrder({ planId: 'realtime_pack_60', amountRub: 890 })
+    );
+    mockedCreateYooKassaPayment.mockResolvedValue({
+      id: 'payment_trial_addon_1',
+      status: 'pending',
+      confirmation: {
+        type: 'embedded',
+        confirmation_token: 'ct_payment_trial_addon_1',
+      },
+    });
     const service = createService(repository);
 
     await expect(
       service.createCheckout({ userId: 'user_1', planId: 'realtime_pack_60' })
-    ).rejects.toMatchObject({
-      message: 'Пакеты минут доступны только при активном пропуске «Полный доступ»',
+    ).resolves.toEqual({
+      provider: 'yookassa',
+      orderId: 'order_1',
+      confirmationToken: 'ct_payment_trial_addon_1',
+      returnUrl: 'https://glasno.test/pricing?payment=return&orderId=order_1',
     });
-    expect(repository.createPaymentOrder).not.toHaveBeenCalled();
+    expect(repository.createPaymentOrder).toHaveBeenCalledWith(
+      expect.objectContaining({
+        planId: 'realtime_pack_60',
+        amountRub: 890,
+        metadata: expect.objectContaining({ autoRenew: false }),
+      })
+    );
   });
 
   it('allows minute pack purchase with an active pass', async () => {

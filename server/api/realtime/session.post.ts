@@ -6,6 +6,7 @@ import {
 import { resolveOpenAiConfig } from '@/server/application/config/openaiConfig';
 import {
   buildRealtimeContextFromState,
+  buildRealtimeInstructions,
   buildRealtimeSessionPayload,
   resolveRealtimeConfig,
 } from '@/server/application/realtime/realtimeConfig';
@@ -58,6 +59,8 @@ export default defineApiHandler(async (event) => {
     ...resolveRealtimeConfig(runtimeConfig),
     voice: resolveRealtimeVoiceForFace(state.session.interviewerFaceId),
   };
+  const realtimeContext = buildRealtimeContextFromState(state);
+  const instructions = buildRealtimeInstructions(realtimeContext);
   const billingStatus = await createBillingService(event).getStatus({
     anonymousSessionId: session.id,
     userId: session.userId ?? null,
@@ -77,6 +80,7 @@ export default defineApiHandler(async (event) => {
     realtimeSessionId: realtimeSession.id,
     model: realtimeConfig.model,
     voice: realtimeConfig.voice,
+    instructions,
     maxDurationSeconds: realtimeSession.maxDurationSeconds,
     idleTimeoutSeconds: realtimeSession.idleTimeoutSeconds,
     remainingSeconds: realtimeSession.remainingSeconds,
@@ -92,7 +96,7 @@ export default defineApiHandler(async (event) => {
   }
 
   const payload = buildRealtimeSessionPayload(
-    buildRealtimeContextFromState(state),
+    realtimeContext,
     realtimeConfig
   );
 

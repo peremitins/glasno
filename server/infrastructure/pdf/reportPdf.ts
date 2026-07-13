@@ -7,8 +7,7 @@ export const REPORT_PDF_STAR_LABEL =
   'Как усилить ответ (STAR: ситуация, задача, действие, результат)';
 export const REPORT_PDF_INTERVIEWER_MODEL_ANSWER_LABEL =
   'Как можно было спросить сильнее';
-export const REPORT_PDF_INTERVIEWER_STAR_LABEL =
-  'Как усилить следующий вопрос';
+export const REPORT_PDF_INTERVIEWER_STAR_LABEL = 'Как усилить следующий вопрос';
 const REPORT_PDF_STAR_EXPLANATION =
   'STAR (ситуация, задача, действие, результат)';
 
@@ -18,7 +17,9 @@ const FONT_CANDIDATES = [
   '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
 ];
 
-export async function renderReportPdf(report: InterviewReport): Promise<Buffer> {
+export async function renderReportPdf(
+  report: InterviewReport
+): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     const doc = new PDFDocument({ margin: 48, size: 'A4' });
@@ -71,7 +72,7 @@ export async function renderReportPdf(report: InterviewReport): Promise<Buffer> 
 
     const fixes = report.recommendations?.topFixes ?? [];
     if (fixes.length) {
-      doc.fontSize(15).text('3 главные правки');
+      doc.fontSize(15).text('Главные правки');
       doc.moveDown(0.4);
       fixes.forEach((fix, index) => {
         doc.fontSize(11).text(`${index + 1}. ${formatReportPdfText(fix)}`);
@@ -106,9 +107,7 @@ export async function renderReportPdf(report: InterviewReport): Promise<Buffer> 
         doc.text(`Что слабо: ${formatReportPdfText(item.whatWeak)}`);
         if (item.modelAnswer) {
           doc.text(
-            `${labels.modelAnswer}: ${formatReportPdfText(
-              item.modelAnswer
-            )}`
+            `${labels.modelAnswer}: ${formatReportPdfText(item.modelAnswer)}`
           );
         }
         doc.text(
@@ -116,9 +115,7 @@ export async function renderReportPdf(report: InterviewReport): Promise<Buffer> 
             item.strongerAnswerStar
           )}`
         );
-        doc.text(
-          `Мини-тренировка: ${formatReportPdfText(item.nextPractice)}`
-        );
+        doc.text(`Мини-тренировка: ${formatReportPdfText(item.nextPractice)}`);
         doc.moveDown();
       }
     }
@@ -157,7 +154,10 @@ export function reportPdfCriteriaLabelForMode(
   return labels[key] || key;
 }
 
-function criteriaLabel(key: string, trainingMode: InterviewTrainingMode): string {
+function criteriaLabel(
+  key: string,
+  trainingMode: InterviewTrainingMode
+): string {
   return reportPdfCriteriaLabelForMode(key, trainingMode);
 }
 

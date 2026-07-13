@@ -16,8 +16,13 @@ import type {
 import type { RecordAiUsageInput } from '@/server/application/aiUsage/aiUsageService';
 import {
   buildInterviewerGenderInstruction,
+  buildInterviewerToneInstruction,
   getInterviewerGender,
 } from '@/shared/interviewerVoice';
+import {
+  AI_CANDIDATE_ROLE_CONTRACT,
+  AI_INTERVIEWER_ROLE_CONTRACT,
+} from '@/shared/interviewRoleContract';
 import type {
   CandidateDifficulty,
   CandidatePersona,
@@ -247,12 +252,21 @@ function semanticConceptsConflict(
   return intersection / Math.min(candidateTags.size, savedTags.size) >= 0.75;
 }
 
-function formatTurns(turns: InterviewTurnRecord[]): string {
-  if (!turns.length) return 'Пока нет предыдущих вопросов.';
+function formatTurns(
+  turns: InterviewTurnRecord[],
+  trainingMode: InterviewTrainingMode = 'candidate'
+): string {
+  if (!turns.length) {
+    return trainingMode === 'interviewer'
+      ? 'Пока нет предыдущих этапов.'
+      : 'Пока нет предыдущих вопросов.';
+  }
   return turns
     .map((turn) => {
       const answer = turn.answerTranscript
-        ? `\nОтвет: ${turn.answerTranscript}`
+        ? trainingMode === 'interviewer'
+          ? `\nРеплики интервьюера на этапе: ${turn.answerTranscript}`
+          : `\nОтвет кандидата: ${turn.answerTranscript}`
         : '';
       return `#${turn.index} [${turn.kind}] ${turn.question}${answer}`;
     })
@@ -264,23 +278,33 @@ function sessionContext(params: GenerateQuestionParams | EvaluateAnswerParams) {
 }
 
 function sessionContextForConverse(session: InterviewSessionRecord) {
+  const trainingMode = readTrainingMode(session);
   const focus = readInterviewFocus(session);
+  const roleContext =
+    trainingMode === 'interviewer'
+      ? [
+          `Профиль AI-кандидата: ${describeCandidatePersona(readCandidatePersona(session))}`,
+          `Сложность AI-кандидата: ${describeCandidateDifficulty(readCandidateDifficulty(session))}`,
+          `Заметки AI-кандидата: ${readCandidateNotes(session) || 'нет'}`,
+        ]
+      : [
+          `Режим интервьюера: ${session.interviewerMode}`,
+          buildInterviewerToneInstruction(session.interviewerMode),
+          buildInterviewerGenderInstruction(
+            getInterviewerGender(readInterviewerFaceId(session))
+          ),
+        ];
+
   return [
-    `Режим тренировки: ${describeTrainingMode(readTrainingMode(session))}`,
+    `Режим тренировки: ${describeTrainingMode(trainingMode)}`,
     `Роль: ${session.role || 'не указана'}`,
     `Уровень: ${session.level || 'middle'}`,
-    `Режим интервьюера: ${session.interviewerMode}`,
-    buildInterviewerGenderInstruction(
-      getInterviewerGender(readInterviewerFaceId(session))
-    ),
+    ...roleContext,
     `Язык: ${session.language}`,
     `Компания: ${session.companyName || 'не указана'}`,
     `Вакансия: ${session.vacancyTitle || 'не указана'}`,
     `Описание вакансии: ${session.vacancyRaw || 'нет'}`,
     `Резюме кандидата: ${session.resumeRaw || 'нет'}`,
-    `Профиль AI-кандидата: ${describeCandidatePersona(readCandidatePersona(session))}`,
-    `Сложность AI-кандидата: ${describeCandidateDifficulty(readCandidateDifficulty(session))}`,
-    `Заметки о кандидате: ${readCandidateNotes(session) || 'нет'}`,
     `Фокус интервью: ${describeInterviewFocus(focus)}`,
   ].join('\n');
 }
@@ -298,9 +322,7 @@ function readInterviewFocus(session: InterviewSessionRecord): InterviewFocus | n
 }
 
 function readTrainingMode(session: InterviewSessionRecord): InterviewTrainingMode {
-  if (session.trainingMode === 'interviewer') return 'interviewer';
-  const value = session.metadata?.trainingMode;
-  return value === 'interviewer' ? 'interviewer' : 'candidate';
+  return session.trainingMode === 'interviewer' ? 'interviewer' : 'candidate';
 }
 
 function readCandidatePersona(session: InterviewSessionRecord): CandidatePersona {
@@ -409,21 +431,37 @@ function formatDialogue(
 }
 
 export function buildConverseUserText(params: ConverseParams): string {
+  const isInterviewerTraining =
+    readTrainingMode(params.session) === 'interviewer';
+  const currentTurnLabel = isInterviewerTraining
+    ? 'Текущий этап'
+    : 'Текущий вопрос';
+  const exchangeLabel = isInterviewerTraining
+    ? 'Реплик интервьюера по этому этапу'
+    : 'Реплик кандидата по этому вопросу';
+  const previousMainLabel = isInterviewerTraining
+    ? 'Предыдущие основные этапы (без реплик)'
+    : 'Предыдущие основные вопросы (без ответов)';
+  const dialogueLabel = isInterviewerTraining
+    ? 'Диалог по текущему этапу'
+    : 'Диалог по текущему вопросу';
+
   return [
     sessionContextForConverse(params.session),
     '',
-    `Предыдущие основные вопросы (без ответов):\n${formatPreviousMainQuestions(params.turns, params.turn)}`,
+    `${previousMainLabel}:\n${formatPreviousMainQuestions(params.turns, params.turn, isInterviewerTraining)}`,
     '',
-    `Текущий вопрос: ${params.turn.question}`,
-    `Реплик кандидата по этому вопросу: ${params.exchanges}`,
+    `${currentTurnLabel}: ${params.turn.question}`,
+    `${exchangeLabel}: ${params.exchanges}`,
     '',
-    `Диалог по текущему вопросу:\n${formatConverseDialogue(params)}`,
+    `${dialogueLabel}:\n${formatConverseDialogue(params)}`,
   ].join('\n');
 }
 
 function formatPreviousMainQuestions(
   turns: InterviewTurnRecord[],
-  currentTurn: InterviewTurnRecord
+  currentTurn: InterviewTurnRecord,
+  isInterviewerTraining = false
 ): string {
   const previous = turns
     .filter(
@@ -438,23 +476,27 @@ function formatPreviousMainQuestions(
 
   return previous.length
     ? previous.join('\n')
-    : 'Пока нет предыдущих основных вопросов.';
+    : isInterviewerTraining
+      ? 'Пока нет предыдущих основных этапов.'
+      : 'Пока нет предыдущих основных вопросов.';
 }
 
 // Общая часть инструкции интервьюера (без формата вывода).
 const CANDIDATE_TRAINING_CONVERSE_RULES =
-  'Ты — интервьюер Гласно, ведёшь живое собеседование голосом и текстом. Веди диалог по ТЕКУЩЕМУ вопросу как живой человек. ' +
+  `Ты — интервьюер Гласно. ${AI_INTERVIEWER_ROLE_CONTRACT} Веди живое собеседование голосом и текстом только по ТЕКУЩЕМУ вопросу. ` +
   'Реагируй кратко (1–3 предложения), по-русски, в роли интервьюера. ' +
   'Строго соблюдай указанный пол интервьюера и грамматический род в репликах от своего лица. ' +
-  'Если кандидат не понял вопрос или просит пояснить — переформулируй вопрос проще, другими словами, приведи пример того, что тебя интересует. ' +
-  'Можно задать короткий уточняющий вопрос по ответу. ' +
-  'СТРОГО запрещено: отвечать ВМЕСТО кандидата, подсказывать готовый ответ, решать задачу за него — ты проверяешь кандидата, а не учишь. ' +
+  'Если кандидат не понял вопрос или просит пояснить — только переформулируй вопрос проще и уточни, какой аспект опыта тебя интересует; не объясняй предметную область и не приводи готовый ответ или решение. ' +
+  'Уточняй ответ только если это помогает проверить ещё не раскрытый важный аспект текущего вопроса. Не задавай уточняющие вопросы по инерции. ' +
+  'Если кандидат уже раскрыл ключевой аспект, по вопросу уже было несколько содержательных уточнений или очередное уточнение не даст новой информации — не задавай следующий вопрос, а коротко предложи перейти к следующему. Не повторяй уже выясненные аспекты другими словами. ' +
+  'Не пересказывай и не оценивай ответ кандидата. Вместо объяснения верни кандидата к его собственному рассуждению или предложи перейти дальше. ' +
+  'СТРОГО запрещено: отвечать ВМЕСТО кандидата, подсказывать готовый ответ, решать задачу за него или демонстрировать экспертное решение — ты проверяешь кандидата, а не учишь. ' +
   'НЕ переходи к следующему вопросу из плана сам и не меняй тему. ' +
   'Решение о переходе принимает пользователь — ты только предлагаешь.';
 
 const INTERVIEWER_TRAINING_CONVERSE_RULES =
-  'Ты — AI-кандидат Гласно. Пользователь проводит интервью и тренирует навык интервьюера. ' +
-  'В диалоге отвечай как кандидат по роли, вакансии, резюме и профилю AI-кандидата. ' +
+  `Ты — AI-кандидат Гласно. ${AI_CANDIDATE_ROLE_CONTRACT} Пользователь проводит интервью и тренирует навык интервьюера. ` +
+  'Отвечай как кандидат по роли, вакансии, резюме и профилю AI-кандидата. ' +
   'Пиши по-русски, кратко и естественно: 1–3 предложения, без префиксов и оценок пользователя. ' +
   'Не помогай интервьюеру формулировать вопросы и не объясняй, как проводить интервью. ' +
   'Если вопрос интервьюера общий, отвечай естественно, но не раскрывай всё сам: оставляй место для уточняющих вопросов. ' +
@@ -462,15 +504,37 @@ const INTERVIEWER_TRAINING_CONVERSE_RULES =
   'НЕ переходи к следующей теме сам и не объявляй итог собеседования. Решение о переходе принимает пользователь.';
 
 export function buildConverseInstruction(
-  session: Pick<InterviewSessionRecord, 'trainingMode' | 'interviewerMode' | 'metadata'>
+  session: Pick<InterviewSessionRecord, 'trainingMode' | 'interviewerMode' | 'metadata'>,
+  timeboxReminder = false
 ): string {
-  return readTrainingMode(session as InterviewSessionRecord) === 'interviewer'
+  const base = readTrainingMode(session as InterviewSessionRecord) === 'interviewer'
     ? INTERVIEWER_TRAINING_CONVERSE_RULES
-    : CANDIDATE_TRAINING_CONVERSE_RULES;
+    : `${CANDIDATE_TRAINING_CONVERSE_RULES} ${buildInterviewerToneInstruction(session.interviewerMode)}`;
+  if (!timeboxReminder) return base;
+
+  if (readTrainingMode(session as InterviewSessionRecord) === 'interviewer') {
+    return `${base} Время текущего этапа истекло. Не управляй переходом между темами и не предлагай следующий вопрос: это решает только пользователь-интервьюер.`;
+  }
+
+  return `${base} Время на текущий вопрос истекло. В этой реплике не задавай новый вопрос и не добавляй уточнений. Заверши её коротким предложением перейти к следующему вопросу и дождись решения пользователя, например: «Отлично, этот вопрос мы достаточно обсудили. Готовы перейти к следующему?». Не переключай вопрос самостоятельно.`;
 }
 
-const CONVERSE_MOVE_ON_RULE =
-  'Если кандидат ответил достаточно полно, либо по этому вопросу уже было много реплик, либо он явно «плавает» и продолжать смысла нет — предложи перейти к следующему вопросу (например: «Хорошо, здесь всё понятно. Готовы перейти к следующему вопросу?»).';
+export const CONVERSE_MOVE_ON_RULE =
+  'Предлагай перейти к следующему вопросу, не дожидаясь таймбокса, если ответ достаточно полно раскрыл важные аспекты, уточнения начинают повторяться или кандидат явно «плавает» и продолжать смысла нет (например: «Хорошо, здесь всё понятно. Готовы перейти к следующему вопросу?»).';
+
+function buildConverseMoveOnRule(session: ConverseParams['session']): string {
+  return readTrainingMode(session) === 'interviewer'
+    ? 'Не предлагай перейти к следующему вопросу и всегда указывай suggestMoveOn=false: переходом управляет только пользователь-интервьюер.'
+    : CONVERSE_MOVE_ON_RULE;
+}
+
+function buildConverseOutputRule(session: ConverseParams['session']): string {
+  if (readTrainingMode(session) === 'interviewer') {
+    return `Сначала выдай ТОЛЬКО текст реплики AI-кандидата (без префиксов и кавычек). В самом конце на отдельной строке поставь ровно один служебный маркер: «${STAY_MARKER}». Маркер — последнее, что ты выводишь; ничего после него не пиши.`;
+  }
+
+  return `Сначала выдай ТОЛЬКО текст реплики интервьюера (без префиксов и кавычек). В самом конце на отдельной строке поставь ровно один служебный маркер: «${NEXT_MARKER}» — если предлагаешь перейти к следующему вопросу, иначе «${STAY_MARKER}». Маркер — последнее, что ты выводишь; ничего после него не пиши.`;
+}
 
 const NEXT_MARKER = '<<<NEXT>>>';
 const STAY_MARKER = '<<<STAY>>>';
@@ -550,7 +614,7 @@ export class OpenAiInterviewEngine implements InterviewEngine {
       const raw = await this.requestJson({
         instruction:
           'Ты редактор сценария Гласно. Сгенерируй короткую стартовую или переходную реплику AI-кандидата для тренировки интервьюера. Реплика должна дать пользователю повод задать следующий вопрос, но не проводить интервью за него. Не повторяй предыдущие реплики. Верни строго JSON вида {"question":"..."}',
-        userText: `${sessionContext(params)}\n\nИстория:\n${formatTurns(params.turns)}`,
+        userText: `${sessionContext(params)}\n\nИстория:\n${formatTurns(params.turns, 'interviewer')}`,
         maxOutputTokens: 220,
         kind: 'question_gen',
         context: usageContext(params.session),
@@ -574,7 +638,7 @@ export class OpenAiInterviewEngine implements InterviewEngine {
         userText: [
           sessionContext(params),
           '',
-          `История:\n${formatTurns(params.turns)}`,
+          `История:\n${formatTurns(params.turns, 'candidate')}`,
           '',
           `Допустимые теги специализации для requiredContextTags: ${(params.questionContextTags ?? []).join(', ') || 'нет — используй пустой массив'}.`,
           '',
@@ -625,9 +689,9 @@ export class OpenAiInterviewEngine implements InterviewEngine {
       userText: [
         sessionContextForConverse(params.session),
         '',
-        `Текущий вопрос: ${params.turn.question}`,
+        `${isInterviewerTraining ? 'Текущий этап' : 'Текущий вопрос'}: ${params.turn.question}`,
         '',
-        `История интервью:\n${formatTurns(params.turns)}`,
+        `История интервью:\n${formatTurns(params.turns, readTrainingMode(params.session))}`,
       ].join('\n'),
       maxOutputTokens: 760,
       kind: 'question_hints',
@@ -640,21 +704,30 @@ export class OpenAiInterviewEngine implements InterviewEngine {
   async generateSampleAnswerHint(
     params: GenerateSampleAnswerHintParams
   ): Promise<{ sampleAnswer: string }> {
+    const isInterviewerTraining =
+      readTrainingMode(params.session) === 'interviewer';
+    const plannedTurnLabel = isInterviewerTraining
+      ? 'Плановый этап'
+      : 'Плановый вопрос';
+    const targetLabel = isInterviewerTraining
+      ? 'Последний вопрос пользователя-интервьюера'
+      : 'Текущий уточняющий вопрос для примера ответа';
     const raw = await this.requestJson({
-      instruction:
-        'Ты карьерный тренер Гласно. Обнови только краткий пример ответа для последнего уточняющего вопроса интервьюера. ' +
-        'Основной плановый вопрос остаётся прежним, поэтому не меняй тему шире уточнения. ' +
-        'Пиши по-русски, 2–4 предложения от первого лица. Не выдумывай работодателей, годы опыта, метрики, проекты, технологии и факты, которых нет в контексте. ' +
-        'Если конкретики нет — формулируй пример так, чтобы кандидат мог подставить свой опыт. Ответ должен быть законченным, без многоточия в конце и без оборванной мысли. Верни строго JSON вида {"sampleAnswer":"..."}.',
+      instruction: isInterviewerTraining
+        ? 'Ты тренер интервьюеров Гласно. Обнови только краткий пример следующего вопроса пользователя-интервьюера с учётом последнего ответа AI-кандидата. Не отвечай за кандидата и не продолжай интервью самостоятельно. Пиши по-русски, 1–2 предложения. Верни строго JSON вида {"sampleAnswer":"..."}.'
+        : 'Ты карьерный тренер Гласно. Обнови только краткий пример ответа для последнего уточняющего вопроса интервьюера. ' +
+          'Основной плановый вопрос остаётся прежним, поэтому не меняй тему шире уточнения. ' +
+          'Пиши по-русски, 2–4 предложения от первого лица. Не выдумывай работодателей, годы опыта, метрики, проекты, технологии и факты, которых нет в контексте. ' +
+          'Если конкретики нет — формулируй пример так, чтобы кандидат мог подставить свой опыт. Ответ должен быть законченным, без многоточия в конце и без оборванной мысли. Верни строго JSON вида {"sampleAnswer":"..."}.',
       userText: [
         sessionContextForConverse(params.session),
         '',
-        `Плановый вопрос turn: ${params.turn.question}`,
-        `Текущий уточняющий вопрос для примера ответа: ${params.targetQuestion}`,
+        `${plannedTurnLabel}: ${params.turn.question}`,
+        `${targetLabel}: ${params.targetQuestion}`,
         '',
-        `Диалог по текущему turn:\n${formatDialogue(params.dialogue)}`,
+        `Диалог по текущему turn:\n${formatDialogue(params.dialogue, readTrainingMode(params.session))}`,
         '',
-        `История интервью:\n${formatTurns(params.turns)}`,
+        `История интервью:\n${formatTurns(params.turns, readTrainingMode(params.session))}`,
       ].join('\n'),
       maxOutputTokens: 360,
       kind: 'question_sample_hint',
@@ -674,7 +747,7 @@ export class OpenAiInterviewEngine implements InterviewEngine {
         'Оцени ответ кандидата. Если ответ содержательный, но слишком общий (без фактов, чисел или конкретного примера), задай ОДИН короткий уточняющий вопрос. ' +
         'Если ответ бессмысленный, набор символов, односложный, «не знаю» или ответ достаточный — уточнение НЕ нужно (needsClarification=false). ' +
         'Верни строго JSON вида {"needsClarification":true,"question":"...","reason":"..."} или {"needsClarification":false,"reason":"..."}.',
-      userText: `${sessionContext(params)}\n\nВопрос: ${params.turn.question}\nОтвет: ${params.answer}\n\nИстория:\n${formatTurns(params.turns)}`,
+      userText: `${sessionContext(params)}\n\nВопрос: ${params.turn.question}\nОтвет: ${params.answer}\n\nИстория:\n${formatTurns(params.turns, readTrainingMode(params.session))}`,
       maxOutputTokens: 220,
       kind: 'answer_eval',
       context: usageContext(params.session),
@@ -693,8 +766,8 @@ export class OpenAiInterviewEngine implements InterviewEngine {
   }> {
     const raw = await this.requestJson({
       instruction:
-        `${buildConverseInstruction(params.session)} ` +
-        `${CONVERSE_MOVE_ON_RULE} ` +
+        `${buildConverseInstruction(params.session, Boolean(params.timeboxReminder))} ` +
+        `${buildConverseMoveOnRule(params.session)} ` +
         'Если предлагаешь перейти дальше — поставь suggestMoveOn=true, иначе false. ' +
         'Верни строго JSON вида {"reply":"...","suggestMoveOn":true|false}.',
       userText: buildConverseUserText(params),
@@ -709,7 +782,9 @@ export class OpenAiInterviewEngine implements InterviewEngine {
     }
     return {
       reply,
-      suggestMoveOn: Boolean(raw.suggestMoveOn),
+      suggestMoveOn:
+        readTrainingMode(params.session) === 'candidate' &&
+        Boolean(raw.suggestMoveOn),
     };
   }
 
@@ -732,11 +807,9 @@ export class OpenAiInterviewEngine implements InterviewEngine {
     }
 
     const instruction =
-      `${buildConverseInstruction(params.session)} ` +
-      `${CONVERSE_MOVE_ON_RULE} ` +
-      'Сначала выдай ТОЛЬКО текст реплики интервьюера (без префиксов и кавычек). ' +
-      `В самом конце на отдельной строке поставь ровно один служебный маркер: «${NEXT_MARKER}» — если предлагаешь перейти к следующему вопросу, иначе «${STAY_MARKER}». ` +
-      'Маркер — последнее, что ты выводишь; ничего после него не пиши.';
+      `${buildConverseInstruction(params.session, Boolean(params.timeboxReminder))} ` +
+      `${buildConverseMoveOnRule(params.session)} ` +
+      buildConverseOutputRule(params.session);
 
     const model = this.options.model || DEFAULT_MODEL;
     const client = new OpenAI({
@@ -829,7 +902,10 @@ export class OpenAiInterviewEngine implements InterviewEngine {
       });
     }
 
-    return { suggestMoveOn };
+    return {
+      suggestMoveOn:
+        readTrainingMode(params.session) === 'candidate' && suggestMoveOn,
+    };
   }
 
   private async requestJson(params: {

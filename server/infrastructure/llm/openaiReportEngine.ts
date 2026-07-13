@@ -7,6 +7,7 @@ import type {
   AnalyzeReportParams,
   ReportEngine,
 } from '@/server/interface/reportEngine';
+import type { InterviewTurnRecord } from '@/server/interface/interviewRepository';
 import { apiError } from '@/server/utils/errors';
 import type { RecordAiUsageInput } from '@/server/application/aiUsage/aiUsageService';
 import {
@@ -261,25 +262,7 @@ export function buildInstruction(
 
 function buildUserPayload(params: AnalyzeReportParams): string {
   const { session, turns } = params;
-  const transcript = turns
-    .map(
-      (turn) => {
-        const kindLabel =
-          turn.kind === 'clarification' ? 'уточняющий' : 'основной';
-        return [
-          `turnId=${turn.id}`,
-          `kind=${turn.kind}`,
-          turn.followUpForTurnId
-            ? `followUpForTurnId=${turn.followUpForTurnId}`
-            : '',
-          `Вопрос ${turn.index} (${kindLabel}): ${turn.question}`,
-          `Ответ: ${turn.answerTranscript || 'Ответ не предоставлен.'}`,
-        ]
-          .filter(Boolean)
-          .join('\n');
-      }
-    )
-    .join('\n\n');
+  const transcript = buildReportTranscript(turns, session.trainingMode);
 
   return [
     `Роль: ${session.role || 'не указана'}`,
@@ -292,4 +275,42 @@ function buildUserPayload(params: AnalyzeReportParams): string {
     'Транскрипт:',
     transcript,
   ].join('\n');
+}
+
+type ReportTranscriptTurn = Pick<
+  InterviewTurnRecord,
+  | 'id'
+  | 'index'
+  | 'kind'
+  | 'question'
+  | 'answerTranscript'
+  | 'followUpForTurnId'
+>;
+
+export function buildReportTranscript(
+  turns: ReportTranscriptTurn[],
+  trainingMode: InterviewTrainingMode = 'candidate'
+): string {
+  const isInterviewerTraining = trainingMode === 'interviewer';
+  return turns
+    .map(
+      (turn) => {
+        const kindLabel =
+          turn.kind === 'clarification' ? 'уточняющий' : 'основной';
+        return [
+          `turnId=${turn.id}`,
+          `kind=${turn.kind}`,
+          turn.followUpForTurnId
+            ? `followUpForTurnId=${turn.followUpForTurnId}`
+            : '',
+          `${isInterviewerTraining ? 'Этап' : 'Вопрос'} ${turn.index} (${kindLabel}): ${turn.question}`,
+          isInterviewerTraining
+            ? `Реплики пользователя-интервьюера: ${turn.answerTranscript || 'Реплики не предоставлены.'}`
+            : `Ответ кандидата: ${turn.answerTranscript || 'Ответ не предоставлен.'}`,
+        ]
+          .filter(Boolean)
+          .join('\n');
+      }
+    )
+    .join('\n\n');
 }

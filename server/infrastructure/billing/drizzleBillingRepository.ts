@@ -1084,8 +1084,8 @@ async function grantPaidAccess(
     .for('update');
 
   if (plan.type === 'minute_pack') {
-    // Пакет живёт, пока жив пропуск. Без активного пропуска (гонка с
-    // истечением между checkout и оплатой) — не дольше собственного потолка.
+    // При активном пропуске пакет заканчивается вместе с ним; в трайле
+    // действует собственный срок пакета.
     const [access] = await tx
       .select()
       .from(schema.userSubscriptions)

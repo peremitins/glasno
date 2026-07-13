@@ -6,8 +6,6 @@ export type SessionGoalAccess = 'quick' | 'standard' | 'deep';
 export interface BillingPlanConfig extends BillingPlan {
   // Автопродление применимо только к пропускам «Полный доступ».
   autoRenewable: boolean;
-  // Пакеты минут — расходник: без активного пропуска покупка блокируется.
-  requiresActivePass: boolean;
 }
 
 // Бесплатный трайл: одно быстрое интервью до оплаты. Это не тариф и не
@@ -73,7 +71,6 @@ function passPlan(params: {
     isHighlighted: params.id === PASS_HIGHLIGHTED_ID,
     isCheckoutEnabled: true,
     autoRenewable: true,
-    requiresActivePass: false,
   };
 }
 
@@ -92,19 +89,18 @@ function minutePackPlan(params: {
     priceRub: params.priceRub,
     currency: 'RUB',
     type: 'minute_pack',
-    // Потолок жизни минут; фактический срок обрезается концом пропуска.
+    // Минуты доступны и в трайле, поэтому пакет действует свой срок.
     durationDays: 30,
     realtimeVoiceMinutes: params.realtimeVoiceMinutes,
     features: [
       `+${params.realtimeVoiceMinutes} минут голосового интервью`,
-      'Действуют, пока активен пропуск',
-      'Нужен активный пропуск «Полный доступ»',
+      'Действуют 30 дней с момента оплаты',
+      'Разовая покупка без автопродления',
     ],
     badge: params.badge ?? null,
     isHighlighted: false,
     isCheckoutEnabled: true,
     autoRenewable: false,
-    requiresActivePass: true,
   };
 }
 
@@ -188,7 +184,6 @@ export function getPassPlans(): BillingPlanConfig[] {
 function toPublicPlan(plan: BillingPlanConfig): BillingPlan {
   const {
     autoRenewable: _autoRenewable,
-    requiresActivePass: _requiresActivePass,
     ...publicPlan
   } = plan;
   return publicPlan;

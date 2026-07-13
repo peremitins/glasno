@@ -39,6 +39,9 @@ export interface ConverseParams {
   dialogue: Array<{ role: 'user' | 'interviewer'; content: string }>;
   // Сколько реплик кандидата уже было по этому вопросу.
   exchanges: number;
+  // Время текущего вопроса истекло: в этой реплике нужно предложить перейти
+  // дальше, не переключая вопрос самостоятельно.
+  timeboxReminder?: boolean;
 }
 
 export interface NormalizeCustomQuestionsParams {

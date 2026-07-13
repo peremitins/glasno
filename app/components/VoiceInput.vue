@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useVoiceDictationInput } from '@/app/composables/useVoiceDictationInput';
 
@@ -20,6 +20,18 @@ const answer = computed({
 
 const dictation = useVoiceDictationInput({ value: answer });
 const canUseDictation = computed(() => !props.disabled);
+
+// Отправка ответа блокирует поле через `disabled`. В этот момент важно сразу
+// остановить распознавание: браузер может отдать финальный результат уже после
+// очистки поля и вернуть в него только что отправленный текст.
+watch(
+  () => props.disabled,
+  (disabled) => {
+    if (disabled && dictation.isListening.value) {
+      void dictation.stop();
+    }
+  }
+);
 </script>
 
 <template>

@@ -43,6 +43,7 @@ import {
   modeFromFaceId,
 } from './interviewerFace';
 import { prepareInterviewSource } from './source';
+import { getQuestionPacingConfig, resolveQuestionPacing } from './questionPacing';
 
 export class InterviewService {
   constructor(
@@ -384,6 +385,7 @@ export class InterviewService {
     // Уточняющий вопрос задаём только к содержательному ответу на основной вопрос.
     // На мусор/«не знаю»/слишком короткие ответы — не плодим уточнения, идём дальше.
     if (
+      session.trainingMode === 'candidate' &&
       turn.kind === 'main' &&
       !hasClarificationFor(turnsAfterAnswer, turn.id) &&
       isSubstantiveAnswer(params.input.answer)
@@ -445,10 +447,21 @@ export class InterviewService {
 
     const baseMeta = toMetaRecord(turn.metadata);
     const dialogue = parseDialogue(baseMeta.dialogue);
+    const now = new Date();
+    const questionPacingStartedAt =
+      readIsoString(baseMeta.questionPacingStartedAt) ?? now.toISOString();
+    const pacing = resolveQuestionPacing({
+      goal: parseInterviewSessionMetadata(session.metadata).sessionGoal,
+      startedAt: questionPacingStartedAt,
+      lastReminderAt: readIsoString(baseMeta.questionPacingLastReminderAt),
+      now,
+    });
+    const timeboxReminder =
+      session.trainingMode === 'candidate' && pacing.shouldRemind;
     dialogue.push({
       role: 'user',
       content: params.input.message.trim(),
-      at: new Date().toISOString(),
+      at: now.toISOString(),
     });
     const exchanges = dialogue.filter((message) => message.role === 'user').length;
     const turns = await this.deps.repository.listTurns(session.id);
@@ -462,6 +475,7 @@ export class InterviewService {
         content: message.content,
       })),
       exchanges,
+      timeboxReminder,
     });
 
     dialogue.push({
@@ -473,7 +487,13 @@ export class InterviewService {
     await this.deps.repository.updateTurnMetadata(session.id, turn.id, {
       ...baseMeta,
       dialogue,
-      suggestMoveOn,
+      suggestMoveOn:
+        session.trainingMode === 'candidate' &&
+        (suggestMoveOn || timeboxReminder),
+      questionPacingStartedAt,
+      questionPacingLastReminderAt: timeboxReminder
+        ? now.toISOString()
+        : readIsoString(baseMeta.questionPacingLastReminderAt),
     });
 
     return this.getStateForSession(
@@ -516,10 +536,21 @@ export class InterviewService {
 
     const baseMeta = toMetaRecord(turn.metadata);
     const dialogue = parseDialogue(baseMeta.dialogue);
+    const now = new Date();
+    const questionPacingStartedAt =
+      readIsoString(baseMeta.questionPacingStartedAt) ?? now.toISOString();
+    const pacing = resolveQuestionPacing({
+      goal: parseInterviewSessionMetadata(session.metadata).sessionGoal,
+      startedAt: questionPacingStartedAt,
+      lastReminderAt: readIsoString(baseMeta.questionPacingLastReminderAt),
+      now,
+    });
+    const timeboxReminder =
+      session.trainingMode === 'candidate' && pacing.shouldRemind;
     dialogue.push({
       role: 'user',
       content: params.input.message.trim(),
-      at: new Date().toISOString(),
+      at: now.toISOString(),
     });
     const exchanges = dialogue.filter((message) => message.role === 'user').length;
     const turns = await this.deps.repository.listTurns(session.id);
@@ -533,6 +564,7 @@ export class InterviewService {
         content: message.content,
       })),
       exchanges,
+      timeboxReminder,
     });
 
     let reply = '';
@@ -564,7 +596,13 @@ export class InterviewService {
     await this.deps.repository.updateTurnMetadata(session.id, turn.id, {
       ...baseMeta,
       dialogue,
-      suggestMoveOn,
+      suggestMoveOn:
+        session.trainingMode === 'candidate' &&
+        (suggestMoveOn || timeboxReminder),
+      questionPacingStartedAt,
+      questionPacingLastReminderAt: timeboxReminder
+        ? now.toISOString()
+        : readIsoString(baseMeta.questionPacingLastReminderAt),
     });
 
     const state = await this.getStateForSession(
@@ -603,15 +641,35 @@ export class InterviewService {
 
     const baseMeta = toMetaRecord(turn.metadata);
     const dialogue = parseDialogue(baseMeta.dialogue);
+    const now = new Date();
+    const questionPacingStartedAt =
+      params.input.role === 'user'
+        ? readIsoString(baseMeta.questionPacingStartedAt) ?? now.toISOString()
+        : readIsoString(baseMeta.questionPacingStartedAt);
+    const pacing = resolveQuestionPacing({
+      goal: parseInterviewSessionMetadata(session.metadata).sessionGoal,
+      startedAt: questionPacingStartedAt,
+      lastReminderAt: readIsoString(baseMeta.questionPacingLastReminderAt),
+      now,
+    });
+    const recordTimeboxReminder =
+      session.trainingMode === 'candidate' &&
+      params.input.role === 'interviewer' &&
+      params.input.timeboxReminder === true &&
+      pacing.shouldRemind;
     dialogue.push({
       role: params.input.role,
       content,
-      at: new Date().toISOString(),
+      at: now.toISOString(),
     });
 
     await this.deps.repository.updateTurnMetadata(session.id, turn.id, {
       ...baseMeta,
       dialogue,
+      questionPacingStartedAt,
+      questionPacingLastReminderAt: recordTimeboxReminder
+        ? now.toISOString()
+        : readIsoString(baseMeta.questionPacingLastReminderAt),
     });
 
     return this.getStateForSession(
@@ -881,6 +939,12 @@ function toIso(value: Date | string | null): string | null {
   return value instanceof Date ? value.toISOString() : value;
 }
 
+function readIsoString(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
 function toSessionDto(
   session: InterviewSessionRecord,
   turns: InterviewTurnRecord[]
@@ -911,6 +975,7 @@ function toSessionDto(
     responseMode: metadata.responseMode,
     hintMode: metadata.hintMode,
     realtimeLimits: metadata.realtimeLimits,
+    questionPacing: getQuestionPacingConfig(metadata.sessionGoal),
     plan: toPlanDto(metadata.plan, turns),
     language: session.language,
     interviewerMode: session.interviewerMode,
@@ -942,6 +1007,8 @@ function toTurnDto(turn: InterviewTurnRecord): InterviewTurn {
     createdAt: toIso(turn.createdAt)!,
     messages: metadata.dialogue,
     suggestMoveOn: metadata.suggestMoveOn,
+    questionPacingStartedAt: metadata.questionPacingStartedAt,
+    questionPacingLastReminderAt: metadata.questionPacingLastReminderAt,
     preference: metadata.preference,
   };
 }
@@ -1044,6 +1111,8 @@ function normalizeTurnMetadata(metadata: unknown): {
   hintPack: QuestionHintPack | null;
   dialogue: InterviewDialogueMessage[];
   suggestMoveOn: boolean;
+  questionPacingStartedAt: string | null;
+  questionPacingLastReminderAt: string | null;
   preference: { id: string; status: 'repeat' | 'mastered' | 'hidden' } | null;
 } {
   if (!metadata || typeof metadata !== 'object') {
@@ -1053,6 +1122,8 @@ function normalizeTurnMetadata(metadata: unknown): {
       hintPack: null,
       dialogue: [],
       suggestMoveOn: false,
+      questionPacingStartedAt: null,
+      questionPacingLastReminderAt: null,
       preference: null,
     };
   }
@@ -1062,6 +1133,8 @@ function normalizeTurnMetadata(metadata: unknown): {
     hintPack?: unknown;
     dialogue?: unknown;
     suggestMoveOn?: unknown;
+    questionPacingStartedAt?: unknown;
+    questionPacingLastReminderAt?: unknown;
     preference?: unknown;
   };
   return {
@@ -1079,6 +1152,8 @@ function normalizeTurnMetadata(metadata: unknown): {
         : null,
     dialogue: parseDialogue(raw.dialogue),
     suggestMoveOn: raw.suggestMoveOn === true,
+    questionPacingStartedAt: readIsoString(raw.questionPacingStartedAt),
+    questionPacingLastReminderAt: readIsoString(raw.questionPacingLastReminderAt),
     preference: normalizeQuestionPreferenceSummary(raw.preference),
   };
 }

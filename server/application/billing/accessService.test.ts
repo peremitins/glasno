@@ -227,7 +227,7 @@ describe('BillingAccessService', () => {
       lastAccessEndedAt: PAST.toISOString(),
       lastAccessPlanName: 'Полный доступ · 30 дн.',
       allowedSessionGoals: ['quick'],
-      realtimeVoice: { canBuyMore: false },
+      realtimeVoice: { canBuyMore: true },
     });
   });
 
@@ -291,7 +291,7 @@ describe('BillingAccessService', () => {
     });
   });
 
-  it('does not offer minute packs without an active pass', async () => {
+  it('offers minute packs to an authenticated trial user without an active pass', async () => {
     const service = new BillingAccessService({
       repository: createRepository({
         minuteBalance: {
@@ -305,7 +305,7 @@ describe('BillingAccessService', () => {
     await expect(
       service.getStatus({ anonymousSessionId: 'anon_1', userId: 'user_1' })
     ).resolves.toMatchObject({
-      realtimeVoice: { canBuyMore: false },
+      realtimeVoice: { canBuyMore: true },
     });
   });
 
