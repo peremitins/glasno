@@ -149,7 +149,7 @@
     opacity: 0.6;
   }
   .question-preference-menu {
-    z-index: 120;
+    z-index: 250;
     width: min(330px, calc(100vw - 24px));
     padding: 6px;
     border: 1px solid var(--glass-border-strong);

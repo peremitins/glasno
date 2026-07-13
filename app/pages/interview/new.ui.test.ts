@@ -133,10 +133,11 @@ describe('interview new page UI structure', () => {
     expect(source).toContain('isSubmitting');
   });
 
-  it('keeps a sticky start summary with default standard duration copy', () => {
+  it('keeps a sticky start summary with the selected question count', () => {
     expect(source).toContain('sticky-start-bar');
     expect(source).toContain('selectedGoalSummary');
-    expect(source).toContain('15 мин');
+    expect(source).toContain('Стандарт · 6 вопросов');
+    expect(source).not.toContain('Стандарт · 15 мин');
   });
 
   it('aligns the mobile sticky start bar with the reserved bottom navigation area', () => {

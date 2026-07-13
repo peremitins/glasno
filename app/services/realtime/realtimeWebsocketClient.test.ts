@@ -22,6 +22,7 @@ describe('realtimeWebsocketClient helpers', () => {
     expiresAt: null,
     model: 'gpt-realtime',
     voice: 'marin',
+    instructions: 'Ты голосовой интервьюер Гласно.',
     maxDurationSeconds: 60,
     idleTimeoutSeconds: 30,
     remainingSeconds: 60,

@@ -1,5 +1,6 @@
 import {
   buildInterviewerGenderInstruction,
+  buildInterviewerToneInstruction,
   getInterviewerGender,
   type InterviewerGender,
 } from '@/shared/interviewerVoice';
@@ -7,15 +8,20 @@ import type {
   CandidateDifficulty,
   CandidatePersona,
   InterviewerFaceId,
+  InterviewerMode,
   InterviewTrainingMode,
 } from '@/shared/dto';
+import {
+  AI_CANDIDATE_ROLE_CONTRACT,
+  AI_INTERVIEWER_ROLE_CONTRACT,
+} from '@/shared/interviewRoleContract';
 
 interface RuntimeRealtimeContext {
   sessionId: string;
   trainingMode?: InterviewTrainingMode | null;
   role?: string | null;
   level?: string | null;
-  interviewerMode?: string | null;
+  interviewerMode?: InterviewerMode | null;
   interviewerGender?: InterviewerGender | null;
   candidatePersona?: CandidatePersona | null;
   candidateDifficulty?: CandidateDifficulty | null;
@@ -31,7 +37,7 @@ interface RealtimeContextSource {
     trainingMode?: InterviewTrainingMode | null;
     role?: string | null;
     level?: string | null;
-    interviewerMode?: string | null;
+    interviewerMode?: InterviewerMode | null;
     interviewerFaceId?: InterviewerFaceId | null;
     candidatePersona?: CandidatePersona | null;
     candidateDifficulty?: CandidateDifficulty | null;
@@ -76,6 +82,7 @@ export function buildRealtimeInstructions(
   if (context.trainingMode === 'interviewer') {
     return [
       'Ты голосовой AI-кандидат Гласно. Всегда говори по-русски, кратко и естественно, как живой человек на собеседовании.',
+      AI_CANDIDATE_ROLE_CONTRACT,
       'Пользователь проводит интервью и тренирует навык интервьюера.',
       'Отвечай как кандидат по роли, вакансии, резюме и заданному профилю. Не помогай пользователю проводить интервью.',
       'Если вопрос общий, отвечай естественно, но не раскрывай всё сам: оставляй место для уточнений.',
@@ -94,19 +101,19 @@ export function buildRealtimeInstructions(
   }
 
   return [
-    'Ты голосовой интервьюер Гласно. Всегда говори по-русски, кратко и естественно, как живой человек на собеседовании.',
-    'Веди живой диалог по ТЕКУЩЕМУ вопросу: слушай ответ, реагируй, можешь задать короткий уточняющий вопрос.',
-    'Если кандидат не понял вопрос или просит пояснить — переформулируй его проще, другими словами, приведи пример того, что тебя интересует.',
-    'СТРОГО запрещено: отвечать вместо кандидата, подсказывать готовый ответ или решать задачу за него — ты проверяешь кандидата, а не учишь.',
+    'Ты голосовой интервьюер Гласно. Всегда говори по-русски, кратко и естественно.',
+    AI_INTERVIEWER_ROLE_CONTRACT,
+    'Если кандидат не понял вопрос или просит пояснить — только переформулируй его проще и уточни, какой аспект опыта тебя интересует. Не объясняй предметную область и не приводи готовый ответ или решение.',
+    'СТРОГО запрещено: отвечать вместо кандидата, подсказывать готовый ответ, решать задачу за него или демонстрировать экспертное решение — ты проверяешь кандидата, а не учишь.',
     'Не переходи к следующему вопросу сам и не меняй тему. Один и тот же вопрос можно обсуждать несколькими репликами.',
     'Когда кандидат ответил достаточно полно или по вопросу уже много реплик — мягко предложи перейти к следующему вопросу и спроси согласие. Сам не переключай: переход выполняет приложение по команде пользователя («следующий вопрос», «другой вопрос», «дальше») или по кнопке.',
     'ВАЖНО: если кандидат произнёс команду перехода («следующий вопрос», «другой вопрос», «дальше», «переходим», «к следующему вопросу», «к другому вопросу») — это команда приложению, а не реплика для тебя. НЕ отвечай на неё: не отговаривай, не проси завершить текущий вопрос, не комментируй. Молчи — приложение переключит вопрос и отдельно попросит тебя озвучить новый.',
     'Не утверждай, что интервью завершено.',
+    buildInterviewerToneInstruction(context.interviewerMode),
     buildInterviewerGenderInstruction(context.interviewerGender || 'male'),
     `ID сессии: ${context.sessionId}.`,
     `Роль: ${context.role || 'не указана'}.`,
     `Уровень: ${context.level || 'middle'}.`,
-    `Режим интервьюера: ${context.interviewerMode || 'neutral'}.`,
     `Вакансия: ${context.vacancyTitle || 'не указана'}.`,
     `Компания: ${context.companyName || 'не указана'}.`,
     `Текущий вопрос: ${context.currentQuestion || 'нет активного вопроса'}.`,

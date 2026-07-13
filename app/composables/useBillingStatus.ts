@@ -35,7 +35,7 @@ export function useBillingStatus() {
   const hasActivePaidAccess = computed(
     () => Boolean(status.value?.hasActivePaidAccess)
   );
-  // Можно докупать пакеты минут: активен пропуск «Полный доступ».
+  // Авторизованный пользователь может докупать пакеты минут и в трайле.
   const canBuyMinutes = computed(
     () => Boolean(status.value?.realtimeVoice.canBuyMore)
   );

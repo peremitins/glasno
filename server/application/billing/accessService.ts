@@ -161,8 +161,8 @@ export class BillingAccessService {
         includedMinutes,
         usedMinutes,
         remainingMinutes,
-        // Пакеты минут — расходник к активному пропуску.
-        canBuyMore: Boolean(owner.userId) && view.active,
+        // Авторизованный пользователь может докупить минуты и в трайле.
+        canBuyMore: Boolean(owner.userId),
       },
     };
   }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CONVERSE_MOVE_ON_RULE,
   buildConverseInstruction,
   buildConverseUserText,
   extractResponsesText,
@@ -104,8 +105,247 @@ describe('openai interview engine helpers', () => {
 
     expect(instruction).toContain('Ты — AI-кандидат Гласно');
     expect(instruction).toContain('Пользователь проводит интервью');
-    expect(instruction).toContain('отвечай как кандидат');
+    expect(instruction).toContain('Отвечай как кандидат');
     expect(instruction).not.toContain('отвечать ВМЕСТО кандидата');
+  });
+
+  it('keeps the AI candidate from answering as an interviewer', () => {
+    const session: ConverseParams['session'] = {
+      id: 'session_interviewer_training',
+      anonymousSessionId: 'anon_interviewer_training',
+      userId: null,
+      trainingMode: 'interviewer',
+      source: 'profession',
+      role: 'Frontend-разработчик',
+      level: 'middle',
+      questionCount: 3,
+      language: 'ru',
+      interviewerMode: 'neutral',
+      interviewerAvatarId: 'neutral-pro',
+      status: 'running',
+      companyName: null,
+      vacancyTitle: null,
+      vacancyRaw: null,
+      vacancyUrl: null,
+      resumeRaw: null,
+      metadata: {},
+      createdAt: new Date('2026-07-13T10:00:00.000Z'),
+    };
+
+    expect(buildConverseInstruction(session)).toContain(
+      'Никогда не отвечай как интервьюер'
+    );
+
+    const text = buildConverseUserText({
+      session,
+      turn: {
+        id: 'turn_interviewer_training',
+        sessionId: session.id,
+        index: 1,
+        kind: 'main',
+        question: 'Расскажите о производительности в React.',
+        answerTranscript: null,
+        followUpForTurnId: null,
+        metadata: null,
+        answeredAt: null,
+        createdAt: new Date('2026-07-13T10:00:00.000Z'),
+      },
+      turns: [],
+      dialogue: [
+        {
+          role: 'user',
+          content: 'Хорошо, давай продолжим. На чем мы остановились?',
+        },
+      ],
+      exchanges: 1,
+    });
+
+    expect(text).toContain('Реплик интервьюера по этому этапу: 1');
+    expect(text).not.toContain('Реплик кандидата по этому вопросу');
+    expect(text).toContain('Предыдущие основные этапы');
+    expect(text).toContain('Диалог по текущему этапу');
+    expect(text).not.toContain('Диалог по текущему вопросу');
+  });
+
+  it('keeps the interviewer in question mode instead of retelling or teaching', () => {
+    const instruction = buildConverseInstruction({
+      trainingMode: 'candidate',
+      interviewerMode: 'neutral',
+      metadata: {},
+    });
+
+    expect(instruction).toContain('Не пересказывай и не оценивай ответ кандидата');
+    expect(instruction).toContain('Не задавай уточняющие вопросы по инерции');
+    expect(instruction).toContain('не задавай следующий вопрос, а коротко предложи перейти');
+    expect(instruction).toContain('Не повторяй уже выясненные аспекты другими словами');
+    expect(instruction).toContain('даже если кандидат прямо просит объяснить');
+    expect(instruction).toContain('«Давай»');
+    expect(instruction).toContain('«На чём мы остановились?»');
+    expect(instruction).toContain('не продолжай ошибочную обучающую реплику');
+    expect(instruction).not.toContain('только по прямой просьбе кандидата');
+  });
+
+  it('uses the session training mode as the only role source', () => {
+    const instruction = buildConverseInstruction({
+      trainingMode: 'candidate',
+      interviewerMode: 'strict',
+      metadata: { trainingMode: 'interviewer' },
+    });
+
+    expect(instruction).toContain('Ты — интервьюер Гласно');
+    expect(instruction).not.toContain('Ты — AI-кандидат Гласно');
+  });
+
+  it.each([
+    ['soft', 'Тон интервьюера: мягкий', 'поддерживающе'],
+    ['neutral', 'Тон интервьюера: нейтральный', 'деловым'],
+    ['strict', 'Тон интервьюера: строгий', 'требовательно'],
+  ] as const)(
+    'turns interviewer mode %s into an explicit behavior contract',
+    (interviewerMode, label, behavior) => {
+      const instruction = buildConverseInstruction({
+        trainingMode: 'candidate',
+        interviewerMode,
+        metadata: {},
+      });
+
+      expect(instruction).toContain(label);
+      expect(instruction).toContain(behavior);
+    }
+  );
+
+  it('keeps AI-candidate settings out of the AI-interviewer context', () => {
+    const session: ConverseParams['session'] = {
+      id: 'session_candidate_training',
+      anonymousSessionId: 'anon_candidate_training',
+      userId: null,
+      trainingMode: 'candidate',
+      source: 'profession',
+      role: 'Frontend-разработчик',
+      level: 'middle',
+      questionCount: 3,
+      language: 'ru',
+      interviewerMode: 'strict',
+      interviewerAvatarId: 'strict-lead',
+      status: 'running',
+      companyName: null,
+      vacancyTitle: null,
+      vacancyRaw: null,
+      vacancyUrl: null,
+      resumeRaw: null,
+      metadata: {
+        trainingMode: 'interviewer',
+        interviewerFaceId: 'female-strict',
+        candidatePersona: 'strong_brief',
+        candidateDifficulty: 'realistic',
+      },
+      createdAt: new Date('2026-07-13T10:00:00.000Z'),
+    };
+
+    const text = buildConverseUserText({
+      session,
+      turn: {
+        id: 'turn_candidate_training',
+        sessionId: session.id,
+        index: 1,
+        kind: 'main',
+        question: 'Как вы оптимизируете загрузку React-приложения?',
+        answerTranscript: null,
+        followUpForTurnId: null,
+        metadata: null,
+        answeredAt: null,
+        createdAt: new Date('2026-07-13T10:00:00.000Z'),
+      },
+      turns: [],
+      dialogue: [
+        {
+          role: 'interviewer',
+          content: 'Если хотите, можем обсудить это подробнее.',
+        },
+        { role: 'user', content: 'Давай.' },
+      ],
+      exchanges: 1,
+    });
+
+    expect(text).toContain('AI играет интервьюера');
+    expect(text).toContain('Пол интервьюера: женский');
+    expect(text).toContain('Тон интервьюера: строгий');
+    expect(text).not.toContain('Профиль AI-кандидата');
+    expect(text).not.toContain('Сложность AI-кандидата');
+    expect(text).not.toContain('Заметки о кандидате');
+  });
+
+  it('keeps interviewer settings out of the AI-candidate context', () => {
+    const session: ConverseParams['session'] = {
+      id: 'session_interviewer_context',
+      anonymousSessionId: 'anon_interviewer_context',
+      userId: null,
+      trainingMode: 'interviewer',
+      source: 'profession',
+      role: 'Frontend-разработчик',
+      level: 'middle',
+      questionCount: 3,
+      language: 'ru',
+      interviewerMode: 'strict',
+      interviewerAvatarId: 'strict-lead',
+      status: 'running',
+      companyName: null,
+      vacancyTitle: null,
+      vacancyRaw: null,
+      vacancyUrl: null,
+      resumeRaw: null,
+      metadata: {
+        interviewerFaceId: 'female-strict',
+        candidatePersona: 'anxious',
+        candidateDifficulty: 'challenging',
+      },
+      createdAt: new Date('2026-07-13T10:00:00.000Z'),
+    };
+
+    const text = buildConverseUserText({
+      session,
+      turn: {
+        id: 'turn_interviewer_context',
+        sessionId: session.id,
+        index: 1,
+        kind: 'main',
+        question: 'Начните интервью.',
+        answerTranscript: null,
+        followUpForTurnId: null,
+        metadata: null,
+        answeredAt: null,
+        createdAt: new Date('2026-07-13T10:00:00.000Z'),
+      },
+      turns: [],
+      dialogue: [],
+      exchanges: 0,
+    });
+
+    expect(text).toContain('Профиль AI-кандидата');
+    expect(text).toContain('Сложность AI-кандидата');
+    expect(text).not.toContain('Режим интервьюера:');
+    expect(text).not.toContain('Пол интервьюера:');
+    expect(text).not.toContain('Тон интервьюера:');
+  });
+
+  it('requires a move-on proposal when the question timebox expires', () => {
+    const instruction = buildConverseInstruction(
+      {
+        trainingMode: 'candidate',
+        interviewerMode: 'neutral',
+        metadata: {},
+      },
+      true
+    );
+
+    expect(instruction).toContain('Время на текущий вопрос истекло');
+    expect(instruction).toContain('не задавай новый вопрос и не добавляй уточнений');
+    expect(instruction).toContain('например: «Отлично, этот вопрос мы достаточно обсудили. Готовы перейти к следующему?»');
+    expect(instruction).toContain('Не переключай вопрос самостоятельно');
+  });
+
+  it('does not use the number of dialogue replies as a move-on criterion', () => {
+    expect(CONVERSE_MOVE_ON_RULE).not.toContain('много реплик');
   });
 
   it('adds previous main questions without answers to live dialogue context', () => {

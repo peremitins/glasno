@@ -69,7 +69,12 @@
   import { useAudioPermissionGate } from '@/app/composables/useAudioPermissionGate';
   import { useCameraPermissionGate } from '@/app/composables/useCameraPermissionGate';
   import { useMicPermissionGate } from '@/app/composables/useMicPermissionGate';
-  import { buildRealtimeResponseCreateEvent } from '@/app/utils/interviewModeBridgeContext';
+  import {
+    buildRealtimeQuestionAnnouncement,
+    buildRealtimeResponseCreateEvent,
+    buildRealtimeTimeboxReminderInstruction,
+  } from '@/app/utils/interviewModeBridgeContext';
+  import { shouldSendQuestionTimeboxReminder } from '@/app/utils/questionPacing';
 
   type ConversationMessage = {
     id: string;
@@ -161,6 +166,7 @@
   // Runtime-пузыри, уже поставленные в очередь на сохранение: защита от
   // повторного персиста одной и той же реплики (дубли в истории диалога).
   const queuedRealtimePersistMessageIds = new Set<string>();
+  let pendingRealtimeTimeboxReminder = false;
 
   function handleRealtimeControl(control: RealtimeVoiceControl | null) {
     realtimeControl.value = control;
@@ -272,10 +278,9 @@
   const progressText = computed(() => {
     const session = state.value?.session;
     if (!session) return '';
-    return t('interview.session.progressTimed', {
+    return t('interview.session.progress', {
       current: session.currentQuestionIndex,
-      goal: t(`interview.goal.${session.sessionGoal}.title`),
-      minutes: session.expectedDurationMinutes,
+      total: session.totalQuestions,
     });
   });
 
@@ -485,10 +490,33 @@
   ) {
     const control = realtimeControl.value;
     if (!control || !voiceConnected.value) return;
+    const turn = currentTurn.value;
+    const session = state.value?.session;
+    const timeboxReminder = Boolean(
+      !options.instructions &&
+        !isInterviewerTraining.value &&
+        turn &&
+        session &&
+        shouldSendQuestionTimeboxReminder({
+          pacing: session.questionPacing,
+          startedAt: turn.questionPacingStartedAt,
+          lastReminderAt: turn.questionPacingLastReminderAt,
+        })
+    );
+    pendingRealtimeTimeboxReminder = timeboxReminder;
     control.sendEvent(
       buildRealtimeResponseCreateEvent({
         state: state.value,
-        instructions: options.instructions,
+        instructions: [
+          options.instructions,
+          timeboxReminder
+            ? buildRealtimeTimeboxReminderInstruction(
+                session?.trainingMode || 'candidate'
+              )
+            : '',
+        ]
+          .filter(Boolean)
+          .join('\n\n'),
         metadata: options.metadata,
       })
     );
@@ -601,8 +629,18 @@
     transcript: string,
     messageId: string
   ) {
-    queueRealtimeDialogueMessage('interviewer', transcript, messageId);
-    if (isNextQuestionTransitionReply(transcript)) {
+    const timeboxReminder = pendingRealtimeTimeboxReminder;
+    pendingRealtimeTimeboxReminder = false;
+    queueRealtimeDialogueMessage(
+      'interviewer',
+      transcript,
+      messageId,
+      timeboxReminder
+    );
+    if (
+      !isInterviewerTraining.value &&
+      isNextQuestionTransitionReply(transcript)
+    ) {
       void goToNextQuestion();
     }
   }
@@ -637,23 +675,13 @@
       !hasPreviousMainQuestions &&
       !hasCurrentQuestionDialogue;
 
-    const contextText = isFreshInterviewStart
-      ? `Интервью началось. Текущий вопрос: «${question}». Обсуждай только его.`
-      : options.firstQuestion
-      ? `Пользователь включил голосовой режим в уже идущем интервью. Текущий вопрос: «${question}». ` +
-        'Продолжай с учётом контекста текущего интервью и не начинай интервью заново.'
-      : `Приложение переключило интервью на следующий вопрос. Текущий вопрос теперь: «${question}». ` +
-        'Обсуждай только его и не возвращайся к предыдущему вопросу.';
-
-    const announcementInstructions = isFreshInterviewStart
-      ? `Коротко поздоровайся с кандидатом одной фразой (например, «Здравствуйте, давайте начнём») и сразу задай первый вопрос интервью дословно: «${question}». ` +
-        'Ничего не добавляй после вопроса.'
-      : options.firstQuestion
-      ? `Коротко скажи, что продолжим голосом, и напомни текущий вопрос интервью дословно: «${question}». ` +
-        'Не говори, что интервью начинается сначала. Ничего не добавляй после вопроса.'
-      : `Озвучь кандидату следующий вопрос интервью дословно: «${question}». ` +
-        'Перед вопросом допустима только короткая связка вроде «Хорошо, следующий вопрос». ' +
-        'Ничего не добавляй после вопроса.';
+    const { contextText, announcementInstructions } =
+      buildRealtimeQuestionAnnouncement({
+        trainingMode: state.value?.session.trainingMode || 'candidate',
+        question,
+        firstQuestion: Boolean(options.firstQuestion),
+        freshInterviewStart: Boolean(isFreshInterviewStart),
+      });
 
     sendRealtimeResponseCreate({
       metadata: { glasno_kind: REALTIME_QUESTION_ANNOUNCEMENT_KIND },
@@ -661,14 +689,11 @@
     });
   }
 
-  const suggestMoveOn = computed(
-    () => currentTurn.value?.suggestMoveOn === true
-  );
-
   function queueRealtimeDialogueMessage(
     role: InterviewDialogueRole,
     content: string,
-    runtimeMessageId?: string
+    runtimeMessageId?: string,
+    timeboxReminder = false
   ) {
     const turn = currentTurn.value;
     const normalized = content.trim();
@@ -688,7 +713,8 @@
           turn.id,
           role,
           normalized,
-          runtimeMessageId
+          runtimeMessageId,
+          timeboxReminder
         )
       )
       .catch((err) => {
@@ -700,13 +726,14 @@
     turnId: string,
     role: InterviewDialogueRole,
     content: string,
-    runtimeMessageId?: string
+    runtimeMessageId?: string,
+    timeboxReminder = false
   ) {
     state.value = await api<InterviewStateResponse>(
       `/api/interview/sessions/${sessionId.value}/dialogue`,
       {
         method: 'POST',
-        body: { turnId, role, content },
+        body: { turnId, role, content, timeboxReminder },
       }
     );
     // Реплика теперь отрисовывается из состояния интервью (turn.messages) —
@@ -770,6 +797,14 @@
       isSending.value ||
       realtimeVoiceLocked.value
     ) {
+      return;
+    }
+
+    // Команда перехода в текстовом поле адресована приложению, а не модели.
+    // Не добавляем её в диалог и не создаём лишний запрос к интервьюеру.
+    if (isNextQuestionVoiceCommand(message)) {
+      answer.value = '';
+      await goToNextQuestion();
       return;
     }
 
@@ -1620,7 +1655,11 @@
                   />
                 </p>
                 <button
-                  v-if="isTtsEnabled && message.role === 'assistant'"
+                  v-if="
+                    isTtsEnabled &&
+                    message.role === 'assistant' &&
+                    message?.content?.length
+                  "
                   v-tooltip="
                     speakingMessageId === message.id
                       ? t('voice.tts.stop')
@@ -1644,33 +1683,24 @@
               </li>
             </ol>
 
-            <!-- Переход к следующему вопросу. Подсвечивается, когда ИИ предложил. -->
-            <div
-              class="next-row"
-              :class="{ 'next-row--suggest': suggestMoveOn }"
+            <button
+              class="next-btn button-loader-host"
+              type="button"
+              :disabled="isSending || isGeneratingReport"
+              @click="goToNextQuestion"
             >
-              <span v-if="suggestMoveOn" class="next-hint">
-                {{ t('interview.session.moveOnHint') }}
-              </span>
-              <button
-                class="next-btn button-loader-host"
-                type="button"
-                :disabled="isSending || isGeneratingReport"
-                @click="goToNextQuestion"
+              <ButtonLoader v-if="sessionAction === 'next'" />
+              <span
+                class="button-loader-content"
+                :class="{
+                  'button-loader-content--loading': sessionAction === 'next',
+                }"
               >
-                <ButtonLoader v-if="sessionAction === 'next'" />
-                <span
-                  class="button-loader-content"
-                  :class="{
-                    'button-loader-content--loading': sessionAction === 'next',
-                  }"
-                >
-                  {{ nextActionLabel }}
-                  <ExitIcon v-if="isLastQuestion" aria-hidden="true" />
-                  <ArrowRightIcon v-else aria-hidden="true" />
-                </span>
-              </button>
-            </div>
+                {{ nextActionLabel }}
+                <ExitIcon v-if="isLastQuestion" aria-hidden="true" />
+                <ArrowRightIcon v-else aria-hidden="true" />
+              </span>
+            </button>
 
             <form class="composer" @submit.prevent="sendMessage">
               <textarea
@@ -1940,11 +1970,12 @@
     </template>
 
     <!-- Модалка выбора интервьюера: внешность + тон (меняются вместе). -->
-    <div
-      v-if="interviewerPickerOpen && state"
-      class="picker-overlay"
-      @click.self="interviewerPickerOpen = false"
-    >
+    <Teleport to="body">
+      <div
+        v-if="interviewerPickerOpen && state"
+        class="picker-overlay"
+        @click.self="interviewerPickerOpen = false"
+      >
       <div class="picker-modal glass-frame" role="dialog" aria-modal="true">
         <header class="picker-head">
           <div>
@@ -1994,7 +2025,7 @@
                     :src="getInterviewerFacePhotoSrc(opt.id)"
                     :alt="t(opt.modeLabel)"
                     @error="onThumbError(opt.id)"
-                  />
+                  >
                   <em v-else class="picker-initials">{{
                     group.key === 'male' ? 'М' : 'Ж'
                   }}</em>
@@ -2037,8 +2068,9 @@
             {{ t('interview.session.interviewerPicker.responsePauseHint') }}
           </p>
         </div>
+        </div>
       </div>
-    </div>
+    </Teleport>
 
     <MicPermissionDeniedDialog
       :open="micPermissionGate.showMicDeniedModal.value"
@@ -2943,32 +2975,13 @@
     gap: 8px;
   }
 
-  /* Строка перехода к следующему вопросу */
-  .next-row {
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 10px;
-    margin-top: 10px;
-    flex-wrap: wrap;
-  }
-  .next-row--suggest {
-    justify-content: space-between;
-    padding: 8px 10px;
-    border-radius: 12px;
-    border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
-    background: color-mix(in srgb, var(--accent) 10%, transparent);
-  }
-  .next-hint {
-    font-size: 12px;
-    font-weight: 700;
-    color: var(--text-secondary);
-  }
   .next-btn {
+    align-self: flex-end;
     display: inline-flex;
     align-items: center;
     gap: 6px;
     min-height: 40px;
+    margin-top: 10px;
     padding: 0 14px;
     border: 1px solid var(--glass-border);
     border-radius: 12px;
@@ -2994,24 +3007,6 @@
     opacity: 0.55;
     cursor: default;
   }
-  /* Когда ИИ предлагает перейти — кнопка акцентная и пульсирует. */
-  .next-row--suggest .next-btn {
-    border: 0;
-    background: var(--button-bg);
-    color: var(--button-text);
-    box-shadow: var(--button-shadow);
-    animation: next-pulse 1.6s ease-in-out infinite;
-  }
-  @keyframes next-pulse {
-    0%,
-    100% {
-      box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 35%, transparent);
-    }
-    50% {
-      box-shadow: 0 0 0 7px transparent;
-    }
-  }
-
   /* Кнопка «Отправить» — иконка */
   .send-btn {
     display: inline-flex;

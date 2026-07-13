@@ -15,9 +15,13 @@ export function isNextQuestionVoiceCommand(value: string): boolean {
   const politePrefix =
     '(?:ну\\s+)?(?:давай(?:те)?\\s+|можем\\s+|можно\\s+|хочу\\s+|пожалуйста\\s+)?';
   const politeSuffix = '(?:\\s+пожалуйста)?';
+  const politeInterjection = '(?:\\s+пожалуйста)?';
   const nextQuestion =
     '(?:следующ(?:ий\\s+вопрос|ему\\s+вопросу)|друг(?:ой\\s+вопрос|ому\\s+вопросу))';
-  const directQuestion = '(?:следующий\\s+вопрос|другой\\s+вопрос)';
+  // Распознавание самостоятельной команды допускает все падежные формы:
+  // голосовой ввод нередко возвращает «следующему вопросу» без предлога.
+  const directQuestion =
+    '(?:следующ(?:ий\\s+вопрос|его\\s+вопроса|ему\\s+вопросу|им\\s+вопросом|ем\\s+вопросе)|друг(?:ой\\s+вопрос|ого\\s+вопроса|ому\\s+вопросу|им\\s+вопросом|ом\\s+вопросе))';
   const replaceQuestion =
     '(?:поменяй|поменять|смени|сменить|замени|заменить|задай)\\s+(?:другой\\s+)?вопрос';
 
@@ -27,7 +31,7 @@ export function isNextQuestionVoiceCommand(value: string): boolean {
     ) ||
     new RegExp(`^${politePrefix}к\\s+${nextQuestion}$`, 'iu').test(command) ||
     new RegExp(
-      `^${politePrefix}(?:перейди|переходи|перейдем|перейдемте|перейти|переходим|переключи|переключиться|переключаемся)\\s+(?:к|ко|на)\\s+${nextQuestion}$`,
+      `^${politePrefix}(?:перейди|переходи|перейдем|перейдемте|перейти|переходим|переключи|переключиться|переключаемся)${politeInterjection}\\s+(?:к|ко|на)\\s+${nextQuestion}$`,
       'iu'
     ).test(command) ||
     new RegExp(`^${politePrefix}${replaceQuestion}${politeSuffix}$`, 'iu').test(
