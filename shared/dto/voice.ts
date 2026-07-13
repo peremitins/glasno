@@ -27,6 +27,9 @@ export const RealtimeSessionResponseDto = z.object({
   expiresAt: z.number().nullable(),
   model: z.string().min(1),
   voice: z.string().min(1),
+  // response.create.instructions переопределяет session instructions.
+  // Клиенту нужен исходный role contract, чтобы безопасно дополнять override.
+  instructions: z.string().min(1),
   maxDurationSeconds: z.number().int().nonnegative(),
   idleTimeoutSeconds: z.number().int().positive(),
   remainingSeconds: z.number().int().nonnegative(),

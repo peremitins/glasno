@@ -352,21 +352,21 @@
       title: 'interview.goal.quick.title',
       description: 'interview.goal.quick.description',
       meta: 'interview.goal.quick.meta',
-      summary: 'Быстро · 7 мин',
+      summary: 'Быстро · 3 вопроса',
     },
     {
       value: 'standard',
       title: 'interview.goal.standard.title',
       description: 'interview.goal.standard.description',
       meta: 'interview.goal.standard.meta',
-      summary: 'Стандарт · 15 мин',
+      summary: 'Стандарт · 6 вопросов',
     },
     {
       value: 'deep',
       title: 'interview.goal.deep.title',
       description: 'interview.goal.deep.description',
       meta: 'interview.goal.deep.meta',
-      summary: 'Глубоко · 25 мин',
+      summary: 'Глубоко · 10 вопросов',
     },
   ];
 
@@ -550,7 +550,7 @@
   const selectedGoalSummary = computed(
     () =>
       sessionGoalOptions.find((option) => option.value === form.sessionGoal)
-        ?.summary ?? 'Стандарт · 15 мин'
+        ?.summary ?? 'Стандарт · 6 вопросов'
   );
 
   const selectedTrainingModeSummary = computed(() =>

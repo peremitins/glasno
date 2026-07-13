@@ -30,7 +30,7 @@ describe('billing plans v2', () => {
     for (const plan of getPassPlans()) {
       expect(plan.type).toBe('pass');
       expect(plan.autoRenewable).toBe(true);
-      expect(plan.requiresActivePass).toBe(false);
+      expect(plan).not.toHaveProperty('requiresActivePass');
       expect(plan.isCheckoutEnabled).toBe(true);
       expect(plan.features).toContain(
         'Интервью без ограничений — все форматы'
@@ -45,7 +45,7 @@ describe('billing plans v2', () => {
     expect(getBillingPlan('pass_30d').isHighlighted).toBe(true);
   });
 
-  it('exposes purchasable realtime minute packs bound to an active pass', () => {
+  it('exposes purchasable realtime minute packs for trial and paid users', () => {
     for (const [id, minutes, priceRub] of [
       ['realtime_pack_30', 30, 490],
       ['realtime_pack_60', 60, 890],
@@ -57,8 +57,8 @@ describe('billing plans v2', () => {
       expect(pack.priceRub).toBe(priceRub);
       expect(pack.isCheckoutEnabled).toBe(true);
       expect(pack.autoRenewable).toBe(false);
-      expect(pack.requiresActivePass).toBe(true);
-      expect(pack.features).toContain('Действуют, пока активен пропуск');
+      expect(pack).not.toHaveProperty('requiresActivePass');
+      expect(pack.features).toContain('Действуют 30 дней с момента оплаты');
     }
   });
 

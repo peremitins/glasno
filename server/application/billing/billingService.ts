@@ -176,20 +176,6 @@ export class BillingService {
       throw apiError('E_VALIDATION', 'Для себя выберите обычную покупку');
     }
 
-    // Пакеты минут — расходник к активному пропуску: без него они
-    // бесполезны (нельзя создавать интервью), поэтому покупку блокируем.
-    if (plan.requiresActivePass && params.role !== 'admin') {
-      const access = await this.deps.repository.findAccessByUserId(
-        params.userId
-      );
-      if (!isAccessActive(access)) {
-        throw apiError(
-          'E_FORBIDDEN',
-          'Пакеты минут доступны только при активном пропуске «Полный доступ»'
-        );
-      }
-    }
-
     // Автопродление по умолчанию включено (ТЗ тарифы v2); для подарка —
     // всегда выключено, для пакетов минут не применимо.
     const autoRenew =

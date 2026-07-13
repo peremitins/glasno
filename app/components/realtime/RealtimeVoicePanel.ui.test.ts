@@ -19,4 +19,10 @@ describe('RealtimeVoicePanel UI', () => {
     expect(narrowCss).not.toContain('.rt-icon-label');
     expect(narrowCss).not.toContain('.rt-icon-mark');
   });
+
+  it('restarts an active realtime session after gender or tone changes', () => {
+    expect(source).toMatch(
+      /watch\(\s*\(\) => props\.voiceProfileKey,[\s\S]*?realtimeVoice\.restart\(\)/
+    );
+  });
 });

@@ -43,6 +43,12 @@ describe('interview session hints panel', () => {
     expect(source).not.toContain('inline-back');
   });
 
+  it('shows interview progress without an estimated duration', () => {
+    expect(source).toContain('interview.session.progress');
+    expect(source).not.toContain('interview.session.progressTimed');
+    expect(source).not.toContain('expectedDurationMinutes');
+  });
+
   it('merges current-question guidance and general structure into one collapsible answer block', () => {
     expect(source).toContain('hint-disclosure--primary');
     expect(source).toContain('interview.session.hintsPanel.answerPlan');
@@ -108,6 +114,18 @@ describe('interview session hints panel', () => {
     );
   });
 
+  it('moves to the next question when a text message is an explicit transition command', () => {
+    expect(source).toMatch(
+      /async function sendMessage\(\)[\s\S]*?isNextQuestionVoiceCommand\(message\)[\s\S]*?await goToNextQuestion\(\);[\s\S]*?return;/
+    );
+  });
+
+  it('does not let an AI-candidate transcript control stage transitions', () => {
+    expect(source).toMatch(
+      /if \(\s*!isInterviewerTraining\.value\s*&&\s*isNextQuestionTransitionReply\(transcript\)\s*\)/
+    );
+  });
+
   it('sends mode bridge context through realtime response instructions', () => {
     expect(source).toContain('buildRealtimeResponseCreateEvent');
     expect(source).toContain('sendRealtimeResponseCreate');
@@ -115,14 +133,26 @@ describe('interview session hints panel', () => {
     expect(source).not.toContain("role: 'system'");
   });
 
+  it('adds a timebox reminder only to a natural realtime response', () => {
+    expect(source).toContain('shouldSendQuestionTimeboxReminder');
+    expect(source).toContain('buildRealtimeTimeboxReminderInstruction');
+    expect(source).toContain('!isInterviewerTraining.value');
+    expect(source).toContain('body: { turnId, role, content, timeboxReminder }');
+    expect(source).toContain('options.instructions');
+  });
+
+  it('does not add a visual move-on prompt around the next-question button', () => {
+    expect(source).not.toContain('next-row--suggest');
+    expect(source).not.toContain('next-hint');
+    expect(source).not.toContain('moveOnHint');
+    expect(source).not.toContain(':class="{ \'next-row--suggest\': suggestMoveOn }"');
+  });
+
   it('does not restart an existing interview when voice mode connects', () => {
     expect(source).toContain('hasPreviousMainQuestions');
     expect(source).toContain('hasCurrentQuestionDialogue');
     expect(source).toContain('isFreshInterviewStart');
-    expect(source).toContain(
-      'Пользователь включил голосовой режим в уже идущем интервью'
-    );
-    expect(source).toContain('Не говори, что интервью начинается сначала');
+    expect(source).toContain('buildRealtimeQuestionAnnouncement');
   });
 
   it('auto-scrolls realtime transcript growth like text streaming', () => {

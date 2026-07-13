@@ -4,6 +4,7 @@ import {
   buildRealtimeCancelEvents,
   shouldDeferRealtimeIdleStop,
   shouldPhysicallyMuteRealtimeMicrophone,
+  withRealtimeSessionInstructions,
 } from './useRealtimeVoiceSession';
 
 const source = readFileSync('app/composables/useRealtimeVoiceSession.ts', 'utf8');
@@ -95,5 +96,25 @@ describe('useRealtimeVoiceSession helpers', () => {
     expect(source).toContain("window.addEventListener('pagehide'");
     expect(source).not.toContain('visibilitychange');
     expect(source).not.toContain('visibilityState');
+  });
+
+  it('keeps the full session role contract in response-level overrides', () => {
+    expect(
+      withRealtimeSessionInstructions(
+        {
+          type: 'response.create',
+          response: {
+            instructions: 'Краткий bridge-контекст текущего вопроса.',
+          },
+        },
+        'Ты голосовой интервьюер. Никогда не отвечай вместо кандидата.'
+      )
+    ).toEqual({
+      type: 'response.create',
+      response: {
+        instructions:
+          'Ты голосовой интервьюер. Никогда не отвечай вместо кандидата.\n\nКраткий bridge-контекст текущего вопроса.',
+      },
+    });
   });
 });

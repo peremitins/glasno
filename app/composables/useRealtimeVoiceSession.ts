@@ -292,7 +292,10 @@ export function useRealtimeVoiceSession(options: {
   // (conversation.item.create / response.create и т.п.). Без активного
   // соединения — no-op.
   function sendEvent(event: Record<string, unknown>) {
-    client.value?.sendEvent(event);
+    const sessionInstructions = realtimeSession.value?.instructions || '';
+    client.value?.sendEvent(
+      withRealtimeSessionInstructions(event, sessionInstructions)
+    );
   }
 
   // Мгновенно обрывает текущий ответ ассистента: отменяет активные response
@@ -441,6 +444,33 @@ export function useRealtimeVoiceSession(options: {
     toggle,
     sendEvent,
     cancelActiveResponses,
+  };
+}
+
+export function withRealtimeSessionInstructions(
+  event: Record<string, unknown>,
+  sessionInstructions: string
+): Record<string, unknown> {
+  // OpenAI трактует response.instructions как полную замену session.instructions
+  // для одного ответа. Поэтому любой bridge/announcement обязан повторять
+  // неизменяемый role contract, иначе AI снова теряет роль интервьюера/кандидата.
+  if (event.type !== 'response.create') return event;
+  if (!event.response || typeof event.response !== 'object') return event;
+
+  const response = event.response as Record<string, unknown>;
+  const responseInstructions =
+    typeof response.instructions === 'string'
+      ? response.instructions.trim()
+      : '';
+  const baseInstructions = sessionInstructions.trim();
+  if (!responseInstructions || !baseInstructions) return event;
+
+  return {
+    ...event,
+    response: {
+      ...response,
+      instructions: `${baseInstructions}\n\n${responseInstructions}`,
+    },
   };
 }
 

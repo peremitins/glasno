@@ -3,6 +3,7 @@ import {
   REPORT_JSON_SCHEMA,
   attachQuestionsToAnalysis,
   buildInstruction,
+  buildReportTranscript,
   extractReportJson,
 } from './openaiReportEngine';
 import { ReportAnalysisDto, ReportCriteriaDto } from '@/shared/dto';
@@ -52,6 +53,28 @@ describe('openai report engine helpers', () => {
     expect(instruction).toContain('уточняющие вопросы');
     expect(instruction).toContain('candidate experience');
     expect(instruction).not.toContain('modelAnswer — сильный возможный вариант ответа');
+  });
+
+  it('labels interviewer-training history as stages and interviewer speech', () => {
+    const transcript = buildReportTranscript(
+      [
+        {
+          id: 'turn_1',
+          index: 1,
+          kind: 'main',
+          question: 'Начните интервью.',
+          answerTranscript: 'Расскажите о вашем последнем проекте.',
+          followUpForTurnId: null,
+        },
+      ],
+      'interviewer'
+    );
+
+    expect(transcript).toContain('Этап 1 (основной): Начните интервью.');
+    expect(transcript).toContain(
+      'Реплики пользователя-интервьюера: Расскажите о вашем последнем проекте.'
+    );
+    expect(transcript).not.toContain('Ответ кандидата:');
   });
 
   it('keeps the structured-output schema in sync with the Zod DTO criteria', () => {

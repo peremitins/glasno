@@ -10,7 +10,7 @@ describe('realtimeConfig', () => {
     sessionId: 'session_1',
     role: 'Product Manager',
     level: 'senior',
-    interviewerMode: 'strict',
+    interviewerMode: 'strict' as const,
     vacancyTitle: 'Senior Product Manager',
     companyName: 'Glasno',
     currentQuestion: 'Расскажите о запуске сложного продукта.',
@@ -26,6 +26,12 @@ describe('realtimeConfig', () => {
     // Команда «следующий вопрос» — для приложения: модель не должна отвечать.
     expect(instructions).toContain('НЕ отвечай на неё');
     expect(instructions).toContain('другой вопрос');
+    expect(instructions).toContain('Тон интервьюера: строгий');
+    expect(instructions).toContain('требовательно');
+    expect(instructions).toContain('даже если кандидат прямо просит объяснить');
+    expect(instructions).toContain('«Давай»');
+    expect(instructions).toContain('«На чём мы остановились?»');
+    expect(instructions).not.toContain('Профиль кандидата:');
     expect(instructions).not.toContain('не сохраняешь ответ');
   });
 
@@ -40,6 +46,11 @@ describe('realtimeConfig', () => {
     expect(instructions).toContain('Ты голосовой AI-кандидат Гласно');
     expect(instructions).toContain('Пользователь проводит интервью');
     expect(instructions).toContain('Отвечай как кандидат');
+    expect(instructions).toContain('Никогда не отвечай как интервьюер');
+    expect(instructions).toContain('не задавай вопросы от имени интервьюера');
+    expect(instructions).not.toContain('Пол интервьюера:');
+    expect(instructions).not.toContain('Тон интервьюера:');
+    expect(instructions).not.toContain('Режим интервьюера:');
     expect(instructions).not.toContain('ты проверяешь кандидата');
   });
 
@@ -93,7 +104,7 @@ describe('realtimeConfig', () => {
         trainingMode: 'candidate' as const,
         role: 'Product Manager',
         level: 'senior',
-        interviewerMode: 'strict',
+        interviewerMode: 'strict' as const,
         interviewerFaceId: 'female-neutral' as const,
         candidatePersona: 'anxious' as const,
         candidateDifficulty: 'challenging' as const,
@@ -128,7 +139,7 @@ describe('realtimeConfig', () => {
         id: 'session_2',
         role: null,
         level: null,
-        interviewerMode: 'neutral',
+        interviewerMode: 'neutral' as const,
         vacancyTitle: null,
         companyName: null,
       },

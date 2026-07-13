@@ -407,6 +407,47 @@ describe('InterviewService', () => {
     });
   });
 
+  it('updates interviewer gender and tone together from the selected face', async () => {
+    const repository = createInMemoryRepository();
+    const engine = {
+      converse: vi.fn(),
+      converseStream: vi.fn(),
+      normalizeCustomQuestions: vi.fn(),
+      generateQuestion: vi
+        .fn()
+        .mockResolvedValue({ question: 'Расскажите о вашем опыте.' }),
+      evaluateAnswer: vi.fn(),
+      generateQuestionHints: vi.fn(),
+      generateSampleAnswerHint: vi.fn(),
+    };
+    const service = new InterviewService({ repository, engine, hhClient: null });
+    const created = await service.createSession({
+      anonymousSessionId: 'anon_interviewer_settings',
+      input: {
+        source: { type: 'profession', role: 'Frontend-разработчик' },
+        level: 'middle',
+        sessionGoal: 'quick',
+        responseMode: 'text',
+        hintMode: 'off',
+        language: 'ru',
+        interviewerMode: 'neutral',
+        interviewerAvatarId: 'neutral-pro',
+      },
+    });
+
+    const state = await service.updateInterviewer({
+      anonymousSessionId: 'anon_interviewer_settings',
+      sessionId: created.session.id,
+      input: { faceId: 'female-strict' },
+    });
+
+    expect(state.session).toMatchObject({
+      interviewerFaceId: 'female-strict',
+      interviewerMode: 'strict',
+      interviewerAvatarId: 'strict-lead',
+    });
+  });
+
   it('appends realtime dialogue messages to the current turn without generating a reply', async () => {
     const repository = createInMemoryRepository();
     const engine = {
@@ -458,6 +499,215 @@ describe('InterviewService', () => {
         content: 'В realtime я рассказал про холодные письма.',
       }),
     ]);
+    expect(state.currentTurn?.questionPacingStartedAt).toBeTruthy();
+  });
+
+  it('records a realtime timebox reminder without moving to the next question', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-13T10:08:00.000Z'));
+    const repository = createInMemoryRepository();
+    const engine = {
+      converse: vi.fn(),
+      converseStream: vi.fn(),
+      normalizeCustomQuestions: vi.fn(),
+      generateQuestion: vi
+        .fn()
+        .mockResolvedValue({ question: 'Как вы ищете новых клиентов?' }),
+      evaluateAnswer: vi.fn(),
+      generateQuestionHints: vi.fn(),
+      generateSampleAnswerHint: vi.fn(),
+    };
+    const service = new InterviewService({ repository, engine, hhClient: null });
+    const created = await service.createSession({
+      anonymousSessionId: 'anon_realtime_timebox',
+      input: {
+        source: { type: 'profession', role: 'Менеджер по продажам' },
+        level: 'middle',
+        sessionGoal: 'standard',
+        responseMode: 'realtime',
+        hintMode: 'realtime',
+        language: 'ru',
+        interviewerMode: 'neutral',
+        interviewerAvatarId: 'neutral-pro',
+      },
+    });
+    const turn = repository.turns.find(
+      (item) => item.id === created.currentTurn!.id
+    );
+    turn.metadata = {
+      ...turn.metadata,
+      questionPacingStartedAt: '2026-07-13T10:00:00.000Z',
+    };
+
+    const state = await service.appendTurnMessage({
+      anonymousSessionId: 'anon_realtime_timebox',
+      sessionId: created.session.id,
+      input: {
+        turnId: created.currentTurn!.id,
+        role: 'interviewer',
+        content: 'Предлагаю перейти к следующему вопросу. Готовы?',
+        timeboxReminder: true,
+      },
+    });
+
+    expect(state.currentTurn).toMatchObject({
+      questionPacingLastReminderAt: '2026-07-13T10:08:00.000Z',
+    });
+    expect(state.session.currentQuestionIndex).toBe(1);
+    vi.useRealTimers();
+  });
+
+  it('adds a timebox instruction only after the current question exceeds its limit', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-13T10:08:00.000Z'));
+    const repository = createInMemoryRepository();
+    const engine = {
+      converse: vi.fn().mockResolvedValue({
+        reply: 'Предлагаю перейти к следующему вопросу. Готовы?',
+        suggestMoveOn: true,
+      }),
+      converseStream: vi.fn(),
+      normalizeCustomQuestions: vi.fn(),
+      generateQuestion: vi
+        .fn()
+        .mockResolvedValue({ question: 'Как вы строите продажи?' }),
+      evaluateAnswer: vi.fn(),
+      generateQuestionHints: vi.fn(),
+      generateSampleAnswerHint: vi.fn(),
+    };
+    const service = new InterviewService({ repository, engine, hhClient: null });
+
+    const created = await service.createSession({
+      anonymousSessionId: 'anon_timebox',
+      input: {
+        source: { type: 'profession', role: 'Менеджер по продажам' },
+        level: 'middle',
+        sessionGoal: 'standard',
+        responseMode: 'text',
+        hintMode: 'off',
+        language: 'ru',
+        interviewerMode: 'neutral',
+        interviewerAvatarId: 'neutral-pro',
+      },
+    });
+    const turn = repository.turns.find(
+      (item) => item.id === created.currentTurn!.id
+    );
+    turn.metadata = {
+      ...turn.metadata,
+      questionPacingStartedAt: '2026-07-13T10:00:00.000Z',
+    };
+
+    const state = await service.replyTurn({
+      anonymousSessionId: 'anon_timebox',
+      sessionId: created.session.id,
+      input: { turnId: created.currentTurn!.id, message: 'Я сегментирую базу.' },
+    });
+
+    expect(engine.converse).toHaveBeenCalledWith(
+      expect.objectContaining({ timeboxReminder: true })
+    );
+    expect(state.currentTurn).toMatchObject({
+      suggestMoveOn: true,
+      questionPacingStartedAt: '2026-07-13T10:00:00.000Z',
+      questionPacingLastReminderAt: '2026-07-13T10:08:00.000Z',
+    });
+    vi.useRealTimers();
+  });
+
+  it('never lets the AI-candidate or timebox control interviewer-training transitions', async () => {
+    const repository = createInMemoryRepository();
+    const engine = {
+      converse: vi.fn().mockResolvedValue({
+        reply: 'Я готов ответить на следующий вопрос.',
+        suggestMoveOn: true,
+      }),
+      converseStream: vi.fn(),
+      normalizeCustomQuestions: vi.fn(),
+      generateQuestion: vi
+        .fn()
+        .mockResolvedValue({ question: 'Начните интервью с кандидатом.' }),
+      evaluateAnswer: vi.fn(),
+      generateQuestionHints: vi.fn(),
+      generateSampleAnswerHint: vi.fn(),
+    };
+    const service = new InterviewService({ repository, engine, hhClient: null });
+    const created = await service.createSession({
+      anonymousSessionId: 'anon_interviewer_transition',
+      input: {
+        trainingMode: 'interviewer',
+        source: { type: 'profession', role: 'Frontend-разработчик' },
+        resumeText: 'Frontend-разработчик, четыре года опыта.',
+        level: 'middle',
+        sessionGoal: 'quick',
+        responseMode: 'text',
+        hintMode: 'off',
+        language: 'ru',
+        interviewerMode: 'neutral',
+        interviewerAvatarId: 'neutral-pro',
+      },
+    });
+
+    const state = await service.replyTurn({
+      anonymousSessionId: 'anon_interviewer_transition',
+      sessionId: created.session.id,
+      input: {
+        turnId: created.currentTurn!.id,
+        message: 'Расскажите о вашем последнем проекте.',
+      },
+    });
+
+    expect(engine.converse).toHaveBeenCalledWith(
+      expect.objectContaining({ timeboxReminder: false })
+    );
+    expect(state.currentTurn?.suggestMoveOn).toBe(false);
+  });
+
+  it('does not evaluate interviewer speech as a candidate answer', async () => {
+    const repository = createInMemoryRepository();
+    const engine = {
+      converse: vi.fn(),
+      converseStream: vi.fn(),
+      normalizeCustomQuestions: vi.fn(),
+      generateQuestion: vi
+        .fn()
+        .mockResolvedValueOnce({ question: 'Начните интервью.' })
+        .mockResolvedValueOnce({ question: 'Продолжите интервью.' }),
+      evaluateAnswer: vi.fn().mockResolvedValue({
+        needsClarification: true,
+        question: 'Ошибочное уточнение от AI-интервьюера?',
+      }),
+      generateQuestionHints: vi.fn(),
+      generateSampleAnswerHint: vi.fn(),
+    };
+    const service = new InterviewService({ repository, engine, hhClient: null });
+    const created = await service.createSession({
+      anonymousSessionId: 'anon_interviewer_answer',
+      input: {
+        trainingMode: 'interviewer',
+        source: { type: 'profession', role: 'Frontend-разработчик' },
+        resumeText: 'Frontend-разработчик, четыре года опыта.',
+        level: 'middle',
+        questionCount: 3,
+        sessionGoal: 'quick',
+        responseMode: 'text',
+        hintMode: 'off',
+        language: 'ru',
+        interviewerMode: 'neutral',
+        interviewerAvatarId: 'neutral-pro',
+      },
+    });
+
+    await service.answerTurn({
+      anonymousSessionId: 'anon_interviewer_answer',
+      sessionId: created.session.id,
+      input: {
+        turnId: created.currentTurn!.id,
+        answer: 'Расскажите подробно о вашем последнем проекте и вашей роли.',
+      },
+    });
+
+    expect(engine.evaluateAnswer).not.toHaveBeenCalled();
   });
 
   it('deletes only an owned interview session', async () => {

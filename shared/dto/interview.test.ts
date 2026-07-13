@@ -117,6 +117,10 @@ describe('interview DTO hints', () => {
         softLimitMinutes: 7,
         hardLimitMinutes: 10,
       },
+      questionPacing: {
+        firstReminderAfterMinutes: 5,
+        reminderCooldownMinutes: 5,
+      },
       plan: {
         goal: 'quick',
         expectedDurationMinutes: 7,
@@ -137,5 +141,6 @@ describe('interview DTO hints', () => {
     expect(parsed.trainingMode).toBe('interviewer');
     expect(parsed.candidatePersona).toBe('anxious');
     expect(parsed.candidateDifficulty).toBe('challenging');
+    expect(parsed.questionPacing.firstReminderAfterMinutes).toBe(5);
   });
 });

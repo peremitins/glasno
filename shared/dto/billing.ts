@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 // pass — пропуск «Полный доступ» на срок (7–365 дней);
-// minute_pack — пакет минут realtime voice, требует активный пропуск.
+// minute_pack — разовый пакет минут realtime voice.
 export const BillingPlanTypeDto = z.enum(['pass', 'minute_pack']);
 
 export const BillingPlanDto = z.object({

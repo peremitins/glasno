@@ -87,6 +87,11 @@ export const RealtimeSessionLimitsDto = z.object({
   hardLimitMinutes: z.number().int().positive(),
 });
 
+export const QuestionPacingDto = z.object({
+  firstReminderAfterMinutes: z.number().int().positive(),
+  reminderCooldownMinutes: z.number().int().positive(),
+});
+
 export const QuestionHintDetailsDto = z.object({
   focus: z.string(),
   answerPlan: z.array(z.string()),
@@ -173,6 +178,7 @@ export const InterviewSessionDto = z.object({
   responseMode: InterviewResponseModeDto,
   hintMode: InterviewHintModeDto,
   realtimeLimits: RealtimeSessionLimitsDto,
+  questionPacing: QuestionPacingDto,
   plan: InterviewPlanDto,
   language: InterviewLanguageDto,
   interviewerMode: InterviewerModeDto,
@@ -211,6 +217,9 @@ export const InterviewTurnDto = z.object({
   messages: z.array(InterviewDialogueMessageDto).default([]),
   // ИИ-интервьюер предлагает перейти к следующему вопросу.
   suggestMoveOn: z.boolean().default(false),
+  // Таймбокс начинается с первой реплики пользователя по вопросу.
+  questionPacingStartedAt: z.string().nullable().default(null),
+  questionPacingLastReminderAt: z.string().nullable().default(null),
   preference: z
     .object({
       id: z.string(),
@@ -258,6 +267,7 @@ export const AppendInterviewTurnMessageRequestDto = z.object({
   turnId: z.string().min(1),
   role: InterviewDialogueRoleDto,
   content: z.string().trim().min(1).max(20_000),
+  timeboxReminder: z.boolean().optional(),
 });
 
 // Явный переход к следующему вопросу (кнопка / голосовая команда).
