@@ -418,6 +418,17 @@ export const realtimeMinuteDebits = pgTable(
   (table) => [index('realtime_minute_debits_user_id_idx').on(table.userId)]
 );
 
+// Учёт email/telegram_id, которым уже выдавался бесплатный voice-триал.
+// Запись переживает удаление аккаунта (users.deletedAt/анонимизацию), чтобы
+// новый аккаунт с тем же email или telegram_id не получил триал повторно.
+export const trialGrantHistory = pgTable('trial_grant_history', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  email: text('email').unique(),
+  telegramId: text('telegram_id').unique(),
+  userId: uuid('user_id').references(() => users.id),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
 // Детальный учёт использования AI. Одна запись = один вызов модели.
 // Позволяет точно посчитать стоимость по пользователям/сессиям.
 export const aiUsage = pgTable('ai_usage', {

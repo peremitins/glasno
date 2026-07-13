@@ -61,7 +61,7 @@ function createRepository() {
       const existing = users.find((user) => user.email === email);
       if (existing) {
         existing.emailVerifiedAt = new Date('2026-06-28T10:01:00.000Z');
-        return existing;
+        return { user: existing, isNew: false };
       }
       const user = {
         id: `user_${users.length + 1}`,
@@ -78,7 +78,7 @@ function createRepository() {
         deletedAt: null,
       };
       users.push(user);
-      return user;
+      return { user, isNew: true };
     },
     async upsertTelegramUser(input: any) {
       const existing = users.find(
@@ -87,7 +87,7 @@ function createRepository() {
       if (existing) {
         existing.telegramUsername =
           input.telegramUsername ?? existing.telegramUsername;
-        return existing;
+        return { user: existing, isNew: false };
       }
       const user = {
         id: `user_${users.length + 1}`,
@@ -104,7 +104,7 @@ function createRepository() {
         deletedAt: null,
       };
       users.push(user);
-      return user;
+      return { user, isNew: true };
     },
     async migrateAnonymousSessionsToUser(anonymousSessionId: string, userId: string) {
       migrated.push({ anonymousSessionId, userId });
@@ -126,7 +126,10 @@ function createRepository() {
     },
     async touchAuthSession() {},
     async findUserById(id: string) {
-      return users.find((user) => user.id === id && !user.deletedAt) ?? null;
+      // Копия, а не ссылка: реальный Drizzle-репозиторий на каждый SELECT
+      // возвращает новый объект, не разделяя память со строкой в БД.
+      const found = users.find((user) => user.id === id && !user.deletedAt);
+      return found ? { ...found } : null;
     },
     async anonymizeUserAccount(userId: string, now: Date) {
       const user = users.find((item) => item.id === userId);
@@ -371,6 +374,90 @@ describe('AuthService', () => {
     });
     expect(repository.sessions[0].revokedAt).toEqual(
       new Date('2026-06-28T11:00:00.000Z')
+    );
+
+    vi.useRealTimers();
+  });
+
+  it('шлёт Telegram-алерт о регистрации только при первом входе, не при повторном', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-28T10:00:00.000Z'));
+
+    const repository = createRepository();
+    const telegramAlerts = { notifyUserRegistered: vi.fn().mockResolvedValue(undefined) };
+    const service = new AuthService({
+      repository: repository as any,
+      sessionService: new AuthSessionService({
+        repository: repository as any,
+        sessionSecret: 'session-secret',
+      }),
+      authEmailCodeSecret: 'code-secret',
+      emailHashPepper: 'email-pepper',
+      telegramBotToken: '',
+      exposeDevCode: true,
+      telegramAlerts: telegramAlerts as any,
+    });
+
+    const first = await service.startEmailLogin({ email: 'repeat@example.com' });
+    await service.verifyEmailLogin({
+      email: 'repeat@example.com',
+      code: first.devCode!,
+      anonymousSessionId: 'anon_repeat_1',
+    });
+
+    expect(telegramAlerts.notifyUserRegistered).toHaveBeenCalledTimes(1);
+
+    const second = await service.startEmailLogin({ email: 'repeat@example.com' });
+    await service.verifyEmailLogin({
+      email: 'repeat@example.com',
+      code: second.devCode!,
+      anonymousSessionId: 'anon_repeat_2',
+    });
+
+    expect(telegramAlerts.notifyUserRegistered).toHaveBeenCalledTimes(1);
+
+    vi.useRealTimers();
+  });
+
+  it('шлёт Telegram-алерт при удалении аккаунта', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-28T11:00:00.000Z'));
+
+    const repository = createRepository();
+    const telegramAlerts = {
+      notifyUserRegistered: vi.fn().mockResolvedValue(undefined),
+      notifyUserDeleted: vi.fn().mockResolvedValue(undefined),
+    };
+    const service = new AuthService({
+      repository: repository as any,
+      sessionService: new AuthSessionService({
+        repository: repository as any,
+        sessionSecret: 'session-secret',
+      }),
+      authEmailCodeSecret: 'code-secret',
+      emailHashPepper: 'email-pepper',
+      telegramBotToken: '',
+      exposeDevCode: true,
+      telegramAlerts: telegramAlerts as any,
+      createAvatarStorage: () => ({
+        putAvatar: async () => {},
+        getAvatar: async () => null,
+        deleteAvatar: async () => {},
+      }),
+    });
+
+    const started = await service.startEmailLogin({ email: 'delete-alert@example.com' });
+    const verified = await service.verifyEmailLogin({
+      email: 'delete-alert@example.com',
+      code: started.devCode!,
+      anonymousSessionId: 'anon_delete_alert',
+    });
+
+    await service.deleteAccount(verified.user.id);
+
+    expect(telegramAlerts.notifyUserDeleted).toHaveBeenCalledTimes(1);
+    expect(telegramAlerts.notifyUserDeleted).toHaveBeenCalledWith(
+      expect.objectContaining({ id: verified.user.id, email: 'delete-alert@example.com' })
     );
 
     vi.useRealTimers();

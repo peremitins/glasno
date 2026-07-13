@@ -1,12 +1,15 @@
 import type { H3Event } from 'h3';
 import { BillingService } from './billingService';
 import { DrizzleBillingRepository } from '@/server/infrastructure/billing/drizzleBillingRepository';
+import { createTelegramAlertsServiceFromConfig } from '@/server/application/telegram/serviceFactory';
 
 // Минимально необходимый срез runtime-конфига: фабрику вызывают и хендлеры
 // (с event), и Nitro-плагин фонового воркера (без event).
 interface BillingRuntimeConfig {
   yookassaShopId?: unknown;
   yookassaSecretKey?: unknown;
+  telegramAlertsBotToken?: unknown;
+  telegramAlertsChatId?: unknown;
   public: { appUrl?: unknown };
 }
 
@@ -26,6 +29,7 @@ export function createBillingServiceFromConfig(
       },
       appUrl: (config.public.appUrl || 'http://localhost:3000') as string,
     },
+    telegramAlerts: createTelegramAlertsServiceFromConfig(config),
   });
 }
 

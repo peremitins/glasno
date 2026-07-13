@@ -181,13 +181,20 @@ function createRepository(order = createOrder()) {
   return repository;
 }
 
-function createService(repository: ReturnType<typeof createRepository>) {
+function createService(
+  repository: ReturnType<typeof createRepository>,
+  telegramAlerts?: {
+    notifySubscriptionPurchased: ReturnType<typeof vi.fn>;
+    notifyVoiceMinutesPurchased: ReturnType<typeof vi.fn>;
+  }
+) {
   return new BillingService({
     repository,
     config: {
       yookassa: { shopId: '123456', secretKey: 'test_secret' },
       appUrl: 'https://glasno.test',
     },
+    telegramAlerts: telegramAlerts as never,
   });
 }
 
@@ -525,6 +532,119 @@ describe('BillingService payment reconciliation', () => {
       expect.objectContaining({ planId: 'single_prep' })
     );
     errorSpy.mockRestore();
+  });
+
+  it('уведомляет Telegram о новой подписке при первой успешной оплате пропуска', async () => {
+    const repository = createRepository();
+    mockedGetYooKassaPayment.mockResolvedValue({
+      id: 'payment_1',
+      status: 'succeeded',
+      paid: true,
+      amountValue: '1190.00',
+      currency: 'RUB',
+      metadata: { orderId: 'order_1' },
+      paymentMethod: null,
+    });
+    const telegramAlerts = {
+      notifySubscriptionPurchased: vi.fn().mockResolvedValue(undefined),
+      notifyVoiceMinutesPurchased: vi.fn().mockResolvedValue(undefined),
+    };
+    const service = createService(repository, telegramAlerts);
+
+    await service.reconcileYooKassaCheckout({ userId: 'user_1', orderId: 'order_1' });
+
+    expect(telegramAlerts.notifySubscriptionPurchased).toHaveBeenCalledTimes(1);
+    expect(telegramAlerts.notifySubscriptionPurchased).toHaveBeenCalledWith({
+      user: expect.objectContaining({ id: 'user_1', email: 'user@example.com' }),
+      planName: 'Полный доступ · 30 дн.',
+      amountRub: 1190,
+      isRenewal: false,
+    });
+    expect(telegramAlerts.notifyVoiceMinutesPurchased).not.toHaveBeenCalled();
+  });
+
+  it('уведомляет Telegram о докупке минут при оплате пакета realtime_pack_30', async () => {
+    const order = createOrder({
+      planId: 'realtime_pack_30',
+      amountRub: 490,
+      metadata: { userId: 'user_1', planId: 'realtime_pack_30' },
+    });
+    const repository = createRepository(order);
+    mockedGetYooKassaPayment.mockResolvedValue({
+      id: 'payment_1',
+      status: 'succeeded',
+      paid: true,
+      amountValue: '490.00',
+      currency: 'RUB',
+      metadata: { orderId: 'order_1' },
+      paymentMethod: null,
+    });
+    const telegramAlerts = {
+      notifySubscriptionPurchased: vi.fn().mockResolvedValue(undefined),
+      notifyVoiceMinutesPurchased: vi.fn().mockResolvedValue(undefined),
+    };
+    const service = createService(repository, telegramAlerts);
+
+    await service.reconcileYooKassaCheckout({ userId: 'user_1', orderId: 'order_1' });
+
+    expect(telegramAlerts.notifyVoiceMinutesPurchased).toHaveBeenCalledTimes(1);
+    expect(telegramAlerts.notifyVoiceMinutesPurchased).toHaveBeenCalledWith({
+      user: expect.objectContaining({ id: 'user_1' }),
+      planName: '+30 минут голоса',
+      minutes: 30,
+      amountRub: 490,
+    });
+    expect(telegramAlerts.notifySubscriptionPurchased).not.toHaveBeenCalled();
+  });
+
+  it('не дублирует Telegram-алерт при повторном опросе уже выполненного заказа', async () => {
+    const repository = createRepository();
+    mockedGetYooKassaPayment.mockResolvedValue({
+      id: 'payment_1',
+      status: 'succeeded',
+      paid: true,
+      amountValue: '1190.00',
+      currency: 'RUB',
+      metadata: { orderId: 'order_1' },
+      paymentMethod: null,
+    });
+    const telegramAlerts = {
+      notifySubscriptionPurchased: vi.fn().mockResolvedValue(undefined),
+      notifyVoiceMinutesPurchased: vi.fn().mockResolvedValue(undefined),
+    };
+    const service = createService(repository, telegramAlerts);
+
+    await service.reconcileYooKassaCheckout({ userId: 'user_1', orderId: 'order_1' });
+    await service.reconcileYooKassaCheckout({ userId: 'user_1', orderId: 'order_1' });
+
+    expect(telegramAlerts.notifySubscriptionPurchased).toHaveBeenCalledTimes(1);
+  });
+
+  it('помечает автопродление отдельным типом алерта (isRenewal: true) по метке заказа', async () => {
+    const order = createOrder({
+      metadata: { userId: 'user_1', planId: 'pass_30d', renewal: true, autoRenew: true },
+    });
+    const repository = createRepository(order);
+    mockedGetYooKassaPayment.mockResolvedValue({
+      id: 'payment_1',
+      status: 'succeeded',
+      paid: true,
+      amountValue: '1190.00',
+      currency: 'RUB',
+      metadata: { orderId: 'order_1' },
+      paymentMethod: null,
+    });
+    const telegramAlerts = {
+      notifySubscriptionPurchased: vi.fn().mockResolvedValue(undefined),
+      notifyVoiceMinutesPurchased: vi.fn().mockResolvedValue(undefined),
+    };
+    const service = createService(repository, telegramAlerts);
+
+    await service.reconcileYooKassaCheckout({ userId: 'user_1', orderId: 'order_1' });
+
+    expect(telegramAlerts.notifySubscriptionPurchased).toHaveBeenCalledWith(
+      expect.objectContaining({ isRenewal: true })
+    );
   });
 });
 

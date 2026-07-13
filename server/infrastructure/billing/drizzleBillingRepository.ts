@@ -748,6 +748,37 @@ export class DrizzleBillingRepository implements BillingRepository {
       )
       .limit(1);
     if (existing) return;
+
+    // Анти-абьюз: удаление аккаунта не должно давать право на новый триал
+    // тому же email/telegram_id. trial_grant_history переживает удаление
+    // (users.email/telegramId там обнуляются), поэтому сверяемся с ней.
+    const [user] = await this.db
+      .select({
+        email: schema.users.email,
+        telegramId: schema.users.telegramId,
+      })
+      .from(schema.users)
+      .where(eq(schema.users.id, params.userId))
+      .limit(1);
+    const email = user?.email?.trim().toLowerCase() || null;
+    const telegramId = user?.telegramId || null;
+
+    if (email || telegramId) {
+      const [alreadyClaimed] = await this.db
+        .select({ id: schema.trialGrantHistory.id })
+        .from(schema.trialGrantHistory)
+        .where(
+          or(
+            email ? eq(schema.trialGrantHistory.email, email) : sql`false`,
+            telegramId
+              ? eq(schema.trialGrantHistory.telegramId, telegramId)
+              : sql`false`
+          )
+        )
+        .limit(1);
+      if (alreadyClaimed) return;
+    }
+
     await this.db.insert(schema.realtimeMinuteGrants).values({
       userId: params.userId,
       planId: params.planId,
@@ -755,6 +786,13 @@ export class DrizzleBillingRepository implements BillingRepository {
       totalSeconds: params.totalSeconds,
       expiresAt: params.expiresAt,
     });
+
+    if (email || telegramId) {
+      await this.db
+        .insert(schema.trialGrantHistory)
+        .values({ userId: params.userId, email, telegramId })
+        .onConflictDoNothing();
+    }
   }
 
   async debitRealtimeSeconds(params: {

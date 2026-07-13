@@ -251,6 +251,8 @@ export interface BillingRepository {
   ): Promise<RealtimeMinuteBalance>;
   // Идемпотентная выдача бесплатных триал-минут голоса: один грант на
   // пользователя (guard по sourceType='trial'). Повторный вызов — no-op.
+  // Дополнительно блокирует повторную выдачу тому же email/telegram_id,
+  // если аккаунт был удалён и создан заново (см. trial_grant_history).
   ensureTrialRealtimeGrant(params: {
     userId: string;
     totalSeconds: number;
