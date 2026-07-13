@@ -137,10 +137,15 @@ HSTS preload — сайт работает **только по HTTPS**; это �
 4. **OpenAI ключ и AI-relay общие с Mentala** (тот же ключ, тот же
    `AI_RELAY_CLIENT_ID`). Позже: отдельный ключ/клиент для раздельного учёта
    расходов.
-5. **Telegram-алерты деплоя — бот Mentala** (в тексте алертов явно указано
-   `glasno`). Продуктового бота Гласно (для Telegram-входа) нет —
-   `NUXT_TELEGRAM_BOT_TOKEN` пуст; создать через @BotFather при включении
-   Telegram-логина.
+5. **Telegram-алерты — бот и чат Mentala** (в тексте алертов явно указано
+   `glasno`/`[glasno]`). Те же `NUXT_TELEGRAM_ALERTS_BOT_TOKEN`/
+   `NUXT_TELEGRAM_ALERTS_CHAT_ID` использует не только CI-деплой (см. workflow
+   deploy-prod.yml), но и приложение — алерты о регистрации нового
+   пользователя, удалении аккаунта, оплате подписки/минут real-time voice и
+   критических ошибках (`server/application/telegram/`). Продуктового бота
+   Гласно (для Telegram-входа) нет — `NUXT_TELEGRAM_BOT_TOKEN` пуст; создать
+   через @BotFather при включении Telegram-логина (это ДРУГОЙ бот, не тот,
+   что для алертов).
 6. **SMTP — общий ящик с Mentala** (отправитель подписан «Гласно»).
 7. **Лендинг — заглушка с noindex**; при запуске полноценного лендинга убрать
    `robots: noindex` из `apps/landing/nuxt.config.ts` и `Disallow` из

@@ -130,6 +130,10 @@ export default defineNuxtConfig({
     featureTtsEnabled: process.env.NUXT_FEATURE_TTS_ENABLED === 'true',
     sessionSecret: '',
     telegramBotToken: '',
+    // Служебные алерты (регистрации/оплаты/ошибки) — общий с Mentala бот и чат
+    // деплой-уведомлений (см. .docs/DEPLOY.md), временное решение.
+    telegramAlertsBotToken: '',
+    telegramAlertsChatId: '',
     authEmailCodeSecret: '',
     emailHashPepper: '',
     // Значения S3 намеренно серверные: URL объекта выдаётся только защищённым

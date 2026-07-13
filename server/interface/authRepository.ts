@@ -69,6 +69,14 @@ export interface UpsertEmailUserInput {
   displayName?: string | null;
 }
 
+// isNew: true — только если этим вызовом создана новая строка users (не при
+// повторном входе); используется, чтобы не слать Telegram-алерт регистрации
+// на каждый логин.
+export interface UpsertUserResult {
+  user: AuthUserRecord;
+  isNew: boolean;
+}
+
 export interface CreateMagicLoginTokenInput {
   telegramId: string;
   tokenHash: string;
@@ -84,8 +92,8 @@ export interface AuthRepository {
   ): Promise<T>;
   findUserById(id: string): Promise<AuthUserRecord | null>;
   findUserByTelegramId(telegramId: string): Promise<AuthUserRecord | null>;
-  upsertEmailUser(input: UpsertEmailUserInput): Promise<AuthUserRecord>;
-  upsertTelegramUser(input: UpsertTelegramUserInput): Promise<AuthUserRecord>;
+  upsertEmailUser(input: UpsertEmailUserInput): Promise<UpsertUserResult>;
+  upsertTelegramUser(input: UpsertTelegramUserInput): Promise<UpsertUserResult>;
   updateDisplayName(
     userId: string,
     displayName: string | null

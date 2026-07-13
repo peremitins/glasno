@@ -27,6 +27,7 @@ import {
 } from './authCrypto';
 import type { AuthSessionService } from './authSessionService';
 import { sendLoginCodeEmail } from './emailSender';
+import type { TelegramAlertsService } from '@/server/application/telegram/telegramAlertsService';
 
 const EMAIL_CODE_TTL_MS = 10 * 60 * 1000;
 const MAGIC_LOGIN_TTL_MS = 10 * 60 * 1000;
@@ -74,6 +75,7 @@ export class AuthService {
       createAvatarStorage?: () => AvatarStorage;
       avatarImageProcessor?: AvatarImageProcessor;
       createAvatarVersion?: () => string;
+      telegramAlerts?: TelegramAlertsService;
     }
   ) {}
 
@@ -135,11 +137,11 @@ export class AuthService {
     }
 
     await this.deps.repository.consumeEmailLoginCode(codeRecord.id);
-    const user = await this.deps.repository.upsertEmailUser({
+    const { user, isNew } = await this.deps.repository.upsertEmailUser({
       email,
       displayName: normalizeDisplayName(params.displayName),
     });
-    return this.finishLogin(user, params.anonymousSessionId);
+    return this.finishLogin(user, params.anonymousSessionId, isNew);
   }
 
   async verifyTelegramLogin(params: {
@@ -161,13 +163,13 @@ export class AuthService {
       .filter(Boolean)
       .join(' ')
       .trim();
-    const user = await this.deps.repository.upsertTelegramUser({
+    const { user, isNew } = await this.deps.repository.upsertTelegramUser({
       telegramId,
       telegramUsername: params.payload.username ?? null,
       displayName: displayName || params.payload.username || null,
     });
 
-    return this.finishLogin(user, params.anonymousSessionId);
+    return this.finishLogin(user, params.anonymousSessionId, isNew);
   }
 
   async createMagicLoginToken(
@@ -198,25 +200,31 @@ export class AuthService {
     const existing = await this.deps.repository.findUserByTelegramId(
       record.telegramId
     );
-    const user =
-      existing ??
-      (await this.deps.repository.upsertTelegramUser({
-        telegramId: record.telegramId,
-      }));
+    if (existing) {
+      return this.finishLogin(existing, params.anonymousSessionId, false);
+    }
 
-    return this.finishLogin(user, params.anonymousSessionId);
+    const { user, isNew } = await this.deps.repository.upsertTelegramUser({
+      telegramId: record.telegramId,
+    });
+
+    return this.finishLogin(user, params.anonymousSessionId, isNew);
   }
 
   async deleteAccount(userId: string): Promise<DeleteAccountResponse> {
     const mutation = this.createAvatarMutationState();
+    // Захватываем личность ДО анонимизации: после успешного удаления в строке
+    // users уже не останется email/telegramId для алерта.
+    let deletedUser: AuthUserRecord | undefined;
     try {
-      return await this.deps.repository.withUserAvatarLock(
+      const response = await this.deps.repository.withUserAvatarLock(
         userId,
         async (repository) => {
           // Не полагаемся на устаревший auth context: сначала читаем актуальную
           // запись, чтобы удалить её приватный объект до анонимизации аккаунта.
           const user = await this.requireActiveUser(repository, userId);
           mutation.snapshot = await this.captureAvatarSnapshot(user);
+          deletedUser = user;
 
           // Ключ детерминирован, поэтому удаляем его даже при avatarVersion = null:
           // это дочищает объект после сбоя записи версии или предыдущего cleanup.
@@ -236,13 +244,17 @@ export class AuthService {
               throw apiError('E_NOT_FOUND', 'Аккаунт не найден');
             }
             mutation.callbackCompleted = true;
-            return { ok: true };
+            return { ok: true as const };
           } catch (error) {
             await this.compensateAvatarMutationInLock(userId, mutation);
             throw error;
           }
         }
       );
+      if (deletedUser) {
+        await this.deps.telegramAlerts?.notifyUserDeleted(deletedUser);
+      }
+      return response;
     } catch (error) {
       await this.compensateAvatarCommitFailure(userId, mutation);
       throw error;
@@ -368,7 +380,8 @@ export class AuthService {
 
   private async finishLogin(
     user: AuthUserRecord,
-    anonymousSessionId: string
+    anonymousSessionId: string,
+    isNew = false
   ): Promise<AuthLoginResult> {
     const promoted = await this.ensureAdminRole(user);
 
@@ -379,6 +392,11 @@ export class AuthService {
       anonymousSessionId,
       promoted.id
     );
+
+    // Только для первой регистрации, не на каждый повторный вход.
+    if (isNew) {
+      await this.deps.telegramAlerts?.notifyUserRegistered(promoted);
+    }
 
     const createdSession = await this.deps.sessionService.createForUser(
       promoted.id

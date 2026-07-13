@@ -6,6 +6,7 @@ import {
   S3AvatarStorage,
 } from '@/server/infrastructure/storage/s3AvatarStorage';
 import { apiError } from '@/server/utils/errors';
+import { createTelegramAlertsService } from '@/server/application/telegram/serviceFactory';
 import { AuthService } from './authService';
 import { AuthSessionService } from './authSessionService';
 
@@ -86,6 +87,7 @@ export function createAuthService(event: H3Event) {
     avatarImageProcessor: { normalize: normalizeAvatarImage },
     createAvatarStorage: () =>
       getCachedAvatarStorage(config as Record<string, unknown>),
+    telegramAlerts: createTelegramAlertsService(event),
   });
 }
 
