@@ -145,7 +145,14 @@ HSTS preload — сайт работает **только по HTTPS**; это �
    критических ошибках (`server/application/telegram/`). Продуктового бота
    Гласно (для Telegram-входа) нет — `NUXT_TELEGRAM_BOT_TOKEN` пуст; создать
    через @BotFather при включении Telegram-логина (это ДРУГОЙ бот, не тот,
-   что для алертов).
+   что для алертов). **Прямой доступ к `api.telegram.org` с этого сервера
+   заблокирован** (проверено 2026-07-13: curl по IPv4 и IPv6 таймаутит,
+   контрольные хосты google.com/api.openai.com отвечают нормально) — CI-скрипт
+   деплоя иногда всё же пробивается напрямую (Telegram ротирует IP, блокировка
+   не стопроцентная), но приложение настроено надёжно через уже работающий
+   прокси Mentala: `NUXT_TELEGRAM_ALERTS_API_HOST=mentala-tg-proxy.peremitinns.workers.dev`
+   (Cloudflare Worker, 1-в-1 пробрасывает запросы к Bot API, совместим с любым
+   токеном). Пусто — запросы идут напрямую в `api.telegram.org` (риск таймаута).
 6. **SMTP — общий ящик с Mentala** (отправитель подписан «Гласно»).
 7. **Лендинг — заглушка с noindex**; при запуске полноценного лендинга убрать
    `robots: noindex` из `apps/landing/nuxt.config.ts` и `Disallow` из
