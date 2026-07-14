@@ -96,9 +96,6 @@ jobs:
     needs: [changes, preflight]
     if: needs.changes.outputs.landing == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    env:
-      YANDEX_METRIKA_ID: ${{ vars.NUXT_PUBLIC_YANDEX_METRIKA_ID || '110383411' }}
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -122,7 +119,6 @@ jobs:
         env:
           NUXT_PUBLIC_APP_AUTH_URL: https://my.glasno.app/auth
           NUXT_PUBLIC_LANDING_SITE_URL: https://glasno.app
-          NUXT_PUBLIC_YANDEX_METRIKA_ID: ${{ env.YANDEX_METRIKA_ID }}
 
       - name: Prepare SSH key for landing deploy
         run: |
@@ -164,7 +160,6 @@ jobs:
       MIGRATE_IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/glasno:prod-migrate
       GHCR_PAT: ${{ secrets.GHCR_PAT }}
       GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
-      YANDEX_METRIKA_ID: ${{ vars.NUXT_PUBLIC_YANDEX_METRIKA_ID || '110383411' }}
 
     steps:
       - name: Checkout repository
@@ -206,7 +201,7 @@ jobs:
           username: ${{ secrets.PROD_SSH_USER }}
           key: ${{ secrets.PROD_SSH_KEY }}
           port: 22
-          envs: GHCR_PAT,GHCR_USERNAME,YANDEX_METRIKA_ID
+          envs: GHCR_PAT,GHCR_USERNAME
           script: |
             set -euo pipefail
 
@@ -219,9 +214,9 @@ jobs:
             grep -q '^MIGRATE_IMAGE=' .env \
               && sed -i "s|^MIGRATE_IMAGE=.*|MIGRATE_IMAGE=${{ env.MIGRATE_IMAGE_NAME }}|" .env \
               || echo "MIGRATE_IMAGE=${{ env.MIGRATE_IMAGE_NAME }}" >> .env
-            grep -q '^NUXT_PUBLIC_YANDEX_METRIKA_ID=' .env \
-              && sed -i "s|^NUXT_PUBLIC_YANDEX_METRIKA_ID=.*|NUXT_PUBLIC_YANDEX_METRIKA_ID=${YANDEX_METRIKA_ID}|" .env \
-              || echo "NUXT_PUBLIC_YANDEX_METRIKA_ID=${YANDEX_METRIKA_ID}" >> .env
+            # NUXT_PUBLIC_YANDEX_METRIKA_ID переопределяет вложенный конфиг
+            # модуля и превращает строковый ID в число. Удаляем старое значение.
+            sed -i '/^NUXT_PUBLIC_YANDEX_METRIKA_ID=/d' .env
 
             # Telegram-уведомления о деплое (опционально, креды из .env).
             TG_TOKEN=$(grep -E '^NUXT_TELEGRAM_ALERTS_BOT_TOKEN=' .env 2>/dev/null | cut -d= -f2- | tr -d '"' || true)

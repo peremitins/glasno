@@ -7,7 +7,8 @@ describe('landing analytics config', () => {
   it('loads Yandex Metrika through the Nuxt module with Webvisor enabled', () => {
     expect(source).toContain("modules: ['nuxt-yandex-metrika']");
     expect(source).toContain('yandexMetrika:');
-    expect(source).toContain('NUXT_PUBLIC_YANDEX_METRIKA_ID');
+    expect(source).toContain('YANDEX_METRIKA_COUNTER_ID');
+    expect(source).not.toContain('NUXT_PUBLIC_YANDEX_METRIKA_ID');
     expect(source).toContain('webvisor: true');
     expect(source).toContain('clickmap: true');
     expect(source).toContain('trackLinks: true');
