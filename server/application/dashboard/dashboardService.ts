@@ -108,6 +108,8 @@ function toHistoryItem(row: DashboardSessionRecord): InterviewHistoryItem {
     role: row.role,
     level: row.level,
     interviewerMode: row.interviewerMode,
+    trainingMode: row.trainingMode,
+    questionSourceMode: row.questionSourceMode,
     answeredQuestions: Math.min(row.answeredQuestions, row.questionCount),
     totalQuestions: row.questionCount,
     createdAt: row.createdAt.toISOString(),

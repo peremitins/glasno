@@ -4,6 +4,7 @@ import {
   buildInterviewPlanMetadata,
   getSessionGoalConfig,
   injectRepeatPreferences,
+  populateGeneratedPlanQuestions,
   resolveNextPlannedQuestion,
 } from './interviewPlan';
 
@@ -85,6 +86,64 @@ describe('interviewPlan', () => {
     expect(metadata.candidatePersona).toBe('verbose_vague');
     expect(metadata.candidateDifficulty).toBe('challenging');
     expect(metadata.candidateNotes).toContain('уходит от конкретики');
+  });
+
+  it('fills AI plan slots before an interviewer-training session starts', () => {
+    const metadata = buildInterviewPlanMetadata({
+      input: {
+        trainingMode: 'interviewer',
+        source: { type: 'profession', role: 'Frontend-разработчик' },
+        level: 'middle',
+        sessionGoal: 'quick',
+        questionSourceMode: 'glasno',
+        responseMode: 'text',
+        hintMode: 'off',
+        language: 'ru',
+        interviewerMode: 'neutral',
+        interviewerAvatarId: 'neutral-pro',
+      },
+      role: 'Frontend-разработчик',
+    });
+
+    const populated = populateGeneratedPlanQuestions(metadata, [
+      'Расскажите о самом сложном интерфейсе, который вы реализовали?',
+      'Как вы находите причину деградации производительности?',
+      'Как принимаете архитектурные решения в команде?',
+    ], { role: 'Frontend-разработчик' });
+
+    expect(populated.plan.items.map((item) => item.question)).toEqual([
+      'Расскажите о самом сложном интерфейсе, который вы реализовали?',
+      'Как вы находите причину деградации производительности?',
+      'Как принимаете архитектурные решения в команде?',
+    ]);
+    expect(
+      resolveNextPlannedQuestion({ metadata: populated, turns: [] })
+    ).toMatchObject({
+      question: 'Расскажите о самом сложном интерфейсе, который вы реализовали?',
+      source: 'glasno',
+    });
+  });
+
+  it('builds a planless free interviewer-training scenario', () => {
+    const metadata = buildInterviewPlanMetadata({
+      input: {
+        trainingMode: 'interviewer',
+        source: { type: 'profession', role: 'Frontend-разработчик' },
+        level: 'middle',
+        sessionGoal: 'standard',
+        questionSourceMode: 'free',
+        responseMode: 'text',
+        hintMode: 'off',
+        language: 'ru',
+        interviewerMode: 'neutral',
+        interviewerAvatarId: 'neutral-pro',
+      },
+      role: 'Frontend-разработчик',
+    });
+
+    expect(metadata.questionSourceMode).toBe('free');
+    expect(metadata.plan.items).toEqual([]);
+    expect(resolveNextPlannedQuestion({ metadata, turns: [] })).toBeNull();
   });
 
   it('selects user questions first and stops custom-only sessions when they are exhausted', () => {

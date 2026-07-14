@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   CONVERSE_MOVE_ON_RULE,
+  OpenAiInterviewEngine,
   buildConverseInstruction,
   buildConverseUserText,
   extractResponsesText,
@@ -10,6 +11,7 @@ import {
   selectGeneratedQuestionCandidate,
 } from './openaiInterviewEngine';
 import type { ConverseParams } from '@/server/interface/interviewEngine';
+import { readFileSync } from 'node:fs';
 
 describe('openai interview engine helpers', () => {
   it('extracts text from every Responses API output content block', () => {
@@ -68,7 +70,141 @@ describe('openai interview engine helpers', () => {
         'Runtime — выполнение кода в браузере или Node.js.',
         expect.stringMatching(/^Очень длинное определение/),
       ],
-      sampleAnswer: 'Я бы начал с влияния типизации на качество кода.',
+      example: {
+        kind: 'candidate_answer',
+        context: 'Текущий вопрос интервью.',
+        text: 'Я бы начал с влияния типизации на качество кода.',
+      },
+    });
+  });
+
+  it('keeps an interviewer hint example as questions and rejects candidate prose', () => {
+    const options = {
+      trainingMode: 'interviewer' as const,
+      context: 'Плановый вопрос про React и TypeScript',
+      fallbackQuestion: 'Как вы выбирали стек для последнего проекта?',
+    };
+
+    expect(
+      normalizeQuestionHintDetails(
+        {
+          focus: 'Проверяет опыт выбора стека.',
+          answerPlan: ['Спросить о задаче.'],
+          keyDefinitions: [],
+          example: {
+            mainQuestion:
+              'Какую задачу на прошлом проекте вы решали в рамках выбранного стека?',
+            followUps: [
+              'Почему выбрали именно этот подход?',
+              'Как измерили результат?',
+            ],
+          },
+        },
+        options
+      )
+    ).toMatchObject({
+      example: {
+        kind: 'interviewer_question',
+        text: 'Какую задачу на прошлом проекте вы решали в рамках выбранного стека?',
+        followUps: [
+          'Почему выбрали именно этот подход?',
+          'Как измерили результат?',
+        ],
+      },
+    });
+
+    expect(
+      normalizeQuestionHintDetails(
+        {
+          focus: 'Проверяет опыт выбора стека.',
+          answerPlan: ['Спросить о задаче.'],
+          keyDefinitions: [],
+          example: {
+            mainQuestion:
+              'Чаще всего я беру React и TypeScript, потому что типы помогают быстрее ловить ошибки?',
+            followUps: [],
+          },
+        },
+        options
+      )
+    ).toBeNull();
+  });
+
+  it('uses a hint-specific session context without candidate role imperatives', () => {
+    const source = readFileSync(
+      'server/infrastructure/llm/openaiInterviewEngine.ts',
+      'utf8'
+    );
+    const hintMethod = source.slice(
+      source.indexOf('async generateQuestionHints('),
+      source.indexOf('async generateHintExample(')
+    );
+
+    expect(hintMethod).toContain('sessionContextForHints(params.session)');
+    expect(hintMethod).not.toContain('sessionContextForConverse(params.session)');
+  });
+
+  it('falls back to the planned question after two invalid interviewer examples', async () => {
+    const engine = new OpenAiInterviewEngine({ apiKey: 'test' });
+    const requestJson = vi
+      .spyOn(engine as any, 'requestJson')
+      .mockResolvedValue({
+        focus: 'Проверяет опыт выбора стека.',
+        answerPlan: ['Спросить о личном вкладе.'],
+        keyDefinitions: [],
+        example: {
+          mainQuestion:
+            'Чаще всего я беру React и TypeScript, потому что типы помогают быстрее ловить ошибки?',
+          followUps: [],
+        },
+      });
+    const session: ConverseParams['session'] = {
+      id: 'session_invalid_interviewer_hint',
+      anonymousSessionId: 'anon_invalid_interviewer_hint',
+      userId: null,
+      trainingMode: 'interviewer',
+      source: 'profession',
+      role: 'Frontend-разработчик',
+      level: 'middle',
+      questionCount: 3,
+      language: 'ru',
+      interviewerMode: 'neutral',
+      interviewerAvatarId: 'neutral-pro',
+      status: 'running',
+      companyName: null,
+      vacancyTitle: null,
+      vacancyRaw: null,
+      vacancyUrl: null,
+      resumeRaw: null,
+      metadata: {},
+      createdAt: new Date('2026-07-14T10:00:00.000Z'),
+    };
+    const turn = {
+      id: 'turn_invalid_interviewer_hint',
+      sessionId: session.id,
+      index: 1,
+      kind: 'main' as const,
+      question: 'Как вы выбирали стек для последнего проекта?',
+      answerTranscript: null,
+      followUpForTurnId: null,
+      metadata: null,
+      answeredAt: null,
+      createdAt: new Date('2026-07-14T10:00:00.000Z'),
+    };
+
+    const hints = await engine.generateQuestionHints({
+      session,
+      turn,
+      turns: [],
+      dialogue: [],
+    });
+
+    expect(requestJson).toHaveBeenCalledTimes(2);
+    expect(hints.example).toEqual({
+      kind: 'interviewer_question',
+      context: turn.question,
+      text: turn.question,
+      followUps: [],
     });
   });
 
@@ -106,7 +242,69 @@ describe('openai interview engine helpers', () => {
     expect(instruction).toContain('Ты — AI-кандидат Гласно');
     expect(instruction).toContain('Пользователь проводит интервью');
     expect(instruction).toContain('Отвечай как кандидат');
+    expect(instruction).toContain('Длину ответа определяет выбранный профиль');
+    expect(instruction).not.toContain('1–3 предложения');
     expect(instruction).not.toContain('отвечать ВМЕСТО кандидата');
+  });
+
+  it('turns overconfidence and challenging difficulty into mandatory observable behavior', () => {
+    const session: ConverseParams['session'] = {
+      id: 'session_behavior_contract',
+      anonymousSessionId: 'anon_behavior_contract',
+      userId: null,
+      trainingMode: 'interviewer',
+      source: 'profession',
+      role: 'Frontend-разработчик',
+      level: 'middle',
+      questionCount: 3,
+      language: 'ru',
+      interviewerMode: 'neutral',
+      interviewerAvatarId: 'neutral-pro',
+      status: 'running',
+      companyName: null,
+      vacancyTitle: null,
+      vacancyRaw: null,
+      vacancyUrl: null,
+      resumeRaw: null,
+      metadata: {
+        candidatePersona: 'overconfident',
+        candidateDifficulty: 'challenging',
+      },
+      createdAt: new Date('2026-07-14T10:00:00.000Z'),
+    };
+
+    const text = buildConverseUserText({
+      session,
+      turn: {
+        id: 'turn_behavior_contract',
+        sessionId: session.id,
+        index: 1,
+        kind: 'main',
+        question: 'Опыт и зона ответственности',
+        answerTranscript: null,
+        followUpForTurnId: null,
+        metadata: null,
+        answeredAt: null,
+        createdAt: new Date('2026-07-14T10:00:00.000Z'),
+      },
+      turns: [],
+      dialogue: [],
+      exchanges: 0,
+    });
+
+    expect(text).toContain('ОБЯЗАТЕЛЬНЫЕ ПРОЯВЛЕНИЯ');
+    expect(text).toContain('приписывай себе более широкий вклад');
+    expect(text).toContain('не раскрывай противоречия добровольно');
+  });
+
+  it('generates an interviewer question suggestion instead of an AI-candidate opening line', () => {
+    const source = readFileSync(
+      'server/infrastructure/llm/openaiInterviewEngine.ts',
+      'utf8'
+    );
+
+    expect(source).toContain('пример основного вопроса для пользователя-интервьюера');
+    expect(source).not.toContain('стартовую или переходную реплику AI-кандидата');
   });
 
   it('keeps the AI candidate from answering as an interviewer', () => {

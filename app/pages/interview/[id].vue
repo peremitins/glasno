@@ -13,6 +13,7 @@
   import { nanoid } from 'nanoid';
   import type {
     InterviewDialogueRole,
+    InterviewHintExample,
     InterviewerFaceId,
     InterviewReportResponse,
     InterviewStateResponse,
@@ -192,6 +193,33 @@
   const isInterviewerTraining = computed(
     () => state.value?.session.trainingMode === 'interviewer'
   );
+  const isFreeInterviewerTraining = computed(
+    () =>
+      isInterviewerTraining.value &&
+      state.value?.session.questionSourceMode === 'free'
+  );
+  const interviewContextTitle = computed(
+    () =>
+      state.value?.session.vacancyTitle?.trim() ||
+      state.value?.session.role?.trim() ||
+      t('interview.session.contextFallback')
+  );
+  const interviewContextDescription = computed(() => {
+    const session = state.value?.session;
+    if (!session) return '';
+    const focusKey =
+      {
+        hr_screening: 'hrScreening',
+        professional: 'professional',
+        behavioral: 'behavioral',
+        salary_negotiation: 'salaryNegotiation',
+        mixed: 'mixedShort',
+      }[session.focus || 'mixed'] || 'mixedShort';
+    return [
+      t(`interview.level.${session.level}`),
+      t(`interview.focus.${focusKey}`),
+    ].join(' · ');
+  });
   const assistantParticipantLabel = computed(() =>
     t(
       isInterviewerTraining.value
@@ -270,7 +298,11 @@
   const nextActionLabel = computed(() =>
     isLastQuestion.value
       ? t('interview.session.finishInterview')
-      : t('interview.session.nextQuestion')
+      : t(
+          isInterviewerTraining.value
+            ? 'interview.session.nextPlanItem'
+            : 'interview.session.nextQuestion'
+        )
   );
   const isTtsEnabled = computed(
     () => runtimeConfig.public.featureTtsEnabled === true
@@ -278,6 +310,9 @@
   const progressText = computed(() => {
     const session = state.value?.session;
     if (!session) return '';
+    if (isFreeInterviewerTraining.value) {
+      return t('interview.session.freeProgress');
+    }
     return t('interview.session.progress', {
       current: session.currentQuestionIndex,
       total: session.totalQuestions,
@@ -290,6 +325,33 @@
   const currentHintDetails = computed(
     () => currentHintPack.value?.detailed ?? null
   );
+  const currentHintExample = computed<InterviewHintExample | null>(() => {
+    const details = currentHintDetails.value;
+    if (!details) return null;
+
+    if (details.example) {
+      const expectedKind = isInterviewerTraining.value
+        ? 'interviewer_question'
+        : 'candidate_answer';
+      return details.example.kind === expectedKind ? details.example : null;
+    }
+
+    // Старые сессии хранят только sampleAnswer. В режиме тренера интервьюера
+    // он всегда был ответом кандидата, поэтому не может быть примером вопроса.
+    if (isInterviewerTraining.value) return null;
+
+    const text = details.sampleAnswer?.trim();
+    const context =
+      details.sampleAnswerQuestion?.trim() ||
+      currentTurn.value?.question?.trim();
+    if (!text || !context) return null;
+
+    return {
+      kind: 'candidate_answer',
+      context,
+      text,
+    };
+  });
   type CurrentInterviewTurn = NonNullable<
     InterviewStateResponse['currentTurn']
   >;
@@ -300,9 +362,22 @@
   });
 
   function hintRequestKeyForTurn(turn: CurrentInterviewTurn) {
-    return `${turn.id}:${
+    return `${turn.id}:${hintExampleContextForTurn(turn)}`;
+  }
+
+  function hintExampleContextForTurn(turn: CurrentInterviewTurn): string {
+    if (isInterviewerTraining.value) {
+      return normalizeHintExampleContext(
+        latestAiCandidateReplyForHints(turn) || turn.question
+      );
+    }
+    return normalizeHintExampleContext(
       latestInterviewerQuestionForHints(turn) || turn.question
-    }`;
+    );
+  }
+
+  function normalizeHintExampleContext(value: string): string {
+    return value.replace(/\s+/g, ' ').trim().slice(0, 1_200);
   }
 
   // Без turnId: он менялся каждым ходом, из-за чего контекст всех видимых
@@ -328,6 +403,19 @@
       if (message.role !== 'interviewer') continue;
       const question = extractQuestionPromptForHints(message.content);
       if (question && !isMoveOnQuestionForHints(question)) return question;
+    }
+    return null;
+  }
+
+  function latestAiCandidateReplyForHints(
+    turn: CurrentInterviewTurn
+  ): string | null {
+    for (let index = turn.messages.length - 1; index >= 0; index -= 1) {
+      const message = turn.messages[index];
+      if (!message || message.role !== 'interviewer') continue;
+      const content = normalizeHintExampleContext(message.content);
+      if (!content) continue;
+      return content;
     }
     return null;
   }
@@ -366,23 +454,19 @@
     const turns = state.value?.turns ?? [];
     const persisted: ConversationMessage[] = [];
     for (const turn of turns) {
-      persisted.push({
-        id: `question-${turn.id}`,
-        role: 'assistant',
-        content: turn.question,
-        meta:
-          turn.kind === 'clarification'
-            ? isInterviewerTraining.value
-              ? t('interview.session.clarificationInterviewer')
-              : t('interview.session.clarification')
-            : turn.questionSource === 'user'
-            ? isInterviewerTraining.value
-              ? t('interview.session.userQuestionInterviewer')
-              : t('interview.session.userQuestion')
-            : isInterviewerTraining.value
-            ? t('interview.session.stagePrompt')
-            : t('interview.session.question'),
-      });
+      if (!isInterviewerTraining.value) {
+        persisted.push({
+          id: `question-${turn.id}`,
+          role: 'assistant',
+          content: turn.question,
+          meta:
+            turn.kind === 'clarification'
+              ? t('interview.session.clarification')
+              : turn.questionSource === 'user'
+              ? t('interview.session.userQuestion')
+              : t('interview.session.question'),
+        });
+      }
       // Живой диалог по вопросу: реплики кандидата и интервьюера.
       if (turn.messages?.length) {
         for (const [index, message] of turn.messages.entries()) {
@@ -455,8 +539,9 @@
         responseScheduler.cancel();
         return;
       }
-      // Соединение установлено: модель сама здоровается и озвучивает текущий
-      // вопрос — чтобы кандидат понял, что можно отвечать (без «немой» паузы).
+      // В режиме кандидата модель озвучивает первый вопрос. В режиме
+      // интервьюера announceCurrentQuestionViaRealtime остаётся беззвучным:
+      // разговор всегда начинает пользователь.
       if (firstQuestionAnnounced.value) return;
       firstQuestionAnnounced.value = true;
       void nextTick(() => {
@@ -608,7 +693,10 @@
     if (!normalized) return;
     // В realtime реплики кандидата уже попадают в чат через адаптер.
     // В поле ответа ничего НЕ пишем. По голосовой команде — переходим дальше.
-    if (isNextQuestionVoiceCommand(normalized)) {
+    if (
+      !isFreeInterviewerTraining.value &&
+      isNextQuestionVoiceCommand(normalized)
+    ) {
       // Команда адресована приложению, а не интервьюеру. Реагируем сразу,
       // минуя окно тишины: снимаем отложенный ответ и переключаем вопрос.
       responseScheduler.cancel();
@@ -652,6 +740,7 @@
   function announceCurrentQuestionViaRealtime(
     options: { firstQuestion?: boolean } = {}
   ) {
+    if (isInterviewerTraining.value) return;
     const control = realtimeControl.value;
     const turn = currentTurn.value;
     const question = turn?.question?.trim();
@@ -802,7 +891,10 @@
 
     // Команда перехода в текстовом поле адресована приложению, а не модели.
     // Не добавляем её в диалог и не создаём лишний запрос к интервьюеру.
-    if (isNextQuestionVoiceCommand(message)) {
+    if (
+      !isFreeInterviewerTraining.value &&
+      isNextQuestionVoiceCommand(message)
+    ) {
       answer.value = '';
       await goToNextQuestion();
       return;
@@ -1070,7 +1162,9 @@
       runtimeMessages.value = [];
       // В голосовом режиме новый вопрос сразу озвучивается в текущем
       // realtime-соединении — без переподключения и без действий пользователя.
-      announceCurrentQuestionViaRealtime();
+      if (!isInterviewerTraining.value) {
+        announceCurrentQuestionViaRealtime();
+      }
     } catch (err) {
       errorMessage.value = extractApiError(err);
     } finally {
@@ -1101,6 +1195,38 @@
       runtimeMessages.value = [];
       await generateReport({ skipFlush: true });
     } catch (err) {
+      errorMessage.value = extractApiError(err);
+    } finally {
+      isSending.value = false;
+      sessionAction.value = null;
+    }
+  }
+
+  async function finishInterviewEarly() {
+    const turn = currentTurn.value;
+    if (!turn || isSending.value || isGeneratingReport.value) return;
+
+    isSending.value = true;
+    sessionAction.value = 'report';
+    errorMessage.value = '';
+    stopSpeech();
+    try {
+      await flushRealtimePersistence();
+      // Не даём watcher-у запустить параллельный запрос отчёта после смены
+      // статуса: этот сценарий продолжит генерацию сам.
+      reportGenerationAutoStarted.value = true;
+      state.value = await api<InterviewStateResponse>(
+        `/api/interview/sessions/${sessionId.value}/finish`,
+        {
+          method: 'POST',
+          body: { turnId: turn.id },
+        }
+      );
+      answer.value = '';
+      runtimeMessages.value = [];
+      await generateReport({ skipFlush: true });
+    } catch (err) {
+      reportGenerationAutoStarted.value = false;
       errorMessage.value = extractApiError(err);
     } finally {
       isSending.value = false;
@@ -1304,12 +1430,26 @@
     const turn = currentTurn.value;
     if (!turn || hintsLoading.value) return;
     const requestKey = currentHintsRequestKey.value;
-    const latestInterviewerQuestion = latestInterviewerQuestionForHints(turn);
-    const sampleAnswerQuestion = latestInterviewerQuestion || turn.question;
+    const exampleContext = hintExampleContextForTurn(turn);
+    const detailed = turn.hintPack?.detailed;
+    const currentExample = detailed?.example;
+    const expectedExampleKind = isInterviewerTraining.value
+      ? 'interviewer_question'
+      : 'candidate_answer';
+    const hasCurrentTypedExample =
+      currentExample?.kind === expectedExampleKind &&
+      currentExample.context === exampleContext;
+    const legacyExampleContext =
+      detailed?.sampleAnswerQuestion?.trim() || turn.question.trim();
+    const hasCurrentLegacyCandidateExample =
+      !isInterviewerTraining.value &&
+      !currentExample &&
+      Boolean(detailed?.sampleAnswer?.trim()) &&
+      legacyExampleContext === exampleContext;
+
     if (
-      turn.hintPack?.detailed &&
-      (!latestInterviewerQuestion ||
-        turn.hintPack.detailed.sampleAnswerQuestion === sampleAnswerQuestion)
+      detailed &&
+      (hasCurrentTypedExample || hasCurrentLegacyCandidateExample)
     ) {
       loadedHintRequestKeys.value = new Set(loadedHintRequestKeys.value).add(
         requestKey
@@ -1321,23 +1461,34 @@
 
     hintsLoading.value = true;
     hintsError.value = '';
+    let requestBecameStale = false;
     try {
-      state.value = await api<InterviewStateResponse>(
+      const response = await api<InterviewStateResponse>(
         `/api/interview/sessions/${sessionId.value}/hints`,
         {
           method: 'POST',
           body: { turnId: turn.id },
         }
       );
+      requestBecameStale = currentHintsRequestKey.value !== requestKey;
+      if (requestBecameStale) return;
+
+      state.value = response;
       loadedHintRequestKeys.value = new Set(loadedHintRequestKeys.value).add(
         requestKey
       );
       await nextTick();
       scrollHintsToTop('auto');
     } catch (err) {
-      hintsError.value = extractApiError(err);
+      requestBecameStale = currentHintsRequestKey.value !== requestKey;
+      if (!requestBecameStale) {
+        hintsError.value = extractApiError(err);
+      }
     } finally {
       hintsLoading.value = false;
+      if (requestBecameStale && hintsOpen.value) {
+        void generateHintsForCurrentTurn();
+      }
     }
   }
 
@@ -1360,9 +1511,10 @@
     }
   );
 
-  // «Завершить интервью» — формируем отчёт и уходим на разбор.
+  // «Завершить интервью» — сначала атомарно закрываем текущий диалог,
+  // затем формируем отчёт. Это обязательно для свободного сценария.
   function endInterview() {
-    void generateReport();
+    void finishInterviewEarly();
   }
 
   function onKeydown(event: KeyboardEvent) {
@@ -1406,6 +1558,7 @@
     <template v-else-if="state">
       <ReportGenerationPanel
         v-if="isDone"
+        :training-mode="state.session.trainingMode"
         :error-message="errorMessage"
         :retry-loading="sessionAction === 'report'"
         @retry="generateReport"
@@ -1481,16 +1634,30 @@
           <!-- Текущий вопрос -->
           <div class="now-question">
             <span class="badge">
-              {{ currentTurnLabel }}
+              {{
+                isInterviewerTraining
+                  ? t('interview.session.contextTitle')
+                  : currentTurnLabel
+              }}
             </span>
-            <p>
+            <p v-if="isInterviewerTraining">
+              <TextWithInterviewTerms
+                :text="interviewContextTitle"
+                :context="learningTermContext('interview_question')"
+                manual-selection
+              />
+            </p>
+            <small v-if="isInterviewerTraining" class="context-description">
+              {{ interviewContextDescription }}
+            </small>
+            <p v-else>
               <TextWithInterviewTerms
                 :text="currentTurn.question"
                 :context="learningTermContext('interview_question')"
                 manual-selection
               />
             </p>
-            <div class="question-actions">
+            <div v-if="!isInterviewerTraining" class="question-actions">
               <button
                 v-if="isTtsEnabled"
                 v-tooltip="t('voice.tts.listen')"
@@ -1578,7 +1745,7 @@
               v-tooltip="t('interview.session.controls.end')"
               class="dock-btn dock-btn--end button-loader-host"
               type="button"
-              :disabled="isGeneratingReport"
+              :disabled="isSending || isGeneratingReport"
               @click="endInterview"
             >
               <ButtonLoader v-if="sessionAction === 'report'" />
@@ -1684,6 +1851,7 @@
             </ol>
 
             <button
+              v-if="!isFreeInterviewerTraining"
               class="next-btn button-loader-host"
               type="button"
               :disabled="isSending || isGeneratingReport"
@@ -1897,7 +2065,7 @@
                 </p>
 
                 <details
-                  v-if="currentHintDetails?.sampleAnswer"
+                  v-if="currentHintExample"
                   :ref="setHintDetailsPanelRef"
                   class="hint-disclosure"
                   open
@@ -1919,50 +2087,74 @@
                     }"
                   >
                     <TextWithInterviewTerms
-                      :text="currentHintDetails.sampleAnswer"
+                      :text="currentHintExample.text"
                       :context="learningTermContext('interview_hint')"
                       manual-selection
                     />
                   </p>
+                  <template
+                    v-if="
+                      currentHintExample.kind === 'interviewer_question' &&
+                      currentHintExample.followUps.length
+                    "
+                  >
+                    <p class="hint-subtitle">
+                      {{ t('interview.session.hintsPanel.sampleFollowUps') }}
+                    </p>
+                    <ul class="hint-list">
+                      <li
+                        v-for="followUp in currentHintExample.followUps"
+                        :key="followUp"
+                      >
+                        <TextWithInterviewTerms
+                          :text="followUp"
+                          :context="learningTermContext('interview_hint')"
+                          manual-selection
+                        />
+                      </li>
+                    </ul>
+                  </template>
                 </details>
               </template>
 
-              <details class="plan-disclosure">
-                <summary>
-                  <span>
-                    <em class="coach-label">{{
-                      t('interview.session.plan')
-                    }}</em>
-                    <strong>{{
-                      t('interview.session.planProgress', planProgress)
-                    }}</strong>
-                  </span>
-                </summary>
-                <ol class="plan-list">
-                  <li
-                    v-for="item in state.session.plan.items"
-                    :key="item.id"
-                    :class="{ 'plan-item--asked': item.status === 'asked' }"
-                  >
-                    <span>{{ item.index }}</span>
-                    <p>
-                      <TextWithInterviewTerms
-                        :text="
-                          item.question ||
-                          t('interview.session.plannedGlasnoQuestion')
-                        "
-                        :context="
-                          learningTermContext(
-                            'interview_question',
-                            'План интервью'
-                          )
-                        "
-                        manual-selection
-                      />
-                    </p>
-                  </li>
-                </ol>
-              </details>
+              <template v-if="!isFreeInterviewerTraining">
+                <details class="plan-disclosure">
+                  <summary>
+                    <span>
+                      <em class="coach-label">{{
+                        t('interview.session.plan')
+                      }}</em>
+                      <strong>{{
+                        t('interview.session.planProgress', planProgress)
+                      }}</strong>
+                    </span>
+                  </summary>
+                  <ol class="plan-list">
+                    <li
+                      v-for="item in state.session.plan.items"
+                      :key="item.id"
+                      :class="{ 'plan-item--asked': item.status === 'asked' }"
+                    >
+                      <span>{{ item.index }}</span>
+                      <p>
+                        <TextWithInterviewTerms
+                          :text="
+                            item.question ||
+                            t('interview.session.plannedGlasnoQuestion')
+                          "
+                          :context="
+                            learningTermContext(
+                              'interview_question',
+                              'План интервью'
+                            )
+                          "
+                          manual-selection
+                        />
+                      </p>
+                    </li>
+                  </ol>
+                </details>
+              </template>
             </div>
           </aside>
         </div>
@@ -1976,98 +2168,101 @@
         class="picker-overlay"
         @click.self="interviewerPickerOpen = false"
       >
-      <div class="picker-modal glass-frame" role="dialog" aria-modal="true">
-        <header class="picker-head">
-          <div>
-            <h3>{{ t('interview.session.interviewerPicker.title') }}</h3>
-            <p>{{ t('interview.session.interviewerPicker.subtitle') }}</p>
-          </div>
-          <button
-            class="side-close"
-            type="button"
-            :aria-label="t('interview.session.interviewerPicker.close')"
-            @click="interviewerPickerOpen = false"
-          >
-            <Cross2Icon aria-hidden="true" />
-          </button>
-        </header>
-
-        <div
-          v-for="group in interviewerFaceGroups"
-          :key="group.key"
-          class="picker-group"
-        >
-          <p class="picker-group-label">{{ t(group.label) }}</p>
-          <div class="picker-grid">
+        <div class="picker-modal glass-frame" role="dialog" aria-modal="true">
+          <header class="picker-head">
+            <div>
+              <h3>{{ t('interview.session.interviewerPicker.title') }}</h3>
+              <p>{{ t('interview.session.interviewerPicker.subtitle') }}</p>
+            </div>
             <button
-              v-for="opt in group.options"
-              :key="opt.id"
+              class="side-close"
               type="button"
-              class="picker-card button-loader-host"
-              :class="{
-                'picker-card--active':
-                  state.session.interviewerFaceId === opt.id,
-              }"
-              :disabled="isChangingInterviewer"
-              @click="changeInterviewer(opt.id)"
+              :aria-label="t('interview.session.interviewerPicker.close')"
+              @click="interviewerPickerOpen = false"
             >
-              <ButtonLoader v-if="changingInterviewerFaceId === opt.id" />
-              <span
-                class="button-loader-content picker-card__content"
-                :class="{
-                  'button-loader-content--loading':
-                    changingInterviewerFaceId === opt.id,
-                }"
-              >
-                <span class="picker-thumb">
-                  <img
-                    v-if="!failedThumbs.has(opt.id)"
-                    :src="getInterviewerFacePhotoSrc(opt.id)"
-                    :alt="t(opt.modeLabel)"
-                    @error="onThumbError(opt.id)"
-                  >
-                  <em v-else class="picker-initials">{{
-                    group.key === 'male' ? 'М' : 'Ж'
-                  }}</em>
-                </span>
-                <span class="picker-mode">{{ t(opt.modeLabel) }}</span>
-              </span>
+              <Cross2Icon aria-hidden="true" />
             </button>
-          </div>
-        </div>
+          </header>
 
-        <!-- Пауза «окна тишины» перед ответом интервьюера в голосовом режиме. -->
-        <div class="picker-group">
-          <p class="picker-group-label">
-            {{ t('interview.session.interviewerPicker.responsePauseTitle') }}
-          </p>
           <div
-            class="pause-row"
-            role="group"
-            :aria-label="
-              t('interview.session.interviewerPicker.responsePauseTitle')
-            "
+            v-for="group in interviewerFaceGroups"
+            :key="group.key"
+            class="picker-group"
           >
-            <button
-              v-for="ms in responsePauseOptions"
-              :key="ms"
-              type="button"
-              class="pause-chip"
-              :class="{ 'pause-chip--active': responsePauseMs === ms }"
-              :aria-pressed="responsePauseMs === ms"
-              @click="setResponsePauseMs(ms)"
-            >
-              {{
-                t('interview.session.interviewerPicker.responsePauseSeconds', {
-                  seconds: (ms / 1000).toLocaleString('ru-RU'),
-                })
-              }}
-            </button>
+            <p class="picker-group-label">{{ t(group.label) }}</p>
+            <div class="picker-grid">
+              <button
+                v-for="opt in group.options"
+                :key="opt.id"
+                type="button"
+                class="picker-card button-loader-host"
+                :class="{
+                  'picker-card--active':
+                    state.session.interviewerFaceId === opt.id,
+                }"
+                :disabled="isChangingInterviewer"
+                @click="changeInterviewer(opt.id)"
+              >
+                <ButtonLoader v-if="changingInterviewerFaceId === opt.id" />
+                <span
+                  class="button-loader-content picker-card__content"
+                  :class="{
+                    'button-loader-content--loading':
+                      changingInterviewerFaceId === opt.id,
+                  }"
+                >
+                  <span class="picker-thumb">
+                    <img
+                      v-if="!failedThumbs.has(opt.id)"
+                      :src="getInterviewerFacePhotoSrc(opt.id)"
+                      :alt="t(opt.modeLabel)"
+                      @error="onThumbError(opt.id)"
+                    />
+                    <em v-else class="picker-initials">{{
+                      group.key === 'male' ? 'М' : 'Ж'
+                    }}</em>
+                  </span>
+                  <span class="picker-mode">{{ t(opt.modeLabel) }}</span>
+                </span>
+              </button>
+            </div>
           </div>
-          <p class="pause-hint">
-            {{ t('interview.session.interviewerPicker.responsePauseHint') }}
-          </p>
-        </div>
+
+          <!-- Пауза «окна тишины» перед ответом интервьюера в голосовом режиме. -->
+          <div class="picker-group">
+            <p class="picker-group-label">
+              {{ t('interview.session.interviewerPicker.responsePauseTitle') }}
+            </p>
+            <div
+              class="pause-row"
+              role="group"
+              :aria-label="
+                t('interview.session.interviewerPicker.responsePauseTitle')
+              "
+            >
+              <button
+                v-for="ms in responsePauseOptions"
+                :key="ms"
+                type="button"
+                class="pause-chip"
+                :class="{ 'pause-chip--active': responsePauseMs === ms }"
+                :aria-pressed="responsePauseMs === ms"
+                @click="setResponsePauseMs(ms)"
+              >
+                {{
+                  t(
+                    'interview.session.interviewerPicker.responsePauseSeconds',
+                    {
+                      seconds: (ms / 1000).toLocaleString('ru-RU'),
+                    }
+                  )
+                }}
+              </button>
+            </div>
+            <p class="pause-hint">
+              {{ t('interview.session.interviewerPicker.responsePauseHint') }}
+            </p>
+          </div>
         </div>
       </div>
     </Teleport>
@@ -2718,6 +2913,16 @@
     overflow-wrap: anywhere;
   }
 
+  .context-description {
+    grid-area: actions;
+    align-self: center;
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 750;
+    line-height: 1.4;
+    text-align: right;
+  }
+
   .question-actions {
     grid-area: actions;
     display: flex;
@@ -2937,6 +3142,10 @@
     min-height: 0;
     max-height: none;
     overflow-y: auto;
+
+    @media (max-width: 1365px) {
+      max-height: 300px;
+    }
   }
 
   .composer {
@@ -3068,6 +3277,7 @@
 
   .hint-disclosure {
     color: var(--text-secondary);
+    word-break: break-word;
   }
 
   .hint-disclosure--primary {

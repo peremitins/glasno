@@ -8,7 +8,9 @@ import type { BillingOwner } from '@/server/interface/billingRepository';
 import type {
   InterviewLevel,
   InterviewerMode,
+  InterviewQuestionSourceMode,
   InterviewSessionStatus,
+  InterviewTrainingMode,
   ReportRecommendations,
   ReportStatus,
 } from '@/shared/dto';
@@ -81,6 +83,8 @@ export class DrizzleDashboardRepository implements DashboardRepository {
         role: schema.interviewSessions.role,
         level: schema.interviewSessions.level,
         interviewerMode: schema.interviewSessions.interviewerMode,
+        trainingMode: schema.interviewSessions.trainingMode,
+        metadata: schema.interviewSessions.metadata,
         questionCount: schema.interviewSessions.questionCount,
         createdAt: schema.interviewSessions.createdAt,
         reportId: schema.interviewReports.id,
@@ -122,6 +126,8 @@ export class DrizzleDashboardRepository implements DashboardRepository {
       role: row.role,
       level: row.level as InterviewLevel | null,
       interviewerMode: (row.interviewerMode || 'neutral') as InterviewerMode,
+      trainingMode: (row.trainingMode || 'candidate') as InterviewTrainingMode,
+      questionSourceMode: readQuestionSourceMode(row.metadata),
       questionCount: row.questionCount,
       answeredQuestions: answeredBySession.get(row.id) ?? 0,
       createdAt: row.createdAt,
@@ -136,6 +142,14 @@ export class DrizzleDashboardRepository implements DashboardRepository {
         : null,
     }));
   }
+}
+
+function readQuestionSourceMode(metadata: unknown): InterviewQuestionSourceMode {
+  if (!metadata || typeof metadata !== 'object') return 'glasno';
+  const value = (metadata as { questionSourceMode?: unknown }).questionSourceMode;
+  return value === 'custom' || value === 'mixed' || value === 'free'
+    ? value
+    : 'glasno';
 }
 
 function andInAnsweredTurns(sessionIds: string[]) {

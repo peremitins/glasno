@@ -33,7 +33,7 @@ describe('russian UI copy', () => {
     expect(texts).toContain('ваканс');
   });
 
-  it('shows real session duration and question count together', () => {
+  it('shows session scope by question count without internal timing', () => {
     const goalTexts = collectStrings(messages.interview.goal)
       .map(([, value]) => value)
       .join('\n');
@@ -41,9 +41,7 @@ describe('russian UI copy', () => {
     expect(goalTexts).not.toContain('Разогрев перед интервью');
     expect(goalTexts).not.toContain('Баланс практики и темпа');
     expect(goalTexts).not.toContain('Длинный прогон с уточнениями');
-    expect(goalTexts).toContain('7 мин');
-    expect(goalTexts).toContain('15 мин');
-    expect(goalTexts).toContain('25 мин');
+    expect(goalTexts).not.toMatch(/\d+\s*мин/);
     expect(goalTexts).toContain('3 вопроса');
     expect(goalTexts).toContain('6 вопросов');
     expect(goalTexts).toContain('10 вопросов');

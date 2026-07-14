@@ -3,9 +3,10 @@ import { apiError } from '@/server/utils/errors';
 import type {
   ConverseParams,
   EvaluateAnswerParams,
+  GenerateHintExampleParams,
   GenerateQuestionHintsParams,
+  GenerateInterviewerPlanParams,
   GenerateQuestionParams,
-  GenerateSampleAnswerHintParams,
   InterviewEngine,
   NormalizeCustomQuestionsParams,
 } from '@/server/interface/interviewEngine';
@@ -28,6 +29,7 @@ import type {
   CandidatePersona,
   InterviewerFaceId,
   InterviewFocus,
+  InterviewHintExample,
   InterviewTrainingMode,
   QuestionHintDetails,
   QuestionPreferenceStatus,
@@ -41,6 +43,11 @@ import {
 } from './openaiResponsesClient';
 import { compactGeneratedText } from './textNormalization';
 import { logger } from '@/server/utils/logger';
+import {
+  buildCandidateBehaviorContract,
+  buildCandidateBehaviorSummary,
+} from '@/shared/candidateBehavior';
+import { canonicalInterviewQuestionKey } from '@/shared/interviewQuestion';
 
 // Извлекает usage из ответа Responses API в наши поля.
 export function extractUsageAmounts(response: any): {
@@ -122,34 +129,121 @@ function compactTextList(
   return result;
 }
 
-export function normalizeQuestionHintDetails(value: unknown): QuestionHintDetails {
+interface NormalizeQuestionHintDetailsOptions {
+  trainingMode?: InterviewTrainingMode;
+  context?: string;
+  fallbackQuestion?: string;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object'
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function normalizeHintContext(value: unknown, fallback: string): string {
+  const raw = typeof value === 'string' ? value : '';
+  return raw.replace(/\s+/g, ' ').trim().slice(0, 1_200) || fallback;
+}
+
+function isDirectInterviewerQuestion(value: string): boolean {
+  const text = value.trim();
+  return (
+    text.endsWith('?') &&
+    !/(?:^|[\s.!?])(?:я|мы)(?=$|[\s,.!?;:])/iu.test(text)
+  );
+}
+
+function normalizeInterviewerQuestionExample(
+  value: unknown,
+  context: string
+): Extract<InterviewHintExample, { kind: 'interviewer_question' }> | null {
+  const raw = asRecord(value);
+  const text = compactGeneratedText(raw.mainQuestion, '', 500);
+  if (!text || !isDirectInterviewerQuestion(text)) return null;
+
+  const rawFollowUps = raw.followUps;
+  if (rawFollowUps !== undefined && !Array.isArray(rawFollowUps)) return null;
+  if (Array.isArray(rawFollowUps) && rawFollowUps.length > 2) return null;
+
+  const followUps = (rawFollowUps ?? []).map((item) =>
+    compactGeneratedText(item, '', 500)
+  );
+  if (followUps.some((question) => !isDirectInterviewerQuestion(question))) {
+    return null;
+  }
+
+  return {
+    kind: 'interviewer_question',
+    context: normalizeHintContext(context, 'Текущий этап интервью.'),
+    text,
+    followUps,
+  };
+}
+
+function normalizeCandidateAnswerExample(
+  value: unknown,
+  context: string
+): Extract<InterviewHintExample, { kind: 'candidate_answer' }> {
+  const raw = asRecord(value);
+  const example = asRecord(raw.example);
+  const sampleAnswer = normalizeSampleAnswerHint({
+    sampleAnswer: example.answer ?? raw.sampleAnswer,
+  }).sampleAnswer;
+
+  return {
+    kind: 'candidate_answer',
+    context: normalizeHintContext(context, 'Текущий вопрос интервью.'),
+    text: sampleAnswer,
+  };
+}
+
+export function normalizeQuestionHintDetails(
+  value: unknown,
+  options: NormalizeQuestionHintDetailsOptions = {}
+): QuestionHintDetails | null {
   const raw =
     value && typeof value === 'object'
       ? (value as Record<string, unknown>)
       : {};
 
+  const trainingMode = options.trainingMode ?? 'candidate';
+  const context =
+    options.context?.trim() ||
+    options.fallbackQuestion?.trim() ||
+    'Текущий вопрос интервью.';
+  const isInterviewerTraining = trainingMode === 'interviewer';
+  const example = isInterviewerTraining
+    ? normalizeInterviewerQuestionExample(raw.example, context)
+    : normalizeCandidateAnswerExample(raw, context);
+  if (!example) return null;
+
   return {
     focus: compactGeneratedText(
       raw.focus,
-      'Проверяет, насколько ответ связан с текущим вопросом и ролью.',
+      isInterviewerTraining
+        ? 'Проверяет, насколько вопрос раскрывает опыт и личный вклад кандидата.'
+        : 'Проверяет, насколько ответ связан с текущим вопросом и ролью.',
       260
     ),
     answerPlan: compactTextList(
       raw.answerPlan,
-      [
-        'Коротко ответьте на сам вопрос без длинной предыстории.',
-        'Добавьте один релевантный пример из опыта или учебного проекта.',
-        'Назовите личное действие и понятный результат.',
-      ],
+      isInterviewerTraining
+        ? [
+            'Начните с открытого вопроса по текущей теме.',
+            'Уточните личный вклад кандидата.',
+            'Попросите объяснить решение и результат.',
+          ]
+        : [
+            'Коротко ответьте на сам вопрос без длинной предыстории.',
+            'Добавьте один релевантный пример из опыта или учебного проекта.',
+            'Назовите личное действие и понятный результат.',
+          ],
       4,
       220
     ),
     keyDefinitions: compactTextList(raw.keyDefinitions, [], 4, 220),
-    sampleAnswer: compactGeneratedText(
-      raw.sampleAnswer,
-      'Я бы ответил от первого лица: коротко задал контекст, назвал своё действие и завершил результатом, не добавляя факты, которых нет в моём опыте.',
-      700
-    ),
+    example,
   };
 }
 
@@ -283,9 +377,11 @@ function sessionContextForConverse(session: InterviewSessionRecord) {
   const roleContext =
     trainingMode === 'interviewer'
       ? [
-          `Профиль AI-кандидата: ${describeCandidatePersona(readCandidatePersona(session))}`,
-          `Сложность AI-кандидата: ${describeCandidateDifficulty(readCandidateDifficulty(session))}`,
-          `Заметки AI-кандидата: ${readCandidateNotes(session) || 'нет'}`,
+          buildCandidateBehaviorContract({
+            persona: readCandidatePersona(session),
+            difficulty: readCandidateDifficulty(session),
+            notes: readCandidateNotes(session),
+          }),
         ]
       : [
           `Режим интервьюера: ${session.interviewerMode}`,
@@ -294,6 +390,37 @@ function sessionContextForConverse(session: InterviewSessionRecord) {
             getInterviewerGender(readInterviewerFaceId(session))
           ),
         ];
+
+  return [
+    `Режим тренировки: ${describeTrainingMode(trainingMode)}`,
+    `Роль: ${session.role || 'не указана'}`,
+    `Уровень: ${session.level || 'middle'}`,
+    ...roleContext,
+    `Язык: ${session.language}`,
+    `Компания: ${session.companyName || 'не указана'}`,
+    `Вакансия: ${session.vacancyTitle || 'не указана'}`,
+    `Описание вакансии: ${session.vacancyRaw || 'нет'}`,
+    `Резюме кандидата: ${session.resumeRaw || 'нет'}`,
+    `Фокус интервью: ${describeInterviewFocus(focus)}`,
+  ].join('\n');
+}
+
+// Подсказки генерирует отдельный тренер, поэтому здесь оставляем только
+// факты сценария. Императивы из контракта AI-кандидата применимы лишь к
+// живому диалогу и могут заставить тренера ответить за кандидата.
+function sessionContextForHints(session: InterviewSessionRecord) {
+  const trainingMode = readTrainingMode(session);
+  const focus = readInterviewFocus(session);
+  const roleContext =
+    trainingMode === 'interviewer'
+      ? [
+          buildCandidateBehaviorSummary({
+            persona: readCandidatePersona(session),
+            difficulty: readCandidateDifficulty(session),
+            notes: readCandidateNotes(session),
+          }),
+        ]
+      : [`Режим интервьюера: ${session.interviewerMode}`];
 
   return [
     `Режим тренировки: ${describeTrainingMode(trainingMode)}`,
@@ -363,34 +490,6 @@ function describeTrainingMode(mode: InterviewTrainingMode): string {
   return mode === 'interviewer'
     ? 'пользователь проводит интервью, AI играет кандидата'
     : 'пользователь проходит интервью как кандидат, AI играет интервьюера';
-}
-
-function describeCandidatePersona(persona: CandidatePersona): string {
-  switch (persona) {
-    case 'verbose_vague':
-      return 'много говорит, но часто отвечает общо и без фактов';
-    case 'anxious':
-      return 'волнуется, сомневается, иногда просит уточнить вопрос';
-    case 'overconfident':
-      return 'уверен в себе, может переоценивать вклад и уходить от слабых мест';
-    case 'weak_hard_good_soft':
-      return 'приятно общается, но профессиональная конкретика слабее заявленного уровня';
-    case 'strong_brief':
-    default:
-      return 'сильный кандидат, отвечает кратко и по делу';
-  }
-}
-
-function describeCandidateDifficulty(difficulty: CandidateDifficulty): string {
-  switch (difficulty) {
-    case 'calm':
-      return 'спокойный сценарий, кандидат отвечает дружелюбно и достаточно прямо';
-    case 'challenging':
-      return 'сложный сценарий, кандидат может давать неполные ответы, спорить или уходить от конкретики';
-    case 'realistic':
-    default:
-      return 'реалистичный сценарий, кандидат отвечает естественно, не помогает интервьюеру сверх меры';
-  }
 }
 
 function isCandidatePersona(value: unknown): value is CandidatePersona {
@@ -497,7 +596,7 @@ const CANDIDATE_TRAINING_CONVERSE_RULES =
 const INTERVIEWER_TRAINING_CONVERSE_RULES =
   `Ты — AI-кандидат Гласно. ${AI_CANDIDATE_ROLE_CONTRACT} Пользователь проводит интервью и тренирует навык интервьюера. ` +
   'Отвечай как кандидат по роли, вакансии, резюме и профилю AI-кандидата. ' +
-  'Пиши по-русски, кратко и естественно: 1–3 предложения, без префиксов и оценок пользователя. ' +
+  'Пиши по-русски и естественно, без префиксов и оценок пользователя. Длину ответа определяет выбранный профиль AI-кандидата. ' +
   'Не помогай интервьюеру формулировать вопросы и не объясняй, как проводить интервью. ' +
   'Если вопрос интервьюера общий, отвечай естественно, но не раскрывай всё сам: оставляй место для уточняющих вопросов. ' +
   'Если спрашивают рискованное или некорректное, отвечай осторожно и по-человечески, без юридических лекций. ' +
@@ -555,6 +654,21 @@ function splitMoveOnMarker(text: string): {
   return { clean, suggestMoveOn };
 }
 
+function fallbackInterviewerQuestion(
+  session: InterviewSessionRecord,
+  turn: InterviewTurnRecord
+): string {
+  const plannedQuestion = compactGeneratedText(turn.question, '', 500);
+  if (plannedQuestion && isDirectInterviewerQuestion(plannedQuestion)) {
+    return plannedQuestion;
+  }
+
+  const role = compactGeneratedText(session.role, '', 160);
+  return role
+    ? `Расскажите, пожалуйста, о последнем релевантном проекте в роли ${role}?`
+    : 'Расскажите, пожалуйста, о последнем релевантном проекте?';
+}
+
 export class OpenAiInterviewEngine implements InterviewEngine {
   constructor(
     private readonly options: {
@@ -602,6 +716,60 @@ export class OpenAiInterviewEngine implements InterviewEngine {
     return { questions };
   }
 
+  async generateInterviewerPlan(
+    params: GenerateInterviewerPlanParams
+  ): Promise<{ questions: string[] }> {
+    const raw = await this.requestJson({
+      instruction:
+        'Ты редактор сценария интервью Гласно. Составь устойчивый план для пользователя-интервьюера: каждый пункт — конкретный основной вопрос, который пользователь сможет задать AI-кандидату. ' +
+        'Расположи вопросы в логичной последовательности от знакомства и контекста к опыту, профессиональным решениям и завершению. Не дублируй вопросы пользователя. ' +
+        `Верни ровно ${params.questionsCount} вопросов и строго JSON вида {"questions":["..."]}.`,
+      userText: [
+        `Роль: ${params.role || 'не указана'}`,
+        `Уровень кандидата: ${params.level}`,
+        `Фокус интервью: ${describeInterviewFocus(params.focus ?? null)}`,
+        `Вакансия: ${params.vacancyTitle || 'не указана'}`,
+        `Описание вакансии: ${params.vacancyText || 'нет'}`,
+        `Резюме AI-кандидата: ${params.resumeText || 'нет'}`,
+        `Уже добавленные вопросы пользователя: ${
+          params.existingQuestions.join(' | ') || 'нет'
+        }`,
+      ].join('\n'),
+      maxOutputTokens: Math.max(500, params.questionsCount * 130),
+      kind: 'question_gen',
+      context: {
+        userId: params.userId ?? null,
+        anonymousSessionId: params.anonymousSessionId,
+        interviewSessionId: null,
+      },
+    });
+    const questions = Array.isArray(raw.questions)
+      ? raw.questions
+          .map((item) => (typeof item === 'string' ? item.trim() : ''))
+          .filter(Boolean)
+      : [];
+    const uniqueQuestions = Array.from(
+      new Map(
+        questions.map((question) => [
+          canonicalInterviewQuestionKey(question),
+          question,
+        ])
+      ).values()
+    );
+    const existingQuestionKeys = new Set(
+      params.existingQuestions.map(canonicalInterviewQuestionKey)
+    );
+    if (
+      uniqueQuestions.length !== params.questionsCount ||
+      uniqueQuestions.some((question) =>
+        existingQuestionKeys.has(canonicalInterviewQuestionKey(question))
+      )
+    ) {
+      throw apiError('E_UPSTREAM', 'Провайдер не вернул полный план интервью');
+    }
+    return { questions: uniqueQuestions };
+  }
+
   async generateQuestion(
     params: GenerateQuestionParams
   ): Promise<{
@@ -613,7 +781,7 @@ export class OpenAiInterviewEngine implements InterviewEngine {
     if (isInterviewerTraining) {
       const raw = await this.requestJson({
         instruction:
-          'Ты редактор сценария Гласно. Сгенерируй короткую стартовую или переходную реплику AI-кандидата для тренировки интервьюера. Реплика должна дать пользователю повод задать следующий вопрос, но не проводить интервью за него. Не повторяй предыдущие реплики. Верни строго JSON вида {"question":"..."}',
+          'Ты редактор сценария Гласно. Сформулируй пример основного вопроса для пользователя-интервьюера по текущему пункту плана. Это внутренняя подсказка: AI-кандидат не должен произносить её и не должен начинать разговор сам. Вопрос должен проверять роль, вакансию или опыт кандидата, быть кратким и допускать уточнения. Не повторяй предыдущие вопросы. Верни строго JSON вида {"question":"..."}',
         userText: `${sessionContext(params)}\n\nИстория:\n${formatTurns(params.turns, 'interviewer')}`,
         maxOutputTokens: 220,
         kind: 'question_gen',
@@ -675,66 +843,205 @@ export class OpenAiInterviewEngine implements InterviewEngine {
   async generateQuestionHints(
     params: GenerateQuestionHintsParams
   ): Promise<QuestionHintDetails> {
-    const isInterviewerTraining =
-      readTrainingMode(params.session) === 'interviewer';
+    if (readTrainingMode(params.session) === 'interviewer') {
+      return this.generateInterviewerQuestionHints(params);
+    }
+
+    const exampleContext = params.turn.question.trim();
     const raw = await this.requestJson({
-      instruction: isInterviewerTraining
-        ? 'Ты тренер интервьюеров Гласно. Сгенерируй подсказки к текущему этапу интервью, чтобы пользователь лучше провёл разговор с AI-кандидатом. Пиши по-русски, конкретно и кратко. Подсказывай, что проверить дальше, какие уточнения задать и каких рискованных формулировок избегать. Не пиши готовые ответы кандидата. Верни строго JSON вида {"focus":"...","answerPlan":["..."],"keyDefinitions":["..."],"sampleAnswer":"..."}. answerPlan: 3–5 коротких действий интервьюера. keyDefinitions: 0–4 коротких определения методик интервью. sampleAnswer: 2–4 предложения с примером хорошего вопроса интервьюера.'
-        : 'Ты карьерный тренер Гласно. Сгенерируй подсказки к ТЕКУЩЕМУ вопросу интервью, чтобы кандидат понял, о чём говорить, но не получил нечестную шпаргалку. ' +
-          'Пиши по-русски, конкретно и кратко. Обязательно привязывайся к вопросу, роли, вакансии и резюме, если они есть. ' +
-          'Не выдумывай работодателей, годы опыта, метрики, проекты, технологии и факты, которых нет в контексте. Если конкретики нет — предложи кандидату подставить свой пример или свою метрику. ' +
-          'Верни строго JSON вида {"focus":"...","answerPlan":["..."],"keyDefinitions":["..."],"sampleAnswer":"..."}. ' +
-          'answerPlan: 3–5 коротких тезисов. keyDefinitions: 0–4 коротких определения терминов из вопроса. sampleAnswer: 2–4 предложения от первого лица. ' +
-          'sampleAnswer должен быть законченным: не заканчивай текст многоточием, оборванной фразой или незавершённым списком.',
+      instruction:
+        'Ты карьерный тренер Гласно. Сгенерируй подсказки к ТЕКУЩЕМУ вопросу интервью, чтобы кандидат понял, о чём говорить, но не получил нечестную шпаргалку. ' +
+        'Пиши по-русски, конкретно и кратко. Обязательно привязывайся к вопросу, роли, вакансии и резюме, если они есть. ' +
+        'Не выдумывай работодателей, годы опыта, метрики, проекты, технологии и факты, которых нет в контексте. Если конкретики нет — предложи кандидату подставить свой пример или свою метрику. ' +
+        'Верни строго JSON вида {"focus":"...","answerPlan":["..."],"keyDefinitions":["..."],"example":{"answer":"..."}}. ' +
+        'answerPlan: 3–5 коротких тезисов. keyDefinitions: 0–4 коротких определения терминов из вопроса. example.answer: 2–4 предложения от первого лица. ' +
+        'Пример должен быть законченным: не заканчивай текст многоточием, оборванной фразой или незавершённым списком.',
       userText: [
-        sessionContextForConverse(params.session),
+        sessionContextForHints(params.session),
         '',
-        `${isInterviewerTraining ? 'Текущий этап' : 'Текущий вопрос'}: ${params.turn.question}`,
+        `Текущий вопрос: ${params.turn.question}`,
         '',
-        `История интервью:\n${formatTurns(params.turns, readTrainingMode(params.session))}`,
+        `Диалог по текущему вопросу:\n${formatDialogue(params.dialogue, 'candidate')}`,
+        '',
+        `История интервью:\n${formatTurns(params.turns, 'candidate')}`,
       ].join('\n'),
       maxOutputTokens: 760,
       kind: 'question_hints',
       context: usageContext(params.session),
     });
 
-    return normalizeQuestionHintDetails(raw);
+    return (
+      normalizeQuestionHintDetails(raw, {
+        trainingMode: 'candidate',
+        context: exampleContext,
+      }) ??
+      normalizeQuestionHintDetails(
+        {},
+        { trainingMode: 'candidate', context: exampleContext }
+      )!
+    );
   }
 
-  async generateSampleAnswerHint(
-    params: GenerateSampleAnswerHintParams
-  ): Promise<{ sampleAnswer: string }> {
-    const isInterviewerTraining =
-      readTrainingMode(params.session) === 'interviewer';
-    const plannedTurnLabel = isInterviewerTraining
-      ? 'Плановый этап'
-      : 'Плановый вопрос';
-    const targetLabel = isInterviewerTraining
-      ? 'Последний вопрос пользователя-интервьюера'
-      : 'Текущий уточняющий вопрос для примера ответа';
+  async generateHintExample(
+    params: GenerateHintExampleParams
+  ): Promise<InterviewHintExample> {
+    if (readTrainingMode(params.session) === 'interviewer') {
+      return this.generateInterviewerQuestionExample(params);
+    }
+
     const raw = await this.requestJson({
-      instruction: isInterviewerTraining
-        ? 'Ты тренер интервьюеров Гласно. Обнови только краткий пример следующего вопроса пользователя-интервьюера с учётом последнего ответа AI-кандидата. Не отвечай за кандидата и не продолжай интервью самостоятельно. Пиши по-русски, 1–2 предложения. Верни строго JSON вида {"sampleAnswer":"..."}.'
-        : 'Ты карьерный тренер Гласно. Обнови только краткий пример ответа для последнего уточняющего вопроса интервьюера. ' +
-          'Основной плановый вопрос остаётся прежним, поэтому не меняй тему шире уточнения. ' +
-          'Пиши по-русски, 2–4 предложения от первого лица. Не выдумывай работодателей, годы опыта, метрики, проекты, технологии и факты, которых нет в контексте. ' +
-          'Если конкретики нет — формулируй пример так, чтобы кандидат мог подставить свой опыт. Ответ должен быть законченным, без многоточия в конце и без оборванной мысли. Верни строго JSON вида {"sampleAnswer":"..."}.',
+      instruction:
+        'Ты карьерный тренер Гласно. Обнови только краткий пример ответа для текущего вопроса интервьюера. ' +
+        'Основной плановый вопрос остаётся прежним, поэтому не меняй тему шире уточнения. ' +
+        'Пиши по-русски, 2–4 предложения от первого лица. Не выдумывай работодателей, годы опыта, метрики, проекты, технологии и факты, которых нет в контексте. ' +
+        'Если конкретики нет — формулируй пример так, чтобы кандидат мог подставить свой опыт. Ответ должен быть законченным, без многоточия в конце и без оборванной мысли. Верни строго JSON вида {"example":{"answer":"..."}}.',
       userText: [
-        sessionContextForConverse(params.session),
+        sessionContextForHints(params.session),
         '',
-        `${plannedTurnLabel}: ${params.turn.question}`,
-        `${targetLabel}: ${params.targetQuestion}`,
+        `Плановый вопрос: ${params.turn.question}`,
+        `Текущий вопрос для примера: ${params.exampleContext}`,
         '',
-        `Диалог по текущему turn:\n${formatDialogue(params.dialogue, readTrainingMode(params.session))}`,
+        `Диалог по текущему вопросу:\n${formatDialogue(params.dialogue, 'candidate')}`,
         '',
-        `История интервью:\n${formatTurns(params.turns, readTrainingMode(params.session))}`,
+        `История интервью:\n${formatTurns(params.turns, 'candidate')}`,
       ].join('\n'),
       maxOutputTokens: 360,
       kind: 'question_sample_hint',
       context: usageContext(params.session),
     });
 
-    return normalizeSampleAnswerHint(raw);
+    return normalizeCandidateAnswerExample(raw, params.exampleContext);
+  }
+
+  private async generateInterviewerQuestionHints(
+    params: GenerateQuestionHintsParams
+  ): Promise<QuestionHintDetails> {
+    const exampleContext = compactGeneratedText(
+      params.turn.question,
+      'Текущий этап интервью.',
+      1_200
+    );
+    const fallbackQuestion = fallbackInterviewerQuestion(
+      params.session,
+      params.turn
+    );
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const raw = await this.requestJson({
+        instruction:
+          'Ты тренер интервьюеров Гласно. Сгенерируй подсказки к текущему этапу интервью, чтобы пользователь лучше провёл разговор с AI-кандидатом. ' +
+          'Пиши по-русски, конкретно и кратко. Подсказывай, что проверить дальше, какие уточнения задать и каких рискованных формулировок избегать. ' +
+          'Не пиши готовый ответ кандидата, не отвечай от первого лица и не продолжай диалог за AI-кандидата. ' +
+          'Верни строго JSON вида {"focus":"...","answerPlan":["..."],"keyDefinitions":["..."],"example":{"mainQuestion":"...?","followUps":["...?"]}}. ' +
+          'answerPlan: 3–5 коротких действий интервьюера. keyDefinitions: 0–4 коротких определения методик интервью. ' +
+          'example.mainQuestion — ровно один прямой вопрос пользователя-интервьюера. example.followUps — от 0 до 2 прямых уточняющих вопросов. ' +
+          (attempt > 0
+            ? 'Предыдущий результат не прошёл проверку: верни только вопросы, без ответа кандидата и без фраз от первого лица.'
+            : ''),
+        userText: [
+          sessionContextForHints(params.session),
+          '',
+          `Плановый этап: ${params.turn.question}`,
+          `Контекст для примера вопроса: ${exampleContext}`,
+          '',
+          `Диалог по текущему этапу:\n${formatDialogue(params.dialogue, 'interviewer')}`,
+          '',
+          `История интервью:\n${formatTurns(params.turns, 'interviewer')}`,
+        ].join('\n'),
+        maxOutputTokens: 760,
+        kind: 'question_hints',
+        context: usageContext(params.session),
+      });
+      const details = normalizeQuestionHintDetails(raw, {
+        trainingMode: 'interviewer',
+        context: exampleContext,
+        fallbackQuestion,
+      });
+      if (details) return details;
+
+      logger.warn(
+        {
+          interviewSessionId: params.session.id,
+          trainingMode: 'interviewer',
+          attempt: attempt + 1,
+        },
+        'Invalid interviewer hint example'
+      );
+    }
+
+    return {
+      focus: 'Проверяет, насколько вопрос раскрывает опыт и личный вклад кандидата.',
+      answerPlan: [
+        'Начните с открытого вопроса по текущей теме.',
+        'Уточните личный вклад кандидата.',
+        'Попросите объяснить решение и результат.',
+      ],
+      keyDefinitions: [],
+      example: {
+        kind: 'interviewer_question',
+        context: exampleContext,
+        text: fallbackQuestion,
+        followUps: [],
+      },
+    };
+  }
+
+  private async generateInterviewerQuestionExample(
+    params: GenerateHintExampleParams
+  ): Promise<Extract<InterviewHintExample, { kind: 'interviewer_question' }>> {
+    const exampleContext = compactGeneratedText(
+      params.exampleContext,
+      params.turn.question,
+      1_200
+    );
+    const fallbackQuestion = fallbackInterviewerQuestion(
+      params.session,
+      params.turn
+    );
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const raw = await this.requestJson({
+        instruction:
+          'Ты тренер интервьюеров Гласно. Обнови пример следующего вопроса пользователя-интервьюера с учётом последней реплики AI-кандидата. ' +
+          'Не отвечай за кандидата, не пересказывай его реплику и не продолжай диалог самостоятельно. ' +
+          'Верни строго JSON вида {"example":{"mainQuestion":"...?","followUps":["...?"]}}. ' +
+          'example.mainQuestion — ровно один прямой вопрос пользователя-интервьюера. example.followUps — от 0 до 2 прямых уточняющих вопросов. ' +
+          (attempt > 0
+            ? 'Предыдущий результат не прошёл проверку: верни только вопросы, без ответа кандидата и без фраз от первого лица.'
+            : ''),
+        userText: [
+          sessionContextForHints(params.session),
+          '',
+          `Плановый этап: ${params.turn.question}`,
+          `Последняя реплика AI-кандидата: ${exampleContext}`,
+          '',
+          `Диалог по текущему этапу:\n${formatDialogue(params.dialogue, 'interviewer')}`,
+          '',
+          `История интервью:\n${formatTurns(params.turns, 'interviewer')}`,
+        ].join('\n'),
+        maxOutputTokens: 420,
+        kind: 'question_sample_hint',
+        context: usageContext(params.session),
+      });
+      const example = normalizeInterviewerQuestionExample(raw.example, exampleContext);
+      if (example) return example;
+
+      logger.warn(
+        {
+          interviewSessionId: params.session.id,
+          trainingMode: 'interviewer',
+          attempt: attempt + 1,
+        },
+        'Invalid interviewer hint example'
+      );
+    }
+
+    return {
+      kind: 'interviewer_question',
+      context: exampleContext,
+      text: fallbackQuestion,
+      followUps: [],
+    };
   }
 
   async evaluateAnswer(params: EvaluateAnswerParams): Promise<{

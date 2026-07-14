@@ -19,6 +19,13 @@ describe('interview session completion flow', () => {
     expect(source).toContain('generateReport({ skipFlush: true })');
   });
 
+  it('uses the explicit finish endpoint when the dock end button is pressed', () => {
+    expect(source).toContain(
+      '`/api/interview/sessions/${sessionId.value}/finish`'
+    );
+    expect(source).toContain('finishInterviewEarly');
+  });
+
   it('auto-starts report generation for completed sessions without the intermediate CTA screen', () => {
     expect(source).toContain('ReportGenerationPanel');
     expect(source).toContain('reportGenerationAutoStarted');

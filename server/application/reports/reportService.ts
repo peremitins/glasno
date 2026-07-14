@@ -125,7 +125,10 @@ export class ReportService {
       if (answerCoverage.answered === 0) {
         const saved = await this.deps.reportRepository.saveCompleted(
           reportId,
-          buildZeroAnswerAnalysis(answerCoverage.reportTurns)
+          buildZeroAnswerAnalysis(
+            answerCoverage.reportTurns,
+            session.trainingMode
+          )
         );
         return saved;
       }
@@ -134,7 +137,11 @@ export class ReportService {
         session,
         turns: sanitizedTurns,
       });
-      const adjustedAnalysis = applyAnswerCoverage(analysis, answerCoverage);
+      const adjustedAnalysis = applyAnswerCoverage(
+        analysis,
+        answerCoverage,
+        session.trainingMode
+      );
       const saved = await this.deps.reportRepository.saveCompleted(
         reportId,
         adjustedAnalysis
@@ -229,6 +236,12 @@ const DEFAULT_WHAT_WORKED = 'Сильных элементов в ответе �
 const DEFAULT_WHAT_WEAK = 'Критичных слабых мест не выявлено.';
 const DEFAULT_STRONGER_STAR =
   'Опишите контекст ситуации, цель, свои действия и измеримый результат реальными фактами из опыта.';
+const DEFAULT_INTERVIEWER_WHAT_WORKED =
+  'Сильных элементов в ведении интервью не выявлено.';
+const DEFAULT_INTERVIEWER_WHAT_WEAK =
+  'Критичных слабых мест в ведении интервью не выявлено.';
+const DEFAULT_INTERVIEWER_STRONGER_QUESTION =
+  'Сформулируйте один основной вопрос и добавьте уточнение, которое проверит конкретный опыт, личный вклад и результат кандидата.';
 
 interface AnswerCoverage {
   mainTurns: InterviewTurnRecord[];
@@ -281,8 +294,30 @@ function calculateAnswerCoverage(
 }
 
 function buildZeroAnswerAnalysis(
-  reportTurns: InterviewTurnRecord[]
+  reportTurns: InterviewTurnRecord[],
+  trainingMode: InterviewTrainingMode = 'candidate'
 ): ReportAnalysis {
+  if (trainingMode === 'interviewer') {
+    return {
+      overallScore: 0,
+      verdict:
+        'Интервью не состоялось: интервьюер не задал ни одного содержательного вопроса.',
+      summary:
+        'Диалог с AI-кандидатом не начался, поэтому оценить качество вопросов, уточнений, структуру и подачу интервьюера невозможно.',
+      criteria: { ...ZERO_CRITERIA },
+      recommendations: {
+        topFixes: [
+          'Начать с короткого открытого вопроса о релевантном опыте кандидата.',
+          'Заранее определить компетенции и факты, которые нужно проверить.',
+          'Использовать уточнения, чтобы отделять общий ответ от реального вклада кандидата.',
+        ],
+      },
+      questionAnalysis: buildFallbackQuestionAnalysis(
+        reportTurns,
+        trainingMode
+      ),
+    };
+  }
   return {
     overallScore: 0,
     verdict: 'Собеседование не состоялось из-за отсутствия содержательных ответов.',
@@ -296,23 +331,30 @@ function buildZeroAnswerAnalysis(
         'Добавлять конкретные примеры, личную роль, цифры и результат.',
       ],
     },
-    questionAnalysis: buildFallbackQuestionAnalysis(reportTurns),
+    questionAnalysis: buildFallbackQuestionAnalysis(reportTurns, trainingMode),
   };
 }
 
 function applyAnswerCoverage(
   analysis: ReportAnalysis,
-  coverage: AnswerCoverage
+  coverage: AnswerCoverage,
+  trainingMode: InterviewTrainingMode = 'candidate'
 ): ReportAnalysis {
   const criteria = scaleCriteria(analysis.criteria, coverage.ratio);
   const normalizedQuestionAnalysis = normalizeQuestionAnalysis(
     analysis.questionAnalysis,
-    coverage.reportTurns
+    coverage.reportTurns,
+    trainingMode
   );
-  const fallbackAnalysis = buildFallbackQuestionAnalysis(coverage.reportTurns);
+  const fallbackAnalysis = buildFallbackQuestionAnalysis(
+    coverage.reportTurns,
+    trainingMode
+  );
   const skippedSummary =
     coverage.answered < coverage.expected
-      ? `Зачтено ${coverage.answered} из ${coverage.expected} содержательных ответов.`
+      ? trainingMode === 'interviewer'
+        ? `Обсуждено ${coverage.answered} из ${coverage.expected} пунктов плана.`
+        : `Зачтено ${coverage.answered} из ${coverage.expected} содержательных ответов.`
       : '';
 
   return {
@@ -328,9 +370,13 @@ function applyAnswerCoverage(
     recommendations: {
       topFixes: prependUnique(
         coverage.answered < coverage.expected
-          ? [
-              `Ответить на все вопросы интервью: сейчас зачтено ${coverage.answered} из ${coverage.expected}.`,
-            ]
+          ? trainingMode === 'interviewer'
+            ? [
+                `Пройти весь план интервью: сейчас обсуждено ${coverage.answered} из ${coverage.expected} пунктов.`,
+              ]
+            : [
+                `Ответить на все вопросы интервью: сейчас зачтено ${coverage.answered} из ${coverage.expected}.`,
+              ]
           : [],
         analysis.recommendations.topFixes
       ).slice(0, 5),
@@ -358,7 +404,8 @@ function scaleScore(score: number, ratio: number): number {
 }
 
 function buildFallbackQuestionAnalysis(
-  turns: InterviewTurnRecord[]
+  turns: InterviewTurnRecord[],
+  trainingMode: InterviewTrainingMode = 'candidate'
 ): ReportQuestionAnalysis[] {
   const sourceTurns = turns.length
     ? turns
@@ -374,6 +421,25 @@ function buildFallbackQuestionAnalysis(
   return sourceTurns.map((turn) => {
     const answer = normalizeAssessableAnswer(turn.answerTranscript);
     if (!answer) {
+      if (trainingMode === 'interviewer') {
+        return {
+          turnId: turn.id,
+          kind: turn.kind,
+          question: turn.question,
+          answer: 'Вопрос не задан.',
+          criteria: cloneCriteria(ZERO_CRITERIA),
+          whatWorked:
+            'Оценить сильные стороны невозможно: разговора по этому пункту не было.',
+          whatWeak:
+            'Пункт плана не раскрыт — AI-кандидат не получил вопроса и не смог показать свой опыт.',
+          modelAnswer:
+            'Сформулируйте один основной вопрос, который проверяет конкретную компетенцию или факт, а затем задайте уточнение по реальному вкладу и результату.',
+          strongerAnswerStar:
+            'Начните с открытого вопроса, выслушайте ответ и уточните контекст, личную роль, решение и измеримый результат.',
+          nextPractice:
+            'Сформулируйте основной вопрос и два возможных уточнения к нему.',
+        };
+      }
       return {
         turnId: turn.id,
         kind: turn.kind,
@@ -390,6 +456,25 @@ function buildFallbackQuestionAnalysis(
           'Подготовьте пример по STAR: ситуация, задача, действие, результат. Даже короткий ответ должен показывать контекст, ваш вклад и итог.',
         nextPractice:
           'Запишите 2-3 тезиса к этому вопросу и проговорите ответ вслух за 60-90 секунд.',
+      };
+    }
+
+    if (trainingMode === 'interviewer') {
+      return {
+        turnId: turn.id,
+        kind: turn.kind,
+        question: turn.question,
+        answer: formatInterviewerDialogue(turn.metadata) || answer,
+        criteria: null,
+        whatWorked:
+          'Разговор сохранён, но отдельный разбор этого пункта не был сформирован.',
+        whatWeak:
+          'Для точной оценки качества вопроса и уточнений нужно переформировать отчёт.',
+        modelAnswer: '',
+        strongerAnswerStar:
+          'Уточните контекст, личный вклад кандидата, принятое решение и измеримый результат.',
+        nextPractice:
+          'Переформулируйте основной вопрос и подготовьте два уточнения к возможному общему ответу.',
       };
     }
 
@@ -412,20 +497,53 @@ function buildFallbackQuestionAnalysis(
   });
 }
 
+function formatInterviewerDialogue(metadata: unknown): string {
+  if (!metadata || typeof metadata !== 'object') return '';
+  const dialogue = (metadata as { dialogue?: unknown }).dialogue;
+  if (!Array.isArray(dialogue)) return '';
+  return dialogue
+    .map((item) => {
+      if (!item || typeof item !== 'object') return '';
+      const message = item as { role?: unknown; content?: unknown };
+      if (typeof message.content !== 'string' || !message.content.trim()) {
+        return '';
+      }
+      const author = message.role === 'interviewer' ? 'AI-кандидат' : 'Вы';
+      return `${author}: ${message.content.trim()}`;
+    })
+    .filter(Boolean)
+    .join('\n');
+}
+
 function normalizeQuestionAnalysis(
   current: ReportQuestionAnalysis[],
-  turns: InterviewTurnRecord[]
+  turns: InterviewTurnRecord[],
+  trainingMode: InterviewTrainingMode = 'candidate'
 ): ReportQuestionAnalysis[] {
   const turnsById = new Map(turns.map((turn) => [turn.id, turn]));
+  const whatWorkedFallback =
+    trainingMode === 'interviewer'
+      ? DEFAULT_INTERVIEWER_WHAT_WORKED
+      : DEFAULT_WHAT_WORKED;
+  const whatWeakFallback =
+    trainingMode === 'interviewer'
+      ? DEFAULT_INTERVIEWER_WHAT_WEAK
+      : DEFAULT_WHAT_WEAK;
   return current.map((item) => {
     const turn = turnsById.get(item.turnId);
     return {
       ...item,
       kind: item.kind ?? turn?.kind ?? 'main',
       criteria: item.criteria ?? null,
-      whatWorked: normalizeReportInsightText(item.whatWorked, DEFAULT_WHAT_WORKED),
-      whatWeak: normalizeReportInsightText(item.whatWeak, DEFAULT_WHAT_WEAK),
-      strongerAnswerStar: normalizeStrongerStar(item.strongerAnswerStar),
+      whatWorked: normalizeReportInsightText(
+        item.whatWorked,
+        whatWorkedFallback
+      ),
+      whatWeak: normalizeReportInsightText(item.whatWeak, whatWeakFallback),
+      strongerAnswerStar: normalizeStrongerStar(
+        item.strongerAnswerStar,
+        trainingMode
+      ),
     };
   });
 }
@@ -435,9 +553,16 @@ function normalizeReportInsightText(value: string, fallback: string): string {
   return text || fallback;
 }
 
-function normalizeStrongerStar(value: string): string {
+function normalizeStrongerStar(
+  value: string,
+  trainingMode: InterviewTrainingMode = 'candidate'
+): string {
   const text = value.trim();
-  if (!text || isBrokenStarRecommendation(text)) return DEFAULT_STRONGER_STAR;
+  if (!text || isBrokenStarRecommendation(text)) {
+    return trainingMode === 'interviewer'
+      ? DEFAULT_INTERVIEWER_STRONGER_QUESTION
+      : DEFAULT_STRONGER_STAR;
+  }
   return text;
 }
 
@@ -493,10 +618,11 @@ function sanitizeReportErrorMessage(message: string | null): string | null {
 }
 
 function sanitizeReportQuestionAnalysis(
-  items: ReportQuestionAnalysis[] | null
+  items: ReportQuestionAnalysis[] | null,
+  trainingMode: InterviewTrainingMode
 ): ReportQuestionAnalysis[] | null {
   if (!items) return items;
-  return normalizeQuestionAnalysis(items, []);
+  return normalizeQuestionAnalysis(items, [], trainingMode);
 }
 
 export function toReportDto(
@@ -513,7 +639,10 @@ export function toReportDto(
     summary: report.summary,
     criteria: report.criteria,
     recommendations: report.recommendations,
-    questionAnalysis: sanitizeReportQuestionAnalysis(report.questionAnalysis),
+    questionAnalysis: sanitizeReportQuestionAnalysis(
+      report.questionAnalysis,
+      trainingMode
+    ),
     errorMessage: sanitizeReportErrorMessage(report.errorMessage),
     model: report.model,
     createdAt: toIso(report.createdAt),

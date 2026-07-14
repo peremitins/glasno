@@ -101,7 +101,8 @@ export const REPORT_JSON_SCHEMA = {
 // транскрипта по turnId, чтобы в отчёте были исходные формулировки из БД.
 export function attachQuestionsToAnalysis(
   parsed: Record<string, unknown>,
-  turns: AnalyzeReportParams['turns']
+  turns: AnalyzeReportParams['turns'],
+  trainingMode: InterviewTrainingMode = 'candidate'
 ): Record<string, unknown> {
   if (!Array.isArray(parsed.questionAnalysis)) return parsed;
 
@@ -120,7 +121,12 @@ export function attachQuestionsToAnalysis(
       return {
         ...record,
         question: turn?.question ?? '',
-        answer: turn?.answerTranscript ?? '',
+        answer:
+          trainingMode === 'interviewer' && turn
+            ? formatInterviewerDialogue(turn.metadata) ||
+              turn.answerTranscript ||
+              ''
+            : turn?.answerTranscript ?? '',
       };
     }),
   };
@@ -202,7 +208,8 @@ export class OpenAiReportEngine implements ReportEngine {
 
       const parsed = attachQuestionsToAnalysis(
         extractReportJson(response),
-        params.turns
+        params.turns,
+        params.session.trainingMode
       );
       return ReportAnalysisDto.parse({
         ...parsed,
@@ -224,10 +231,12 @@ export function buildInstruction(
     return [
       'Ты тренер интервьюеров Гласно. Разбери завершённую тренировку, где пользователь проводил интервью, а AI играл кандидата.',
       'Оцени три критерия от 0 до 100:',
-      'substance (Качество проверки) — проверил ли пользователь релевантные компетенции, опыт, мотивацию и факты по вакансии, а не только общее впечатление.',
+      'substance (Качество проверки) — проверил ли пользователь релевантные компетенции, опыт, мотивацию и факты по вакансии, вскрыл ли противоречия и собрал ли достаточно доказательств для решения по кандидату, а не только общее впечатление.',
       'structure (Структура) — была ли понятная структура интервью: вступление, ключевые блоки, уточняющие вопросы, логичный переход между темами и завершение.',
       'delivery (Подача) — ясность, уважительный тон, candidate experience, отсутствие рискованных или дискриминационных формулировок.',
       'Оцени именно пользователя-интервьюера. Ответы AI-кандидата используй только как контекст для качества вопросов пользователя.',
+      'Проверь, можно ли было обосновать решение по кандидату собранными в разговоре фактами.',
+      'Отдельно учитывай качество уточнений: реагировал ли интервьюер на общие, чрезмерно уверенные или противоречивые ответы и отделял ли личный вклад кандидата от вклада команды.',
       'Для каждого основного и уточняющего вопроса из транскрипта верни отдельный элемент questionAnalysis. Сохраняй исходные turnId и kind.',
       'Для каждого questionAnalysis обязательно проставь criteria по тем же трём критериям от 0 до 100.',
       'Если пользователь почти не задавал вопросов или не получил факты, ставь низкие substance и structure и объясняй, чего не хватило.',
@@ -285,7 +294,34 @@ type ReportTranscriptTurn = Pick<
   | 'question'
   | 'answerTranscript'
   | 'followUpForTurnId'
->;
+> & { metadata?: unknown };
+
+function readDialogue(metadata: unknown): Array<{
+  role: 'user' | 'interviewer';
+  content: string;
+}> {
+  if (!metadata || typeof metadata !== 'object') return [];
+  const dialogue = (metadata as { dialogue?: unknown }).dialogue;
+  if (!Array.isArray(dialogue)) return [];
+
+  return dialogue.flatMap((item) => {
+    if (!item || typeof item !== 'object') return [];
+    const raw = item as { role?: unknown; content?: unknown };
+    if (raw.role !== 'user' && raw.role !== 'interviewer') return [];
+    const content = typeof raw.content === 'string' ? raw.content.trim() : '';
+    return content ? [{ role: raw.role, content }] : [];
+  });
+}
+
+function formatInterviewerDialogue(metadata: unknown): string {
+  return readDialogue(metadata)
+    .map((message) =>
+      message.role === 'user'
+        ? `Вы: ${message.content}`
+        : `AI-кандидат: ${message.content}`
+    )
+    .join('\n');
+}
 
 export function buildReportTranscript(
   turns: ReportTranscriptTurn[],
@@ -297,6 +333,15 @@ export function buildReportTranscript(
       (turn) => {
         const kindLabel =
           turn.kind === 'clarification' ? 'уточняющий' : 'основной';
+        const dialogue = isInterviewerTraining
+          ? readDialogue(turn.metadata)
+              .map((message) =>
+                message.role === 'user'
+                  ? `Пользователь-интервьюер: ${message.content}`
+                  : `AI-кандидат: ${message.content}`
+              )
+              .join('\n')
+          : '';
         return [
           `turnId=${turn.id}`,
           `kind=${turn.kind}`,
@@ -305,7 +350,14 @@ export function buildReportTranscript(
             : '',
           `${isInterviewerTraining ? 'Этап' : 'Вопрос'} ${turn.index} (${kindLabel}): ${turn.question}`,
           isInterviewerTraining
-            ? `Реплики пользователя-интервьюера: ${turn.answerTranscript || 'Реплики не предоставлены.'}`
+            ? [
+                `Реплики пользователя-интервьюера: ${
+                  turn.answerTranscript || 'Реплики не предоставлены.'
+                }`,
+                `Полный диалог по этапу:\n${
+                  dialogue || 'Полный диалог не сохранён.'
+                }`,
+              ].join('\n')
             : `Ответ кандидата: ${turn.answerTranscript || 'Ответ не предоставлен.'}`,
         ]
           .filter(Boolean)

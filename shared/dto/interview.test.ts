@@ -50,6 +50,73 @@ describe('interview DTO hints', () => {
     expect(parsed.detailed?.sampleAnswerQuestion).toContain('TypeScript');
   });
 
+  it('accepts an interviewer question example and rejects candidate prose in its place', () => {
+    const base = {
+      structure: 'Проверьте конкретный опыт.',
+      bullets: ['Начните с открытого вопроса.'],
+      terms: [],
+      avoid: ['Не подсказывайте кандидату ответ.'],
+      strongDirection: 'Проверьте личный вклад кандидата.',
+      detailed: {
+        focus: 'Проверяет реальный опыт кандидата.',
+        answerPlan: ['Задать основной вопрос.', 'Уточнить личный вклад.'],
+        keyDefinitions: [],
+      },
+    };
+
+    expect(() =>
+      QuestionHintPackDto.parse({
+        ...base,
+        detailed: {
+          ...base.detailed,
+          example: {
+            kind: 'interviewer_question',
+            context: 'Текущий плановый вопрос',
+            text: 'Какую техническую проблему вы решали лично?',
+            followUps: [
+              'Как вы выбрали подход?',
+              'Как измерили результат?',
+            ],
+          },
+        },
+      })
+    ).not.toThrow();
+
+    expect(() =>
+      QuestionHintPackDto.parse({
+        ...base,
+        detailed: {
+          ...base.detailed,
+          example: {
+            kind: 'interviewer_question',
+            context: 'Текущий плановый вопрос',
+            text: 'Чаще всего я беру React и TypeScript, потому что так удобнее.',
+            followUps: [],
+          },
+        },
+      })
+    ).toThrow();
+
+    expect(() =>
+      QuestionHintPackDto.parse({
+        ...base,
+        detailed: {
+          ...base.detailed,
+          example: {
+            kind: 'interviewer_question',
+            context: 'Текущий плановый вопрос',
+            text: 'Какую техническую проблему вы решали лично?',
+            followUps: [
+              'Как вы выбрали подход?',
+              'Как измерили результат?',
+              'Какую роль сыграла команда?',
+            ],
+          },
+        },
+      })
+    ).toThrow();
+  });
+
   it('validates hint generation requests by turn id', () => {
     expect(
       GenerateInterviewHintsRequestDto.parse({ turnId: 'turn_1' })
@@ -91,6 +158,51 @@ describe('interview DTO hints', () => {
     expect(parsed.candidatePersona).toBe('strong_brief');
     expect(parsed.candidateDifficulty).toBe('realistic');
     expect(parsed.resumeText).toContain('Алексей');
+  });
+
+  it('accepts a planless free interviewer-training scenario', () => {
+    const parsed = CreateInterviewSessionRequestDto.parse({
+      trainingMode: 'interviewer',
+      source: {
+        type: 'profession',
+        role: 'Frontend-разработчик',
+      },
+      questionSourceMode: 'free',
+    });
+
+    expect(parsed.questionSourceMode).toBe('free');
+  });
+
+  it('rejects the free scenario when the user is the candidate', () => {
+    expect(() =>
+      CreateInterviewSessionRequestDto.parse({
+        trainingMode: 'candidate',
+        source: { type: 'profession', role: 'Frontend-разработчик' },
+        questionSourceMode: 'free',
+      })
+    ).toThrow();
+  });
+
+  it('rejects a custom scenario without user questions', () => {
+    expect(() =>
+      CreateInterviewSessionRequestDto.parse({
+        trainingMode: 'interviewer',
+        source: { type: 'profession', role: 'Frontend-разработчик' },
+        questionSourceMode: 'custom',
+        customQuestionsText: '   ',
+      })
+    ).toThrow('Добавьте хотя бы один пользовательский вопрос');
+  });
+
+  it('rejects a custom scenario whose text is too short to become a question', () => {
+    expect(() =>
+      CreateInterviewSessionRequestDto.parse({
+        trainingMode: 'interviewer',
+        source: { type: 'profession', role: 'Frontend-разработчик' },
+        questionSourceMode: 'custom',
+        customQuestionsText: 'abc',
+      })
+    ).toThrow('не короче 8 символов');
   });
 
   it('exposes interviewer training profile on session responses', () => {

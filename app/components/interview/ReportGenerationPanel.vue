@@ -1,14 +1,19 @@
 <script setup lang="ts">
+import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
+import type { InterviewTrainingMode } from '@/shared/dto';
 import ButtonLoader from '@/app/components/design/ButtonLoader.vue';
 
-withDefaults(
+const props = withDefaults(
   defineProps<{
     errorMessage?: string | null;
     retryLoading?: boolean;
+    trainingMode?: InterviewTrainingMode;
   }>(),
   {
+    errorMessage: null,
     retryLoading: false,
+    trainingMode: 'candidate',
   }
 );
 
@@ -18,11 +23,36 @@ defineEmits<{
 
 const { t } = useI18n();
 
-const generationSteps = [
-  'interview.session.reportGeneration.steps.answers',
-  'interview.session.reportGeneration.steps.criteria',
-  'interview.session.reportGeneration.steps.recommendations',
-];
+const isInterviewerTraining = computed(
+  () => props.trainingMode === 'interviewer'
+);
+const generationTitle = computed(() =>
+  t(
+    isInterviewerTraining.value
+      ? 'interview.session.reportGeneration.interviewer.title'
+      : 'interview.session.reportGeneration.title'
+  )
+);
+const generationSubtitle = computed(() =>
+  t(
+    isInterviewerTraining.value
+      ? 'interview.session.reportGeneration.interviewer.subtitle'
+      : 'interview.session.reportGeneration.subtitle'
+  )
+);
+const generationSteps = computed(() =>
+  isInterviewerTraining.value
+    ? [
+        'interview.session.reportGeneration.interviewer.steps.dialogue',
+        'interview.session.reportGeneration.interviewer.steps.criteria',
+        'interview.session.reportGeneration.interviewer.steps.recommendations',
+      ]
+    : [
+        'interview.session.reportGeneration.steps.answers',
+        'interview.session.reportGeneration.steps.criteria',
+        'interview.session.reportGeneration.steps.recommendations',
+      ]
+);
 </script>
 
 <template>
@@ -43,14 +73,14 @@ const generationSteps = [
         {{
           errorMessage
             ? t('interview.session.reportGeneration.errorTitle')
-            : t('interview.session.reportGeneration.title')
+            : generationTitle
         }}
       </h2>
       <p>
         {{
           errorMessage
             ? t('interview.session.reportGeneration.errorSubtitle')
-            : t('interview.session.reportGeneration.subtitle')
+            : generationSubtitle
         }}
       </p>
 
