@@ -1,6 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import { defineNuxtConfig } from 'nuxt/config';
 import tailwindcss from '@tailwindcss/vite';
+import { YANDEX_METRIKA_COUNTER_ID } from '../../shared/config/yandexMetrika';
 
 const landingRoot = fileURLToPath(new URL('./', import.meta.url));
 const landingCss = fileURLToPath(
@@ -22,12 +23,10 @@ const config = {
     '@': landingRoot,
   },
   modules: ['nuxt-yandex-metrika'],
-  // Яндекс.Метрика: ID из env (NUXT_PUBLIC_YANDEX_METRIKA_ID). Без ID модуль
-  // не активируется — локальная разработка не шлёт хиты.
+  // Строковый ID общий с приложением. Не используем NUXT_PUBLIC_*: Nuxt
+  // воспринимает его как runtime override вложенного конфига модуля.
   yandexMetrika: {
-    id:
-      String(process.env.NUXT_PUBLIC_YANDEX_METRIKA_ID || '').trim() ||
-      undefined,
+    id: YANDEX_METRIKA_COUNTER_ID,
     cdn: true,
     options: {
       webvisor: true,
