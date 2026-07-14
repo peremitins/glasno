@@ -15,4 +15,9 @@ describe('landing Webvisor assets', () => {
     expect(workflow).toContain('WEBVISOR_ASSET_RETENTION_DAYS=30');
     expect(workflow).toContain('-mtime +');
   });
+
+  it('does not expose an environment variable that overwrites the string counter ID', () => {
+    expect(workflow).toContain("sed -i '/^NUXT_PUBLIC_YANDEX_METRIKA_ID=/d' .env");
+    expect(workflow).not.toContain('NUXT_PUBLIC_YANDEX_METRIKA_ID:');
+  });
 });

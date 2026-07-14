@@ -21,7 +21,6 @@ export default defineNuxtConfig({
     '@pinia/nuxt',
     'shadcn-nuxt',
     '@nuxt/eslint',
-    'nuxt-yandex-metrika',
   ],
 
   shadcn: {
@@ -30,21 +29,6 @@ export default defineNuxtConfig({
   },
 
   css: ['@/app/assets/css/main.css', 'vue-sonner/style.css'],
-
-  // Один счётчик используется на лендинге и в приложении. Модуль сам
-  // отправляет hit при переходах Vue Router, что необходимо для SPA.
-  yandexMetrika: {
-    id:
-      String(process.env.NUXT_PUBLIC_YANDEX_METRIKA_ID || '').trim() ||
-      undefined,
-    cdn: true,
-    options: {
-      webvisor: true,
-      clickmap: true,
-      trackLinks: true,
-      accurateTrackBounce: true,
-    },
-  },
 
   vite: {
     plugins: [tailwindcss()],
