@@ -6,9 +6,11 @@ import {
   gt,
   gte,
   inArray,
+  isNotNull,
   isNull,
   lt,
   lte,
+  notInArray,
   or,
   sql,
 } from 'drizzle-orm';
@@ -155,6 +157,49 @@ export class DrizzleBillingRepository implements BillingRepository {
       .from(schema.interviewSessions)
       .where(ownerWhere(owner));
     return Number(row?.value ?? 0);
+  }
+
+  async countOwnerFreeSessionsUsed(owner: BillingOwner): Promise<number> {
+    const [completedReportCount] = await this.db
+      .select({ value: count() })
+      .from(schema.interviewReports)
+      .innerJoin(
+        schema.interviewSessions,
+        eq(schema.interviewReports.sessionId, schema.interviewSessions.id)
+      )
+      .where(
+        and(ownerWhere(owner), eq(schema.interviewReports.status, 'done'))
+      )
+      .limit(1);
+    const completedInterviews = Number(completedReportCount?.value ?? 0);
+    if (!owner.userId) return completedInterviews;
+
+    const [user] = await this.db
+      .select({
+        email: schema.users.email,
+        telegramId: schema.users.telegramId,
+      })
+      .from(schema.users)
+      .where(eq(schema.users.id, owner.userId))
+      .limit(1);
+    const email = user?.email?.trim().toLowerCase() || null;
+    const telegramId = user?.telegramId || null;
+    if (!email && !telegramId) return completedInterviews;
+
+    const [history] = await this.db
+      .select({ id: schema.trialInterviewHistory.id })
+      .from(schema.trialInterviewHistory)
+      .where(
+        or(
+          email ? eq(schema.trialInterviewHistory.email, email) : sql`false`,
+          telegramId
+            ? eq(schema.trialInterviewHistory.telegramId, telegramId)
+            : sql`false`
+        )
+      )
+      .limit(1);
+
+    return Math.max(completedInterviews, history ? 1 : 0);
   }
 
   async countOwnerSessionsSince(
@@ -472,6 +517,9 @@ export class DrizzleBillingRepository implements BillingRepository {
       .where(
         and(
           eq(schema.paymentOrders.userId, params.userId),
+          // Незавершённые попытки checkout не считаются историей платежей.
+          // Фильтруем в БД, чтобы они не занимали страницу и не ломали cursor.
+          notInArray(schema.paymentOrders.status, ['pending', 'waiting_for_capture']),
           cursor
             ? or(
                 lt(schema.paymentOrders.createdAt, cursor.createdAt),
@@ -500,6 +548,24 @@ export class DrizzleBillingRepository implements BillingRepository {
           ? encodePaymentCursor(last.createdAt, last.id)
           : null,
     };
+  }
+
+  async listPendingPaymentOrders(params?: {
+    limit?: number;
+  }): Promise<PaymentOrderRecord[]> {
+    const limit = Math.min(50, Math.max(1, params?.limit ?? 20));
+    const rows = await this.db
+      .select()
+      .from(schema.paymentOrders)
+      .where(
+        and(
+          inArray(schema.paymentOrders.status, ['pending', 'waiting_for_capture']),
+          isNotNull(schema.paymentOrders.providerPaymentId)
+        )
+      )
+      .orderBy(desc(schema.paymentOrders.updatedAt))
+      .limit(limit);
+    return rows.map(mapPaymentOrder);
   }
 
   async claimGiftNotifications(params: {

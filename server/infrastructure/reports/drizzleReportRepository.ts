@@ -83,23 +83,51 @@ export class DrizzleReportRepository implements ReportRepository {
   }
 
   async saveCompleted(id: string, analysis: ReportAnalysis): Promise<ReportRecord> {
-    const [row] = await this.db
-      .update(schema.interviewReports)
-      .set({
-        status: 'done',
-        overallScore: analysis.overallScore,
-        verdict: analysis.verdict,
-        summary: analysis.summary,
-        criteria: analysis.criteria,
-        recommendations: analysis.recommendations,
-        questionAnalysis: analysis.questionAnalysis,
-        model: analysis.model || null,
-        errorMessage: null,
-        updatedAt: new Date(),
-      })
-      .where(eq(schema.interviewReports.id, id))
-      .returning();
-    return mapReport(requireRow(row, 'сохранения'));
+    return await this.db.transaction(async (tx) => {
+      const [row] = await tx
+        .update(schema.interviewReports)
+        .set({
+          status: 'done',
+          overallScore: analysis.overallScore,
+          verdict: analysis.verdict,
+          summary: analysis.summary,
+          criteria: analysis.criteria,
+          recommendations: analysis.recommendations,
+          questionAnalysis: analysis.questionAnalysis,
+          model: analysis.model || null,
+          errorMessage: null,
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.interviewReports.id, id))
+        .returning();
+      const report = requireRow(row, 'сохранения');
+
+      const [session] = await tx
+        .select({ userId: schema.interviewSessions.userId })
+        .from(schema.interviewSessions)
+        .where(eq(schema.interviewSessions.id, report.sessionId))
+        .limit(1);
+      if (!session?.userId) return mapReport(report);
+
+      const [identity] = await tx
+        .select({
+          email: schema.users.email,
+          telegramId: schema.users.telegramId,
+        })
+        .from(schema.users)
+        .where(eq(schema.users.id, session.userId))
+        .limit(1);
+      const email = identity?.email?.trim().toLowerCase() || null;
+      const telegramId = identity?.telegramId || null;
+      if (email || telegramId) {
+        await tx
+          .insert(schema.trialInterviewHistory)
+          .values({ userId: session.userId, email, telegramId })
+          .onConflictDoNothing();
+      }
+
+      return mapReport(report);
+    });
   }
 
   async saveFailed(id: string, message: string): Promise<ReportRecord> {

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import {
@@ -208,5 +209,23 @@ describe('withUserAvatarLock', () => {
     expect(events).toEqual(['transaction', 'lock', 'callback']);
     expect(query.sql).toMatch(/for update$/i);
     expect(query.sql).not.toContain('deleted_at');
+  });
+});
+
+describe('anonymizeUserAccount', () => {
+  it('отвязывает минутные списания до удаления голосовых сессий', () => {
+    const source = readFileSync('server/infrastructure/auth/drizzleAuthRepository.ts', 'utf8');
+    const debitUnlinkIndex = source.indexOf(
+      '.update(schema.realtimeMinuteDebits)'
+    );
+    const realtimeSessionDeleteIndex = source.indexOf(
+      '.delete(schema.realtimeVoiceSessions)'
+    );
+
+    expect(debitUnlinkIndex).toBeGreaterThan(-1);
+    expect(debitUnlinkIndex).toBeLessThan(realtimeSessionDeleteIndex);
+    expect(source.slice(debitUnlinkIndex, realtimeSessionDeleteIndex)).toContain(
+      'realtimeSessionId: null'
+    );
   });
 });

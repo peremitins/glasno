@@ -124,6 +124,7 @@
 
   onMounted(() => {
     auth.fetchMe().catch(() => {});
+    void refreshBilling();
   });
 
   onBeforeUnmount(() => {
@@ -522,10 +523,12 @@
                   :placeholder="t('profile.identity.namePlaceholder')"
                   :disabled="isProfileActionPending"
                 />
-                <div class="profile-inline-actions">
+                <div class="profile-inline-actions profile-inline-actions--icon">
                   <button
-                    class="primary-action primary-action--compact button-loader-host"
+                    class="profile-icon-action profile-icon-action--primary button-loader-host"
                     type="submit"
+                    :aria-label="t('profile.identity.save')"
+                    :title="t('profile.identity.save')"
                     :disabled="isProfileActionPending"
                   >
                     <ButtonLoader v-if="isSavingDisplayName" />
@@ -536,16 +539,17 @@
                       }"
                     >
                       <CheckIcon aria-hidden="true" />
-                      {{ t('profile.identity.save') }}
                     </span>
                   </button>
                   <button
-                    class="secondary-action secondary-action--compact"
+                    class="profile-icon-action"
                     type="button"
+                    :aria-label="t('profile.identity.cancel')"
+                    :title="t('profile.identity.cancel')"
                     :disabled="isProfileActionPending"
                     @click="cancelDisplayNameEdit"
                   >
-                    {{ t('profile.identity.cancel') }}
+                    <Cross2Icon aria-hidden="true" />
                   </button>
                 </div>
               </form>
@@ -954,8 +958,8 @@
   .profile-name-row {
     position: relative;
     display: grid;
-    grid-template-columns: 128px minmax(0, 1fr) auto;
-    gap: 14px;
+    grid-template-columns: 88px minmax(0, 1fr) auto;
+    gap: 10px;
     align-items: center;
   }
 
@@ -995,6 +999,11 @@
   .profile-inline-actions,
   .profile-avatar-actions {
     flex-wrap: wrap;
+  }
+
+  .profile-inline-actions--icon {
+    flex-wrap: nowrap;
+    gap: 6px;
   }
 
   .profile-inline-actions .button-loader-content,
@@ -1045,6 +1054,18 @@
   .profile-icon-action svg {
     width: 16px;
     height: 16px;
+  }
+
+  .profile-icon-action--primary {
+    border-color: color-mix(in srgb, var(--accent) 55%, var(--glass-border));
+    background: var(--button-bg);
+    color: var(--button-text);
+    box-shadow: var(--button-shadow);
+  }
+
+  .profile-icon-action--primary:hover {
+    border-color: color-mix(in srgb, var(--accent) 75%, var(--glass-border));
+    background: var(--button-bg-hover);
   }
 
   .profile-avatar-settings {
@@ -1167,8 +1188,8 @@
 
   .details div {
     display: grid;
-    grid-template-columns: 128px minmax(0, 1fr);
-    gap: 14px;
+    grid-template-columns: 88px minmax(0, 1fr);
+    gap: 10px;
     align-items: baseline;
     padding: 11px 0;
     border-bottom: 1px solid
@@ -1549,6 +1570,14 @@
     .profile-inline-actions,
     .profile-avatar-actions {
       width: 100%;
+    }
+
+    .profile-inline-actions--icon {
+      width: auto;
+    }
+
+    .profile-inline-actions--icon .profile-icon-action {
+      width: 36px;
     }
 
     .settings-row__content {

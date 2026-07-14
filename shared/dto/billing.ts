@@ -152,10 +152,8 @@ export const BillingPaymentHistoryItemDto = z.object({
   planType: BillingPlanTypeDto,
   amountRub: z.number().int().nonnegative(),
   currency: z.literal('RUB'),
-  provider: z.string(),
   status: z.string(),
   createdAt: z.string(),
-  operationId: z.string().nullable(),
   gift: BillingPaymentHistoryGiftDto.nullable(),
 });
 

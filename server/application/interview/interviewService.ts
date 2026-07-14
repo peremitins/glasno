@@ -735,14 +735,14 @@ export class InterviewService {
   ) {
     const mainTurns = turns.filter((turn) => turn.kind === 'main');
     if (mainTurns.length >= session.questionCount) {
-      await this.deps.repository.updateSessionStatus(session.id, 'done');
+      await this.deps.repository.completeSession(session.id);
       return;
     }
 
     const metadata = parseInterviewSessionMetadata(session.metadata);
     const planned = resolveNextPlannedQuestion({ metadata, turns });
     if (!planned) {
-      await this.deps.repository.updateSessionStatus(session.id, 'done');
+      await this.deps.repository.completeSession(session.id);
       return;
     }
 

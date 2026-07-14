@@ -459,6 +459,7 @@
   }
 
   onMounted(() => {
+    void refreshStatus();
     if (returnNoticeVisible.value) {
       void reconcileReturnedPayment();
     }
@@ -512,18 +513,6 @@
             })
           }}
         </p>
-        <div
-          v-if="accessState === 'expired' || accessState === 'trial-used'"
-          class="status-actions"
-        >
-          <a href="#plans" class="secondary-action secondary-action--compact">
-            {{
-              accessState === 'expired'
-                ? t('pricing.renewCta')
-                : t('pricing.choosePassCta')
-            }}
-          </a>
-        </div>
         <div v-else-if="accessState === 'trial'" class="status-actions">
           <NuxtLink to="/" class="secondary-action secondary-action--compact">
             {{ t('pricing.trialCta') }}

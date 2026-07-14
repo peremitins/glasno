@@ -61,9 +61,10 @@ export class DashboardService {
   ) {}
 
   async getSummary(owner: BillingOwner): Promise<DashboardSummaryResponse> {
-    const sessions = await this.deps.repository.listOwnerSessions(owner, {
-      limit: 20,
-    });
+    const [sessions, freeSessionsUsed] = await Promise.all([
+      this.deps.repository.listOwnerSessions(owner, { limit: 20 }),
+      this.deps.repository.countOwnerFreeSessionsUsed(owner),
+    ]);
     const items = sessions.map(toHistoryItem);
     const scored = items
       .map((item) => item.report?.overallScore)
@@ -78,7 +79,7 @@ export class DashboardService {
           scored.length > 0
             ? Math.round(scored.reduce((sum, score) => sum + score, 0) / scored.length)
             : null,
-        freeSessionsUsed: items.length,
+        freeSessionsUsed,
         freeSessionsLimit: FREE_SESSIONS_LIMIT,
       },
       activeSession: items.find((item) => item.status === 'running') ?? null,

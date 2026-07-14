@@ -156,6 +156,9 @@ export interface RealtimeMinuteBalance {
 
 export interface BillingRepository {
   countOwnerSessions(owner: BillingOwner): Promise<number>;
+  // Использованные бесплатные интервью: текущие сессии владельца плюс
+  // неизменяемая история завершённых интервью для email/Telegram ID.
+  countOwnerFreeSessionsUsed(owner: BillingOwner): Promise<number>;
   // Для антиабьюз-порогов: сколько сессий создано с указанного момента.
   countOwnerSessionsSince(owner: BillingOwner, since: Date): Promise<number>;
   findUserEmail(userId: string): Promise<string | null>;
@@ -309,6 +312,11 @@ export interface BillingRepository {
     cursor?: string | null;
     limit?: number;
   }): Promise<PaymentOrderHistoryPage>;
+  // Незавершённые платежи с созданным идентификатором провайдера: их нужно
+  // периодически сверять, если пользователь не дождался возврата из виджета.
+  listPendingPaymentOrders(params?: {
+    limit?: number;
+  }): Promise<PaymentOrderRecord[]>;
   claimGiftNotifications(params: {
     now?: Date;
     limit?: number;
