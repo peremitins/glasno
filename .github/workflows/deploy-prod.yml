@@ -30,6 +30,8 @@ jobs:
           filters: |
             landing:
               - 'apps/landing/**'
+              - 'deploy/landing/**'
+              - '.github/workflows/deploy-prod.yml'
             app:
               - '**'
               - '!apps/landing/**'
@@ -94,6 +96,8 @@ jobs:
     needs: [changes, preflight]
     if: needs.changes.outputs.landing == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    env:
+      YANDEX_METRIKA_ID: ${{ vars.NUXT_PUBLIC_YANDEX_METRIKA_ID || '110383411' }}
 
     steps:
       - name: Checkout repository
@@ -118,7 +122,7 @@ jobs:
         env:
           NUXT_PUBLIC_APP_AUTH_URL: https://my.glasno.app/auth
           NUXT_PUBLIC_LANDING_SITE_URL: https://glasno.app
-          NUXT_PUBLIC_YANDEX_METRIKA_ID: ${{ vars.NUXT_PUBLIC_YANDEX_METRIKA_ID || '110383411' }}
+          NUXT_PUBLIC_YANDEX_METRIKA_ID: ${{ env.YANDEX_METRIKA_ID }}
 
       - name: Prepare SSH key for landing deploy
         run: |
@@ -127,17 +131,23 @@ jobs:
           chmod 600 ~/.ssh/landing_deploy_key
           ssh-keyscan -H ${{ secrets.PROD_SSH_HOST }} >> ~/.ssh/known_hosts 2>/dev/null || true
 
-      - name: Deploy landing to PROD (rsync + symlink)
+      - name: Deploy landing to PROD (versioned assets + symlink)
         run: |
           RELEASE_ID=${{ github.run_id }}-${{ github.run_attempt }}
           ssh -i ~/.ssh/landing_deploy_key -o StrictHostKeyChecking=no \
-            ${{ secrets.PROD_SSH_USER }}@${{ secrets.PROD_SSH_HOST }} "mkdir -p /var/www/glasno-landing/releases"
+            ${{ secrets.PROD_SSH_USER }}@${{ secrets.PROD_SSH_HOST }} "mkdir -p /var/www/glasno-landing/releases /var/www/glasno-landing/webvisor-assets/_nuxt; if [ -d /var/www/glasno-landing/current/_nuxt ]; then cp -an /var/www/glasno-landing/current/_nuxt/. /var/www/glasno-landing/webvisor-assets/_nuxt/; fi"
+          rsync -avz -e "ssh -i ~/.ssh/landing_deploy_key -o StrictHostKeyChecking=no" \
+            deploy/landing/nginx.conf \
+            ${{ secrets.PROD_SSH_USER }}@${{ secrets.PROD_SSH_HOST }}:/opt/glasno/prod/landing/nginx.conf
           rsync -avz --delete -e "ssh -i ~/.ssh/landing_deploy_key -o StrictHostKeyChecking=no" \
             apps/landing/.output/public/ \
             ${{ secrets.PROD_SSH_USER }}@${{ secrets.PROD_SSH_HOST }}:/var/www/glasno-landing/releases/${RELEASE_ID}/
+          rsync -avz --ignore-existing -e "ssh -i ~/.ssh/landing_deploy_key -o StrictHostKeyChecking=no" \
+            apps/landing/.output/public/_nuxt/ \
+            ${{ secrets.PROD_SSH_USER }}@${{ secrets.PROD_SSH_HOST }}:/var/www/glasno-landing/webvisor-assets/_nuxt/
           ssh -i ~/.ssh/landing_deploy_key -o StrictHostKeyChecking=no \
             ${{ secrets.PROD_SSH_USER }}@${{ secrets.PROD_SSH_HOST }} \
-            "set -euo pipefail; cd /var/www/glasno-landing; ln -sfn \"releases/${RELEASE_ID}\" current; cd /var/www/glasno-landing/releases; for d in \$(ls -t | tail -n +6); do chmod -R u+w \"\$d\" 2>/dev/null || true; rm -rf \"\$d\" || true; done"
+            "set -euo pipefail; WEBVISOR_ASSET_RETENTION_DAYS=30; docker exec glasno-landing-prod nginx -t; docker exec glasno-landing-prod nginx -s reload; cd /var/www/glasno-landing; ln -sfn \"releases/${RELEASE_ID}\" current; find webvisor-assets/_nuxt -type f -mtime +\${WEBVISOR_ASSET_RETENTION_DAYS} -delete; find webvisor-assets/_nuxt -type d -empty -delete; cd releases; for d in \$(ls -t | tail -n +6); do chmod -R u+w \"\$d\" 2>/dev/null || true; rm -rf \"\$d\" || true; done"
 
   deploy-app:
     name: Deploy app to PROD
@@ -154,6 +164,7 @@ jobs:
       MIGRATE_IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/glasno:prod-migrate
       GHCR_PAT: ${{ secrets.GHCR_PAT }}
       GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
+      YANDEX_METRIKA_ID: ${{ vars.NUXT_PUBLIC_YANDEX_METRIKA_ID || '110383411' }}
 
     steps:
       - name: Checkout repository
@@ -195,7 +206,7 @@ jobs:
           username: ${{ secrets.PROD_SSH_USER }}
           key: ${{ secrets.PROD_SSH_KEY }}
           port: 22
-          envs: GHCR_PAT,GHCR_USERNAME
+          envs: GHCR_PAT,GHCR_USERNAME,YANDEX_METRIKA_ID
           script: |
             set -euo pipefail
 
@@ -208,6 +219,9 @@ jobs:
             grep -q '^MIGRATE_IMAGE=' .env \
               && sed -i "s|^MIGRATE_IMAGE=.*|MIGRATE_IMAGE=${{ env.MIGRATE_IMAGE_NAME }}|" .env \
               || echo "MIGRATE_IMAGE=${{ env.MIGRATE_IMAGE_NAME }}" >> .env
+            grep -q '^NUXT_PUBLIC_YANDEX_METRIKA_ID=' .env \
+              && sed -i "s|^NUXT_PUBLIC_YANDEX_METRIKA_ID=.*|NUXT_PUBLIC_YANDEX_METRIKA_ID=${YANDEX_METRIKA_ID}|" .env \
+              || echo "NUXT_PUBLIC_YANDEX_METRIKA_ID=${YANDEX_METRIKA_ID}" >> .env
 
             # Telegram-уведомления о деплое (опционально, креды из .env).
             TG_TOKEN=$(grep -E '^NUXT_TELEGRAM_ALERTS_BOT_TOKEN=' .env 2>/dev/null | cut -d= -f2- | tr -d '"' || true)

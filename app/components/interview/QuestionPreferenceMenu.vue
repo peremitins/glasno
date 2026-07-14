@@ -154,7 +154,7 @@
     padding: 6px;
     border: 1px solid var(--glass-border-strong);
     border-radius: var(--radius-md);
-    background: var(--surface-raised);
+    background: var(--surface-solid);
     color: var(--text-primary);
     box-shadow: var(--shadow-panel);
     backdrop-filter: blur(18px);

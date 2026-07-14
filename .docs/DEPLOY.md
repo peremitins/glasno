@@ -29,9 +29,11 @@ entrypoint `websecure`, certresolver `letsencrypt`, авто-SSL). Инфрас�
   `recreate` по умолчанию, `bluegreen` — без даунтайма, но требует запаса RAM)
   → healthcheck `/api/health` → откат на предыдущий образ при провале →
   Telegram-алерт (если задан `NUXT_TELEGRAM_ALERTS_*`).
-- Файлы `apps/landing/**` менялись → job `deploy-landing`: `pnpm
+- Файлы лендинга или его Nginx-конфига менялись → job `deploy-landing`: `pnpm
   landing:generate` → rsync в `/var/www/glasno-landing/releases/<id>` → symlink
-  `current` (ротация 5 релизов).
+  `current` (ротация 5 релизов). Ассеты `/_nuxt` складываются отдельно и
+  хранятся 30 дней: это позволяет Вебвизору воспроизводить записи со стилями,
+  не сохраняя полные исторические релизы.
 - `workflow_dispatch` запускает оба job'а принудительно.
 
 ### GitHub secrets (Settings → Secrets and variables → Actions)
@@ -56,6 +58,7 @@ entrypoint `websecure`, certresolver `letsencrypt`, авто-SSL). Инфрас�
 └── .env                 # из deploy/env.production.example, chmod 600 — только на сервере
 /var/www/glasno-landing/
 ├── releases/<id>/       # статика лендинга
+├── webvisor-assets/_nuxt/ # хешированные CSS/JS для записей Вебвизора, TTL 30 дней
 └── current -> releases/<id>
 ```
 
@@ -157,8 +160,6 @@ HSTS preload — сайт работает **только по HTTPS**; это �
 7. **Лендинг — заглушка с noindex**; при запуске полноценного лендинга убрать
    `robots: noindex` из `apps/landing/nuxt.config.ts` и `Disallow` из
    `robots.txt`, добавить sitemap.
-8. **Метрика только на лендинге**; в приложение (my.glasno.app) добавить при
-   необходимости.
 
 ## Риски / что проверить после первого деплоя
 

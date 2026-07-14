@@ -20,4 +20,12 @@ describe('QuestionPreferenceMenu', () => {
     expect(menuLayer?.[1]).toBeDefined();
     expect(Number(menuLayer?.[1])).toBeGreaterThan(Number(fullscreenLayer?.[1]));
   });
+
+  it('uses an opaque surface because the menu is teleported over the interview', () => {
+    const menuStyle = menuSource.match(
+      /\.question-preference-menu\s*\{([\s\S]*?)\n  \}/
+    )?.[1];
+
+    expect(menuStyle).toContain('background: var(--surface-solid)');
+  });
 });
