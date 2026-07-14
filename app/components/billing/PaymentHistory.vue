@@ -121,8 +121,7 @@
             </span>
           </div>
           <p class="history-meta">
-            {{ formatDate(item.createdAt) }} · {{ item.provider }}
-            <span v-if="item.operationId">· {{ item.operationId }}</span>
+            {{ formatDate(item.createdAt) }}
           </p>
           <div v-if="item.gift" class="gift-meta">
             <span>{{ t('pricing.historyGiftFor', { email: item.gift.recipientEmailMasked }) }}</span>

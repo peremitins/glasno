@@ -4,6 +4,12 @@ import { InterviewService } from './interviewService';
 function createInMemoryRepository() {
   const sessions: any[] = [];
   const turns: any[] = [];
+  const completeSession = vi.fn(async (id: string) => {
+    const session = sessions.find((item) => item.id === id);
+    if (!session) return null;
+    session.status = 'done';
+    return session;
+  });
 
   return {
     sessions,
@@ -27,6 +33,7 @@ function createInMemoryRepository() {
       session.status = status;
       return session;
     },
+    completeSession,
     async updateSessionInterviewer(id: string, fields: any) {
       const session = sessions.find((item) => item.id === id);
       if (!session) return null;
@@ -94,6 +101,34 @@ function createInMemoryRepository() {
 }
 
 describe('InterviewService', () => {
+  it('завершает интервью через атомарную фиксацию использованной бесплатной попытки', async () => {
+    const repository = createInMemoryRepository();
+    const service = new InterviewService({
+      repository,
+      engine: {} as never,
+      hhClient: null,
+    });
+
+    repository.sessions.push({
+      id: 'session_done',
+      questionCount: 1,
+      status: 'running',
+    });
+
+    const serviceWithCompletion = service as unknown as {
+      createNextMainQuestionOrFinish(
+        session: { id: string; questionCount: number },
+        turns: Array<{ kind: string }>
+      ): Promise<void>;
+    };
+    await serviceWithCompletion.createNextMainQuestionOrFinish(
+      repository.sessions[0],
+      [{ kind: 'main' }]
+    );
+
+    expect(repository.completeSession).toHaveBeenCalledWith('session_done');
+  });
+
   it('starts with a matching repeat and excludes repeat/hidden concepts from later generation', async () => {
     const repository = createInMemoryRepository();
     const engine = {

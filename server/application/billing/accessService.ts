@@ -39,6 +39,7 @@ export class BillingAccessService {
       repository: Pick<
         BillingRepository,
         | 'countOwnerSessions'
+        | 'countOwnerFreeSessionsUsed'
         | 'countOwnerSessionsSince'
         | 'findAccessByUserId'
         | 'getRealtimeMinuteBalance'
@@ -85,7 +86,7 @@ export class BillingAccessService {
 
     const [freeSessionsUsed, access, minuteBalance, paymentMethod] =
       await Promise.all([
-        this.deps.repository.countOwnerSessions(owner),
+        this.deps.repository.countOwnerFreeSessionsUsed(owner),
         owner.userId
           ? this.deps.repository.findAccessByUserId(owner.userId)
           : Promise.resolve(null),

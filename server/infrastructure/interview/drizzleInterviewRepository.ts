@@ -152,6 +152,15 @@ export class DrizzleInterviewRepository implements InterviewRepository {
     return row ? mapSession(row) : null;
   }
 
+  async completeSession(id: string): Promise<InterviewSessionRecord | null> {
+    const [row] = await this.db
+      .update(schema.interviewSessions)
+      .set({ status: 'done' })
+      .where(eq(schema.interviewSessions.id, id))
+      .returning();
+    return row ? mapSession(row) : null;
+  }
+
   async updateSessionInterviewer(
     id: string,
     fields: {

@@ -112,6 +112,7 @@ function createRepository(order = createOrder()) {
   let fulfilledAt: Date | null = null;
   const repository = {
     countOwnerSessions: vi.fn().mockResolvedValue(1),
+    countOwnerFreeSessionsUsed: vi.fn().mockResolvedValue(1),
     countOwnerSessionsSince: vi.fn().mockResolvedValue(0),
     findUserEmail: vi.fn().mockResolvedValue('user@example.com'),
     findAccessByUserId: vi.fn().mockImplementation(async () => access),
@@ -139,6 +140,7 @@ function createRepository(order = createOrder()) {
       items: [],
       nextCursor: null,
     }),
+    listPendingPaymentOrders: vi.fn().mockResolvedValue([]),
     claimGiftNotifications: vi.fn().mockResolvedValue([]),
     markGiftNotificationSent: vi.fn().mockResolvedValue(undefined),
     markGiftNotificationFailed: vi.fn().mockResolvedValue(undefined),
@@ -247,6 +249,31 @@ describe('BillingService payment reconciliation', () => {
       autoRenew: true,
       paymentMethod: null,
     });
+  });
+
+  it('periodically reconciles pending payments without waiting for the user to return', async () => {
+    const repository = createRepository();
+    repository.listPendingPaymentOrders.mockResolvedValue([createOrder()]);
+    mockedGetYooKassaPayment.mockResolvedValue({
+      id: 'payment_1',
+      status: 'canceled',
+      paid: false,
+      amountValue: '1190.00',
+      currency: 'RUB',
+      metadata: { orderId: 'order_1' },
+      paymentMethod: null,
+    });
+    const service = createService(repository);
+
+    await expect(service.runPendingPaymentSweep()).resolves.toEqual({
+      checked: 1,
+      reconciled: 1,
+      failed: 0,
+    });
+
+    expect(repository.updatePaymentOrder).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'order_1', status: 'canceled' })
+    );
   });
 
   it('honours the declined auto-renew choice stored in order metadata', async () => {
@@ -649,6 +676,29 @@ describe('BillingService payment reconciliation', () => {
 });
 
 describe('BillingService payment history', () => {
+  it('does not return unfinished checkout attempts as payment history', async () => {
+    const repository = createRepository();
+    repository.listPaymentOrdersByUserId.mockResolvedValue({
+      items: [
+        { order: createOrder({ status: 'pending' }), gift: null },
+        {
+          order: createOrder({ id: 'order_2', status: 'succeeded' }),
+          gift: null,
+        },
+      ],
+      nextCursor: null,
+    });
+    const service = createService(repository);
+
+    await expect(
+      service.getPaymentHistory({ userId: 'user_1', cursor: null, limit: 20 })
+    ).resolves.toMatchObject({
+      items: [
+        expect.objectContaining({ id: 'order_2', status: 'succeeded' }),
+      ],
+    });
+  });
+
   it('maps plan and gift state and preserves the repository cursor', async () => {
     const repository = createRepository();
     repository.listPaymentOrdersByUserId.mockResolvedValue({

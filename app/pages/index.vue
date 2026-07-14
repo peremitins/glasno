@@ -32,7 +32,9 @@
   const billing = useBillingStatus();
 
   onMounted(() => {
-    void billing.ensureLoaded();
+    // После готового отчёта trial становится использованным. При возврате
+    // на главную сверяем серверное состояние, а не общий SPA-кэш.
+    void billing.refresh();
   });
 
   const paywallOpen = ref(false);
@@ -56,7 +58,10 @@
     resumeText: '',
   });
 
-  const hasSessions = computed(() => (summary.value?.totals.sessions ?? 0) > 0);
+  const hasSessions = computed(() => {
+    const totals = summary.value?.totals;
+    return Math.max(totals?.sessions ?? 0, totals?.freeSessionsUsed ?? 0) > 0;
+  });
 
   // Быстрый старт всегда запускает бесплатный тестовый формат (3 вопроса).
   // «Бесплатно» показываем только тем, у кого ещё нет активного пропуска.
@@ -121,11 +126,12 @@
     },
   ]);
 
-  const activeLink = computed(() =>
-    summary.value?.activeSession
-      ? `/interview/${summary.value.activeSession.id}`
-      : '/interview/new'
-  );
+  const activeLink = computed(() => {
+    if (summary.value?.activeSession) {
+      return `/interview/${summary.value.activeSession.id}`;
+    }
+    return isLaunchLocked.value ? '/pricing' : '/interview/new';
+  });
 
   const activeSessionProgress = computed(() => {
     const activeSession = summary.value?.activeSession;
@@ -393,7 +399,9 @@
             {{
               summary?.activeSession
                 ? t('dashboard.continue')
-                : t('dashboard.startCta')
+                : isLaunchLocked
+                  ? t('dashboard.launcherUnlock')
+                  : t('dashboard.startCta')
             }}
             <span class="primary-action__icon" aria-hidden="true">
               <ArrowRightIcon />

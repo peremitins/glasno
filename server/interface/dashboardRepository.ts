@@ -25,9 +25,9 @@ export interface DashboardSessionRecord {
 }
 
 export interface DashboardRepository {
+  countOwnerFreeSessionsUsed(owner: BillingOwner): Promise<number>;
   listOwnerSessions(
     owner: BillingOwner,
     options?: { limit?: number }
   ): Promise<DashboardSessionRecord[]>;
 }
-

@@ -89,6 +89,9 @@ export interface InterviewRepository {
     id: string,
     status: InterviewSessionStatus
   ): Promise<InterviewSessionRecord | null>;
+  // Завершает вопросы интервью. Бесплатная попытка фиксируется только после
+  // успешного формирования отчёта.
+  completeSession(id: string): Promise<InterviewSessionRecord | null>;
   // Смена интервьюера: тон (mode), персона-аватар и metadata (с faceId).
   updateSessionInterviewer(
     id: string,

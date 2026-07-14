@@ -24,9 +24,22 @@ export default defineNitroPlugin((nitroApp) => {
   };
   const giftInitialTimer = setTimeout(giftSweep, 30 * 1000);
   const giftTimer = setInterval(giftSweep, 5 * 60 * 1000);
+  // Пользователь может закрыть виджет или не вернуться на страницу тарифов.
+  // Периодическая сверка не даёт финальному статусу остаться pending локально.
+  const pendingPaymentSweep = () => {
+    void createService()
+      .runPendingPaymentSweep()
+      .catch((err) => {
+        console.error('[billing] pending payment sweep failed', err);
+      });
+  };
+  const pendingPaymentInitialTimer = setTimeout(pendingPaymentSweep, 45 * 1000);
+  const pendingPaymentTimer = setInterval(pendingPaymentSweep, 5 * 60 * 1000);
   nitroApp.hooks.hook('close', () => {
     clearTimeout(giftInitialTimer);
     clearInterval(giftTimer);
+    clearTimeout(pendingPaymentInitialTimer);
+    clearInterval(pendingPaymentTimer);
   });
 
   // Kill-switch автосписаний не должен останавливать письма о подарках.

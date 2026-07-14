@@ -55,10 +55,14 @@ describe('profile page loading state', () => {
     expect(source).toContain(':aria-label="t(\'profile.identity.edit\')"');
   });
 
-  it('aligns the name value with the email value in the account details grid', () => {
+  it('uses compact icon actions and a narrow label column for name editing', () => {
     expect(source).toContain('class="profile-name-row"');
     expect(source).toContain('class="profile-field-label"');
-    expect(source).toContain('grid-template-columns: 128px minmax(0, 1fr) auto');
+    expect(source).toContain('class="profile-inline-actions profile-inline-actions--icon"');
+    expect(source).toContain(':aria-label="t(\'profile.identity.save\')"');
+    expect(source).toContain(':aria-label="t(\'profile.identity.cancel\')"');
+    expect(source).toContain('grid-template-columns: 88px minmax(0, 1fr) auto');
+    expect(source).toContain('grid-template-columns: 88px minmax(0, 1fr);');
   });
 
   it('serializes profile mutations before allowing competing actions', () => {

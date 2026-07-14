@@ -33,6 +33,7 @@ function accessRecord(
 function createRepository(
   overrides: {
     sessionsUsed?: number;
+    durableTrialSessionsUsed?: number;
     sessionsSince?: number;
     access?: PaidAccessRecord | null;
     minuteBalance?: {
@@ -44,6 +45,9 @@ function createRepository(
 ) {
   return {
     countOwnerSessions: vi.fn().mockResolvedValue(overrides.sessionsUsed ?? 0),
+    countOwnerFreeSessionsUsed: vi
+      .fn()
+      .mockResolvedValue(overrides.durableTrialSessionsUsed ?? 0),
     countOwnerSessionsSince: vi
       .fn()
       .mockResolvedValue(overrides.sessionsSince ?? 0),
@@ -146,7 +150,7 @@ describe('BillingAccessService', () => {
 
   it('blocks a second free interview without an active pass', async () => {
     const service = new BillingAccessService({
-      repository: createRepository({ sessionsUsed: 1 }),
+      repository: createRepository({ durableTrialSessionsUsed: 1 }),
     });
 
     await expect(
@@ -155,6 +159,26 @@ describe('BillingAccessService', () => {
         userId: null,
       })
     ).rejects.toThrow('Бесплатное интервью использовано');
+  });
+
+  it('blocks a recreated account when a completed free interview is retained by email', async () => {
+    const repository = createRepository({
+      sessionsUsed: 0,
+      durableTrialSessionsUsed: 1,
+    });
+    const service = new BillingAccessService({ repository });
+
+    await expect(
+      service.assertCanCreateInterview({
+        anonymousSessionId: 'anon_recreated',
+        userId: 'user_recreated',
+      })
+    ).rejects.toThrow('Бесплатное интервью использовано');
+
+    expect(repository.countOwnerFreeSessionsUsed).toHaveBeenCalledWith({
+      anonymousSessionId: 'anon_recreated',
+      userId: 'user_recreated',
+    });
   });
 
   it('blocks deep formats for trial users', async () => {
@@ -209,6 +233,7 @@ describe('BillingAccessService', () => {
     const service = new BillingAccessService({
       repository: createRepository({
         sessionsUsed: 5,
+        durableTrialSessionsUsed: 1,
         access: accessRecord({
           currentPeriodEnd: PAST,
           autoRenew: false,
