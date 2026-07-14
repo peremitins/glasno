@@ -1,5 +1,7 @@
 import type {
   CreateInterviewSessionRequest,
+  InterviewFocus,
+  InterviewHintExample,
   InterviewLevel,
   InterviewQuestionSourceMode,
   QuestionHintDetails,
@@ -56,23 +58,40 @@ export interface NormalizeCustomQuestionsParams {
   questionSourceMode?: InterviewQuestionSourceMode | null;
 }
 
+export interface GenerateInterviewerPlanParams {
+  anonymousSessionId: string;
+  userId?: string | null;
+  role?: string | null;
+  vacancyTitle?: string | null;
+  vacancyText?: string | null;
+  resumeText?: string | null;
+  level: InterviewLevel;
+  focus?: InterviewFocus | null;
+  questionsCount: number;
+  existingQuestions: string[];
+}
+
 export interface GenerateQuestionHintsParams {
   session: InterviewSessionRecord;
   turn: InterviewTurnRecord;
   turns: InterviewTurnRecord[];
+  dialogue: Array<{ role: 'user' | 'interviewer'; content: string }>;
 }
 
-export interface GenerateSampleAnswerHintParams {
+export interface GenerateHintExampleParams {
   session: InterviewSessionRecord;
   turn: InterviewTurnRecord;
   turns: InterviewTurnRecord[];
-  targetQuestion: string;
+  exampleContext: string;
   dialogue: Array<{ role: 'user' | 'interviewer'; content: string }>;
 }
 
 export interface InterviewEngine {
   normalizeCustomQuestions(
     params: NormalizeCustomQuestionsParams
+  ): Promise<{ questions: string[] }>;
+  generateInterviewerPlan?(
+    params: GenerateInterviewerPlanParams
   ): Promise<{ questions: string[] }>;
   generateQuestion(params: GenerateQuestionParams): Promise<{
     question: string;
@@ -81,9 +100,11 @@ export interface InterviewEngine {
   generateQuestionHints(
     params: GenerateQuestionHintsParams
   ): Promise<QuestionHintDetails>;
-  generateSampleAnswerHint(
-    params: GenerateSampleAnswerHintParams
-  ): Promise<{ sampleAnswer: string }>;
+  // Переходный optional-контракт: production-движок реализует его, а старые
+  // тестовые/внешние адаптеры получают безопасный fallback из плана.
+  generateHintExample?(
+    params: GenerateHintExampleParams
+  ): Promise<InterviewHintExample>;
   evaluateAnswer(params: EvaluateAnswerParams): Promise<{
     needsClarification: boolean;
     question?: string;

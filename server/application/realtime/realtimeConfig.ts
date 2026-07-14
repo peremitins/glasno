@@ -9,16 +9,19 @@ import type {
   CandidatePersona,
   InterviewerFaceId,
   InterviewerMode,
+  InterviewQuestionSourceMode,
   InterviewTrainingMode,
 } from '@/shared/dto';
 import {
   AI_CANDIDATE_ROLE_CONTRACT,
   AI_INTERVIEWER_ROLE_CONTRACT,
 } from '@/shared/interviewRoleContract';
+import { buildCandidateBehaviorContract } from '@/shared/candidateBehavior';
 
 interface RuntimeRealtimeContext {
   sessionId: string;
   trainingMode?: InterviewTrainingMode | null;
+  questionSourceMode?: InterviewQuestionSourceMode | null;
   role?: string | null;
   level?: string | null;
   interviewerMode?: InterviewerMode | null;
@@ -35,6 +38,7 @@ interface RealtimeContextSource {
   session: {
     id: string;
     trainingMode?: InterviewTrainingMode | null;
+    questionSourceMode?: InterviewQuestionSourceMode | null;
     role?: string | null;
     level?: string | null;
     interviewerMode?: InterviewerMode | null;
@@ -57,6 +61,7 @@ export function buildRealtimeContextFromState(
   return {
     sessionId: state.session.id,
     trainingMode: state.session.trainingMode,
+    questionSourceMode: state.session.questionSourceMode,
     role: state.session.role,
     level: state.session.level,
     interviewerMode: state.session.interviewerMode,
@@ -81,19 +86,23 @@ export function buildRealtimeInstructions(
 ): string {
   if (context.trainingMode === 'interviewer') {
     return [
-      'Ты голосовой AI-кандидат Гласно. Всегда говори по-русски, кратко и естественно, как живой человек на собеседовании.',
+      'Ты голосовой AI-кандидат Гласно. Всегда говори по-русски и естественно, как живой человек на собеседовании. Длину ответа определяет выбранный профиль AI-кандидата.',
       AI_CANDIDATE_ROLE_CONTRACT,
       'Пользователь проводит интервью и тренирует навык интервьюера.',
       'Отвечай как кандидат по роли, вакансии, резюме и заданному профилю. Не помогай пользователю проводить интервью.',
       'Если вопрос общий, отвечай естественно, но не раскрывай всё сам: оставляй место для уточнений.',
-      'Если пользователь произнёс команду перехода («следующий вопрос», «другой вопрос», «дальше», «переходим») — это команда приложению. Не спорь и не управляй переходом.',
+      context.questionSourceMode === 'free'
+        ? 'Свободное интервью не имеет плана и команд перехода. Фразы «следующий вопрос», «другой вопрос», «дальше» и «переходим» считай обычной частью разговора и отвечай на них в контексте реплики пользователя.'
+        : 'Если пользователь произнёс команду перехода («следующий вопрос», «другой вопрос», «дальше», «переходим») — это команда приложению. Не спорь и не управляй переходом.',
       'Не утверждай, что интервью завершено, и не давай оценку интервьюеру во время разговора.',
       `ID сессии: ${context.sessionId}.`,
       `Роль кандидата: ${context.role || 'не указана'}.`,
       `Уровень кандидата: ${context.level || 'middle'}.`,
-      `Профиль кандидата: ${describeCandidatePersona(context.candidatePersona)}.`,
-      `Сложность кандидата: ${describeCandidateDifficulty(context.candidateDifficulty)}.`,
-      `Заметки о кандидате: ${context.candidateNotes || 'нет'}.`,
+      buildCandidateBehaviorContract({
+        persona: context.candidatePersona,
+        difficulty: context.candidateDifficulty,
+        notes: context.candidateNotes,
+      }),
       `Вакансия: ${context.vacancyTitle || 'не указана'}.`,
       `Компания: ${context.companyName || 'не указана'}.`,
       `Текущий этап: ${context.currentQuestion || 'нет активного этапа'}.`,
@@ -118,38 +127,6 @@ export function buildRealtimeInstructions(
     `Компания: ${context.companyName || 'не указана'}.`,
     `Текущий вопрос: ${context.currentQuestion || 'нет активного вопроса'}.`,
   ].join('\n');
-}
-
-function describeCandidatePersona(
-  persona?: CandidatePersona | null
-): string {
-  switch (persona) {
-    case 'verbose_vague':
-      return 'много говорит, но часто без фактов';
-    case 'anxious':
-      return 'волнуется и иногда просит уточнить вопрос';
-    case 'overconfident':
-      return 'уверен в себе и может переоценивать вклад';
-    case 'weak_hard_good_soft':
-      return 'приятный в общении, но профессиональная конкретика слабее';
-    case 'strong_brief':
-    default:
-      return 'сильный, отвечает кратко и по делу';
-  }
-}
-
-function describeCandidateDifficulty(
-  difficulty?: CandidateDifficulty | null
-): string {
-  switch (difficulty) {
-    case 'calm':
-      return 'спокойный сценарий';
-    case 'challenging':
-      return 'сложный сценарий с неполными ответами и уходом от конкретики';
-    case 'realistic':
-    default:
-      return 'реалистичный сценарий';
-  }
 }
 
 export function buildRealtimeSessionPayload(

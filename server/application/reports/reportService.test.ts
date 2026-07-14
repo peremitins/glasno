@@ -171,6 +171,47 @@ describe('ReportService', () => {
     });
   });
 
+  it('uses interviewer-specific fallbacks for malformed report analysis', () => {
+    const dto = toReportDto(
+      {
+        id: 'report_interviewer',
+        sessionId: 'session_interviewer',
+        status: 'done',
+        overallScore: 42,
+        criteria: { substance: 40, structure: 20, delivery: 35 },
+        recommendations: { topFixes: ['Добавить уточнения'] },
+        questionAnalysis: [
+          {
+            turnId: 'turn_1',
+            kind: 'main',
+            question: 'Профессиональный опыт',
+            answer: 'Вы: Расскажите о сложном проекте?',
+            criteria: null,
+            whatWorked: '',
+            whatWeak: ' ',
+            modelAnswer: '',
+            strongerAnswerStar: 'S/T/A/R: ...',
+            nextPractice: 'Подготовить уточнение.',
+          },
+        ],
+        verdict: 'Нужно усилить интервью.',
+        summary: 'Не хватает уточнений.',
+        errorMessage: null,
+        model: 'gpt-test',
+        createdAt: new Date('2026-06-28T10:10:00.000Z'),
+        updatedAt: new Date('2026-06-28T10:10:00.000Z'),
+      } as any,
+      'interviewer'
+    );
+
+    expect(dto.questionAnalysis?.[0]).toMatchObject({
+      whatWorked: 'Сильных элементов в ведении интервью не выявлено.',
+      whatWeak: 'Критичных слабых мест в ведении интервью не выявлено.',
+      strongerAnswerStar:
+        'Сформулируйте один основной вопрос и добавьте уточнение, которое проверит конкретный опыт, личный вклад и результат кандидата.',
+    });
+  });
+
   it('does not generate a report for unfinished sessions', async () => {
     const service = new ReportService({
       interviewRepository: createInterviewRepository({ status: 'running' }) as any,
@@ -297,6 +338,34 @@ describe('ReportService', () => {
     expect(engine.analyze).not.toHaveBeenCalled();
   });
 
+  it('uses interviewer-specific zero-answer copy and fallback analysis', async () => {
+    const reportRepository = createReportRepository();
+    const engine = { analyze: vi.fn() };
+    const service = new ReportService({
+      interviewRepository: createInterviewRepository(
+        { trainingMode: 'interviewer', questionCount: 1 },
+        { answerTranscript: '—', question: 'Проверка профессионального опыта' }
+      ) as any,
+      reportRepository: reportRepository as any,
+      engine,
+    });
+
+    const report = await service.ensureReport({
+      anonymousSessionId: 'anon_1',
+      sessionId: 'session_1',
+    });
+
+    expect(report.trainingMode).toBe('interviewer');
+    expect(report.verdict).toContain('интервьюер не задал');
+    expect(report.questionAnalysis?.[0]).toMatchObject({
+      answer: 'Вопрос не задан.',
+    });
+    expect(report.questionAnalysis?.[0]?.modelAnswer).toContain(
+      'Сформулируйте один основной вопрос'
+    );
+    expect(engine.analyze).not.toHaveBeenCalled();
+  });
+
   it('keeps skipped clarification questions in the zero-answer report', async () => {
     const reportRepository = createReportRepository();
     const engine = {
@@ -417,6 +486,44 @@ describe('ReportService', () => {
     expect(
       analyzedTurns.filter((turn: any) => turn.answerTranscript)
     ).toHaveLength(1);
+  });
+
+  it('describes incomplete interviewer coverage as plan items, not candidate answers', async () => {
+    const reportRepository = createReportRepository();
+    const engine = {
+      analyze: vi.fn().mockResolvedValue({
+        overallScore: 90,
+        verdict: 'Хорошее начало интервью.',
+        summary: 'Первый блок разобран подробно.',
+        criteria: { substance: 90, structure: 90, delivery: 90 },
+        recommendations: { topFixes: ['Проверить оставшиеся компетенции'] },
+        questionAnalysis: [],
+        model: 'gpt-test',
+      }),
+    };
+    const service = new ReportService({
+      interviewRepository: createInterviewRepository(
+        { trainingMode: 'interviewer', questionCount: 3 },
+        [
+          { answerTranscript: 'Расскажите о вашем самом сложном проекте?' },
+          { answerTranscript: '—' },
+          { answerTranscript: '—' },
+        ]
+      ) as any,
+      reportRepository: reportRepository as any,
+      engine,
+    });
+
+    const report = await service.ensureReport({
+      anonymousSessionId: 'anon_1',
+      sessionId: 'session_1',
+    });
+
+    expect(report.verdict).toContain('Обсуждено 1 из 3 пунктов плана');
+    expect(report.recommendations?.topFixes[0]).toContain(
+      'Пройти весь план интервью'
+    );
+    expect(report.verdict).not.toContain('содержательных ответов');
   });
 
   it('uses realtime dialogue messages as report answers when answer transcript is not finalized', async () => {

@@ -1,7 +1,11 @@
 import type {
   InterviewLevel,
   InterviewerMode,
-  InterviewSessionStatus, ReportRecommendations, ReportStatus 
+  InterviewQuestionSourceMode,
+  InterviewSessionStatus,
+  InterviewTrainingMode,
+  ReportRecommendations,
+  ReportStatus,
 } from '@/shared/dto';
 import type { BillingOwner } from './billingRepository';
 
@@ -13,6 +17,8 @@ export interface DashboardSessionRecord {
   role: string | null;
   level: InterviewLevel | null;
   interviewerMode: InterviewerMode;
+  trainingMode: InterviewTrainingMode;
+  questionSourceMode: InterviewQuestionSourceMode;
   questionCount: number;
   answeredQuestions: number;
   createdAt: Date;

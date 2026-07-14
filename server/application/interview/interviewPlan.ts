@@ -16,6 +16,10 @@ import type {
   QuestionSemanticPassport,
   RealtimeSessionLimits,
 } from '@/shared/dto';
+import {
+  canonicalInterviewQuestionKey,
+  normalizeInterviewQuestionText,
+} from '@/shared/interviewQuestion';
 import type { QuestionPreferenceRecord } from '@/server/interface/questionPreferenceRepository';
 import {
   getRepeatQuestionLimit,
@@ -108,7 +112,9 @@ export function buildInterviewPlanMetadata(params: {
     params.input.customQuestionsText
   );
 
-  const requiredUserItems = customQuestions
+  const requiredUserItems = (
+    questionSourceMode === 'free' ? [] : customQuestions
+  )
     .slice(0, config.targetQuestionCount)
     .map<InterviewPlanItem>((question, index) => ({
       id: `plan_user_${index + 1}`,
@@ -129,7 +135,7 @@ export function buildInterviewPlanMetadata(params: {
     config.targetQuestionCount - requiredUserItems.length
   );
   const glasnoItems =
-    questionSourceMode === 'custom'
+    questionSourceMode === 'custom' || questionSourceMode === 'free'
       ? []
       : Array.from({ length: remainingSlots }, (_, index) => {
           const planIndex = requiredUserItems.length + index + 1;
@@ -283,10 +289,10 @@ export function resolveNextPlannedQuestion(params: {
 
   if (!nextGeneratedItem) return null;
 
-  if (nextGeneratedItem.source === 'repeat' && nextGeneratedItem.question) {
+  if (nextGeneratedItem.question) {
     return {
       planItemId: nextGeneratedItem.id,
-      source: 'repeat',
+      source: nextGeneratedItem.source,
       question: nextGeneratedItem.question,
       hintPack:
         nextGeneratedItem.hintPack ??
@@ -302,6 +308,32 @@ export function resolveNextPlannedQuestion(params: {
     question: '',
     hintPack: buildHintPack({ question: '' }),
   };
+}
+
+export function populateGeneratedPlanQuestions(
+  metadata: InterviewSessionMetadata,
+  questions: string[],
+  context: { role?: string | null; vacancyTitle?: string | null } = {}
+): InterviewSessionMetadata {
+  const generated = questions
+    .map(normalizeInterviewQuestionText)
+    .filter(Boolean);
+  let generatedIndex = 0;
+  const items = metadata.plan.items.map((item) => {
+    if (item.source !== 'glasno' || item.question) return item;
+    const question = generated[generatedIndex++];
+    if (!question) return item;
+    return {
+      ...item,
+      question,
+      hintPack: buildHintPack({
+        question,
+        role: context.role,
+        vacancyTitle: context.vacancyTitle,
+      }),
+    };
+  });
+  return { ...metadata, plan: { ...metadata.plan, items } };
 }
 
 export function injectRepeatPreferences(
@@ -349,7 +381,9 @@ export function buildHintPack(params: {
   role?: string | null;
   vacancyTitle?: string | null;
 }): QuestionHintPack {
-  const question = normalizeQuestionText(params.question || 'текущий вопрос');
+  const question = normalizeInterviewQuestionText(
+    params.question || 'текущий вопрос'
+  );
   const roleContext = params.vacancyTitle || params.role || 'выбранной роли';
   return {
     structure:
@@ -376,26 +410,17 @@ function normalizeCustomQuestions(value?: string | null): string[] {
   const seen = new Set<string>();
   const candidates = raw
     .split(/\n|;|(?<=\?)\s+/)
-    .map((item) => normalizeQuestionText(item))
+    .map((item) => normalizeInterviewQuestionText(item))
     .filter((item) => item.length >= 8);
 
   const result: string[] = [];
   for (const question of candidates) {
-    const key = question.toLowerCase();
+    const key = canonicalInterviewQuestionKey(question);
     if (seen.has(key)) continue;
     seen.add(key);
     result.push(question);
   }
   return result.slice(0, 12);
-}
-
-function normalizeQuestionText(value: string): string {
-  const normalized = value
-    .trim()
-    .replace(/^\d+[).:-]\s*/, '')
-    .replace(/\s+/g, ' ');
-  if (!normalized) return '';
-  return /[?.!]$/.test(normalized) ? normalized : `${normalized}?`;
 }
 
 function goalFromLegacyQuestionCount(
@@ -442,7 +467,12 @@ function isSessionGoal(value: unknown): value is InterviewSessionGoal {
 }
 
 function isQuestionSourceMode(value: unknown): value is InterviewQuestionSourceMode {
-  return value === 'glasno' || value === 'mixed' || value === 'custom';
+  return (
+    value === 'glasno' ||
+    value === 'mixed' ||
+    value === 'custom' ||
+    value === 'free'
+  );
 }
 
 function isHintMode(value: unknown): value is InterviewHintMode {

@@ -101,6 +101,49 @@ function createInMemoryRepository() {
 }
 
 describe('InterviewService', () => {
+  it('finishes a running interview early and finalizes the current dialogue', async () => {
+    const repository = createInMemoryRepository();
+    const service = new InterviewService({
+      repository,
+      engine: {} as never,
+      hhClient: null,
+    });
+    repository.sessions.push({
+      id: 'session_early_finish',
+      anonymousSessionId: 'anon_early_finish',
+      userId: null,
+      status: 'running',
+      questionCount: 3,
+      metadata: {},
+    });
+    repository.turns.push({
+      id: 'turn_early_finish',
+      sessionId: 'session_early_finish',
+      kind: 'main',
+      answerTranscript: null,
+      metadata: {
+        dialogue: [
+          { role: 'user', content: 'Расскажите о вашем основном проекте.' },
+          { role: 'interviewer', content: 'Я запускал новый личный кабинет.' },
+        ],
+      },
+    });
+
+    const state = await service.finishInterview({
+      anonymousSessionId: 'anon_early_finish',
+      sessionId: 'session_early_finish',
+      input: { turnId: 'turn_early_finish' },
+    });
+
+    expect(repository.turns[0].answerTranscript).toBe(
+      'Расскажите о вашем основном проекте.'
+    );
+    expect(repository.completeSession).toHaveBeenCalledWith(
+      'session_early_finish'
+    );
+    expect(state.session.status).toBe('done');
+  });
+
   it('завершает интервью через атомарную фиксацию использованной бесплатной попытки', async () => {
     const repository = createInMemoryRepository();
     const service = new InterviewService({
@@ -440,6 +483,133 @@ describe('InterviewService', () => {
         candidateNotes: 'Отвечает кратко, но конкретно.',
       }),
     });
+  });
+
+  it('creates one silent conversation bucket for a free interviewer-training session', async () => {
+    const repository = createInMemoryRepository();
+    const engine = {
+      converse: vi.fn(),
+      converseStream: vi.fn(),
+      normalizeCustomQuestions: vi.fn(),
+      generateQuestion: vi.fn(),
+      evaluateAnswer: vi.fn(),
+      generateQuestionHints: vi.fn(),
+      generateSampleAnswerHint: vi.fn(),
+    };
+
+    const service = new InterviewService({ repository, engine, hhClient: null });
+    const state = await service.createSession({
+      anonymousSessionId: 'anon_free_interviewer',
+      input: {
+        trainingMode: 'interviewer',
+        source: { type: 'profession', role: 'Frontend-разработчик' },
+        questionSourceMode: 'free',
+        level: 'middle',
+        sessionGoal: 'standard',
+        responseMode: 'text',
+        hintMode: 'off',
+        language: 'ru',
+        interviewerMode: 'neutral',
+        interviewerAvatarId: 'neutral-pro',
+      },
+    });
+
+    expect(state.session.questionSourceMode).toBe('free');
+    expect(state.session.plan.items).toEqual([]);
+    expect(state.session.totalQuestions).toBe(1);
+    expect(state.currentTurn).toMatchObject({
+      question: 'Свободное интервью',
+      questionSource: 'glasno',
+    });
+    expect(engine.generateQuestion).not.toHaveBeenCalled();
+  });
+
+  it('prepares a stable AI question plan for interviewer training in one call', async () => {
+    const repository = createInMemoryRepository();
+    const engine = {
+      converse: vi.fn(),
+      converseStream: vi.fn(),
+      normalizeCustomQuestions: vi.fn(),
+      generateInterviewerPlan: vi.fn().mockResolvedValue({
+        questions: [
+          'Расскажите о самом сложном интерфейсе, который вы реализовали?',
+          'Как вы диагностируете проблемы производительности?',
+          'Как вы принимаете архитектурные решения в команде?',
+        ],
+      }),
+      generateQuestion: vi.fn(),
+      evaluateAnswer: vi.fn(),
+      generateQuestionHints: vi.fn(),
+      generateSampleAnswerHint: vi.fn(),
+    };
+    const service = new InterviewService({ repository, engine, hhClient: null });
+
+    const state = await service.createSession({
+      anonymousSessionId: 'anon_planned_interviewer',
+      input: {
+        trainingMode: 'interviewer',
+        source: { type: 'profession', role: 'Frontend-разработчик' },
+        questionSourceMode: 'glasno',
+        focus: 'professional',
+        level: 'middle',
+        sessionGoal: 'quick',
+        responseMode: 'text',
+        hintMode: 'off',
+        language: 'ru',
+        interviewerMode: 'neutral',
+        interviewerAvatarId: 'neutral-pro',
+      },
+    });
+
+    expect(engine.generateInterviewerPlan).toHaveBeenCalledWith(
+      expect.objectContaining({ focus: 'professional' })
+    );
+    expect(engine.generateQuestion).not.toHaveBeenCalled();
+    expect(state.session.plan.items.map((item) => item.question)).toEqual([
+      'Расскажите о самом сложном интерфейсе, который вы реализовали?',
+      'Как вы диагностируете проблемы производительности?',
+      'Как вы принимаете архитектурные решения в команде?',
+    ]);
+    expect(state.currentTurn?.question).toBe(
+      'Расскажите о самом сложном интерфейсе, который вы реализовали?'
+    );
+  });
+
+  it('rejects an incomplete or non-unique generated interviewer plan', async () => {
+    const repository = createInMemoryRepository();
+    const engine = {
+      generateInterviewerPlan: vi.fn().mockResolvedValue({
+        questions: [
+          'Расскажите о самом сложном проекте?',
+          'Расскажите о самом сложном проекте?',
+          'Как вы проверяете качество решения?',
+        ],
+      }),
+    };
+    const service = new InterviewService({
+      repository,
+      engine: engine as never,
+      hhClient: null,
+    });
+
+    await expect(
+      service.createSession({
+        anonymousSessionId: 'anon_incomplete_plan',
+        input: {
+          trainingMode: 'interviewer',
+          source: { type: 'profession', role: 'Frontend-разработчик' },
+          questionSourceMode: 'glasno',
+          level: 'middle',
+          sessionGoal: 'quick',
+          responseMode: 'text',
+          hintMode: 'off',
+          language: 'ru',
+          interviewerMode: 'neutral',
+          interviewerAvatarId: 'neutral-pro',
+        },
+      })
+    ).rejects.toThrow('полный план интервью');
+    expect(repository.sessions).toHaveLength(0);
   });
 
   it('updates interviewer gender and tone together from the selected face', async () => {
@@ -1027,7 +1197,7 @@ describe('InterviewService', () => {
     expect(second.currentTurn?.suggestMoveOn).toBe(true);
   });
 
-  it('updates only the sample answer when interviewer asks a follow-up inside the same turn', async () => {
+  it('updates only the candidate answer example when interviewer asks a follow-up inside the same turn', async () => {
     const repository = createInMemoryRepository();
     const engine = {
       normalizeCustomQuestions: vi.fn(),
@@ -1039,8 +1209,11 @@ describe('InterviewService', () => {
       }),
       evaluateAnswer: vi.fn(),
       generateQuestionHints: vi.fn(),
-      generateSampleAnswerHint: vi.fn().mockResolvedValue({
-        sampleAnswer:
+      generateHintExample: vi.fn().mockResolvedValue({
+        kind: 'candidate_answer',
+        context:
+          'А как вы оцениваете влияние TypeScript на скорость разработки и обучение новых членов команды?',
+        text:
           'Я бы ответил, что скорость разработки сначала может немного снижаться из-за обучения, но затем растёт за счёт автодополнения, понятных контрактов и более безопасного рефакторинга.',
       }),
     };
@@ -1114,10 +1287,10 @@ describe('InterviewService', () => {
     });
 
     expect(engine.generateQuestionHints).not.toHaveBeenCalled();
-    expect(engine.generateSampleAnswerHint).toHaveBeenCalledOnce();
-    expect(engine.generateSampleAnswerHint).toHaveBeenCalledWith(
+    expect(engine.generateHintExample).toHaveBeenCalledOnce();
+    expect(engine.generateHintExample).toHaveBeenCalledWith(
       expect.objectContaining({
-        targetQuestion:
+        exampleContext:
           'А как вы оцениваете влияние TypeScript на скорость разработки и обучение новых членов команды?',
       })
     );
@@ -1128,16 +1301,111 @@ describe('InterviewService', () => {
         'Связать типы с ранним поиском ошибок.',
         'Показать влияние на поддержку проекта.',
       ],
-      sampleAnswerQuestion:
-        'А как вы оцениваете влияние TypeScript на скорость разработки и обучение новых членов команды?',
-      sampleAnswer:
-        'Я бы ответил, что скорость разработки сначала может немного снижаться из-за обучения, но затем растёт за счёт автодополнения, понятных контрактов и более безопасного рефакторинга.',
+      example: {
+        kind: 'candidate_answer',
+        context:
+          'А как вы оцениваете влияние TypeScript на скорость разработки и обучение новых членов команды?',
+        text:
+          'Я бы ответил, что скорость разработки сначала может немного снижаться из-за обучения, но затем растёт за счёт автодополнения, понятных контрактов и более безопасного рефакторинга.',
+      },
     });
     expect(second.currentTurn?.messages).toHaveLength(2);
-    expect(engine.generateSampleAnswerHint).toHaveBeenCalledOnce();
+    expect(engine.generateHintExample).toHaveBeenCalledOnce();
   });
 
-  it('does not refresh the sample answer for a move-on prompt', async () => {
+  it('refreshes an interviewer question example after an AI-candidate reply', async () => {
+    const repository = createInMemoryRepository();
+    const engine = {
+      normalizeCustomQuestions: vi.fn().mockResolvedValue({
+        questions: ['Расскажите о выбранном технологическом стеке?'],
+      }),
+      converse: vi.fn(),
+      converseStream: vi.fn(),
+      generateQuestion: vi.fn(),
+      evaluateAnswer: vi.fn(),
+      generateQuestionHints: vi.fn().mockResolvedValue({
+        focus: 'Проверяет реальный вклад в техническое решение.',
+        answerPlan: ['Спросить о задаче.', 'Уточнить личный вклад.'],
+        keyDefinitions: [],
+        example: {
+          kind: 'interviewer_question',
+          context: 'Расскажите о выбранном технологическом стеке?',
+          text: 'Какую задачу вы решали с помощью этого стека?',
+          followUps: ['Как лично выбирали решение?'],
+        },
+      }),
+      generateSampleAnswerHint: vi.fn(),
+      generateHintExample: vi.fn().mockResolvedValue({
+        kind: 'interviewer_question',
+        context:
+          'В проекте мы использовали React и TypeScript, чтобы безопаснее менять интерфейс.',
+        text: 'Какую часть этого решения вы реализовали лично?',
+        followUps: ['Как проверяли, что решение сработало?'],
+      }),
+    };
+    const service = new InterviewService({
+      repository,
+      engine,
+      hhClient: null,
+    });
+
+    const created = await service.createSession({
+      anonymousSessionId: 'anon_interviewer_hints',
+      input: {
+        trainingMode: 'interviewer',
+        source: { type: 'profession', role: 'Frontend-разработчик' },
+        questionSourceMode: 'custom',
+        customQuestionsText:
+          'Расскажите о выбранном технологическом стеке?',
+        level: 'middle',
+        sessionGoal: 'quick',
+        responseMode: 'text',
+        hintMode: 'off',
+        language: 'ru',
+        interviewerMode: 'neutral',
+        interviewerAvatarId: 'neutral-pro',
+      },
+    });
+    const turnId = created.currentTurn!.id;
+
+    await service.generateTurnHints({
+      anonymousSessionId: 'anon_interviewer_hints',
+      sessionId: created.session.id,
+      input: { turnId },
+    });
+
+    const turn = repository.turns.find((item) => item.id === turnId);
+    turn.metadata = {
+      ...turn.metadata,
+      dialogue: [
+        {
+          role: 'interviewer',
+          content:
+            'В проекте мы использовали React и TypeScript, чтобы безопаснее менять интерфейс.',
+          at: '2026-07-14T10:10:00.000Z',
+        },
+      ],
+    };
+
+    const refreshed = await service.generateTurnHints({
+      anonymousSessionId: 'anon_interviewer_hints',
+      sessionId: created.session.id,
+      input: { turnId },
+    });
+
+    expect(engine.generateHintExample).toHaveBeenCalledWith(
+      expect.objectContaining({
+        exampleContext:
+          'В проекте мы использовали React и TypeScript, чтобы безопаснее менять интерфейс.',
+      })
+    );
+    expect((refreshed.currentTurn?.hintPack?.detailed as any)?.example).toMatchObject({
+      kind: 'interviewer_question',
+      text: 'Какую часть этого решения вы реализовали лично?',
+    });
+  });
+
+  it('does not refresh a legacy candidate answer for a move-on prompt', async () => {
     const repository = createInMemoryRepository();
     const engine = {
       normalizeCustomQuestions: vi.fn(),
@@ -1148,7 +1416,7 @@ describe('InterviewService', () => {
       }),
       evaluateAnswer: vi.fn(),
       generateQuestionHints: vi.fn(),
-      generateSampleAnswerHint: vi.fn(),
+      generateHintExample: vi.fn(),
     };
 
     const service = new InterviewService({
@@ -1200,7 +1468,7 @@ describe('InterviewService', () => {
       input: { turnId },
     });
 
-    expect(engine.generateSampleAnswerHint).not.toHaveBeenCalled();
+    expect(engine.generateHintExample).not.toHaveBeenCalled();
     expect(state.currentTurn?.hintPack?.detailed?.sampleAnswer).toBe(
       'Я бы ответил про статическую типизацию.'
     );
@@ -1268,8 +1536,9 @@ describe('InterviewService', () => {
     );
 
     expect(hintedClarification?.hintPack?.structure).toContain('результат');
-    expect(hintedClarification?.hintPack?.detailed?.sampleAnswer).toContain(
-      'конкретный эффект'
-    );
+    expect(hintedClarification?.hintPack?.detailed?.example).toMatchObject({
+      kind: 'candidate_answer',
+      text: expect.stringContaining('конкретный эффект'),
+    });
   });
 });

@@ -71,6 +71,48 @@ describe('report pdf labels', () => {
     }
   });
 
+  it('prints interviewer conversations with interviewer-specific labels', async () => {
+    const { renderReportPdf } = await import('./reportPdf');
+    const pdf = await renderReportPdf({
+      id: 'report_interviewer',
+      sessionId: 'session_interviewer',
+      trainingMode: 'interviewer',
+      status: 'done',
+      overallScore: 78,
+      verdict: 'Интервью проведено последовательно.',
+      summary: 'Нужно усилить уточняющие вопросы.',
+      criteria: { substance: 80, structure: 82, delivery: 72 },
+      recommendations: { topFixes: ['Уточнять личный вклад кандидата'] },
+      questionAnalysis: [
+        {
+          turnId: 'turn_1',
+          kind: 'main',
+          question: 'Опыт и профессиональные решения',
+          answer: 'Вы: Расскажите о сложном проекте?\nAI-кандидат: Я вёл редизайн.',
+          criteria: { substance: 80, structure: 82, delivery: 72 },
+          whatWorked: 'Есть открытый вопрос.',
+          whatWeak: 'Нет уточнения результата.',
+          modelAnswer: 'Какой результат получили?',
+          strongerAnswerStar: 'Уточнить личный вклад.',
+          nextPractice: 'Подготовить два уточнения.',
+        },
+      ],
+      errorMessage: null,
+      model: 'gpt-test',
+      createdAt: '2026-07-14T10:00:00.000Z',
+      updatedAt: '2026-07-14T10:01:00.000Z',
+    });
+
+    const parser = new PDFParse({ data: pdf });
+    try {
+      const result = await parser.getText();
+      expect(result.text).toContain('Разбор ведения интервью');
+      expect(result.text).toContain('Фрагмент разговора: Вы:');
+    } finally {
+      await parser.destroy();
+    }
+  });
+
   it('expands STAR inside dynamic pdf text', () => {
     expect(formatReportPdfText('Структурировать ответ по STAR')).toBe(
       'Структурировать ответ по STAR (ситуация, задача, действие, результат)'

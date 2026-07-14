@@ -51,6 +51,8 @@ describe('openai report engine helpers', () => {
     expect(instruction).toContain('пользователь проводил интервью');
     expect(instruction).toContain('структуру интервью');
     expect(instruction).toContain('уточняющие вопросы');
+    expect(instruction).toContain('решение по кандидату');
+    expect(instruction).toContain('противоречия');
     expect(instruction).toContain('candidate experience');
     expect(instruction).not.toContain('modelAnswer — сильный возможный вариант ответа');
   });
@@ -75,6 +77,34 @@ describe('openai report engine helpers', () => {
       'Реплики пользователя-интервьюера: Расскажите о вашем последнем проекте.'
     );
     expect(transcript).not.toContain('Ответ кандидата:');
+  });
+
+  it('includes the full interviewer and AI-candidate dialogue in interviewer reports', () => {
+    const transcript = buildReportTranscript(
+      [
+        {
+          id: 'turn_dialogue',
+          index: 1,
+          kind: 'main',
+          question: 'Опыт и зона ответственности',
+          answerTranscript: 'Какой вклад вы внесли лично?',
+          followUpForTurnId: null,
+          metadata: {
+            dialogue: [
+              { role: 'user', content: 'Расскажите о проекте.' },
+              { role: 'interviewer', content: 'Мы полностью его переделали.' },
+              { role: 'user', content: 'Что именно сделали вы?' },
+              { role: 'interviewer', content: 'Я спроектировал состояние.' },
+            ],
+          },
+        },
+      ] as never,
+      'interviewer'
+    );
+
+    expect(transcript).toContain('Пользователь-интервьюер: Расскажите о проекте.');
+    expect(transcript).toContain('AI-кандидат: Мы полностью его переделали.');
+    expect(transcript).toContain('Пользователь-интервьюер: Что именно сделали вы?');
   });
 
   it('keeps the structured-output schema in sync with the Zod DTO criteria', () => {
@@ -134,5 +164,35 @@ describe('openai report engine helpers', () => {
     expect(() =>
       ReportAnalysisDto.parse({ ...attached, model: 'test-model' })
     ).not.toThrow();
+  });
+
+  it('attaches the complete conversation fragment to interviewer analysis', () => {
+    const attached = attachQuestionsToAnalysis(
+      {
+        questionAnalysis: [{ turnId: 'turn_1' }],
+      },
+      [
+        {
+          id: 'turn_1',
+          question: 'Техническая глубина',
+          answerTranscript: 'Что именно сделали вы?',
+          metadata: {
+            dialogue: [
+              { role: 'user', content: 'Расскажите об архитектуре.' },
+              { role: 'interviewer', content: 'Мы использовали микрофронтенды.' },
+            ],
+          },
+        },
+      ] as never,
+      'interviewer'
+    );
+
+    expect(attached.questionAnalysis).toEqual([
+      expect.objectContaining({
+        question: 'Техническая глубина',
+        answer:
+          'Вы: Расскажите об архитектуре.\nAI-кандидат: Мы использовали микрофронтенды.',
+      }),
+    ]);
   });
 });
