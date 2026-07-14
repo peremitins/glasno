@@ -487,6 +487,14 @@ a {
   opacity: 0.58;
 }
 
+/* Меню Reka рендерятся через Teleport поверх произвольного контента. Для
+   читаемости им нужна сплошная поверхность, а не полупрозрачное стекло. */
+.role-menu {
+  border: 1px solid var(--glass-border-strong) !important;
+  background: var(--surface-solid) !important;
+  box-shadow: var(--shadow-panel);
+}
+
 .glass-frame--interactive {
   transition: transform var(--motion-normal) var(--ease-out),
     border-color var(--motion-normal) var(--ease-out),
