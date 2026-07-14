@@ -28,4 +28,10 @@ describe('interview history interactions', () => {
     expect(source).toContain("kind: 'history'");
     expect(source).not.toContain(':interactive=');
   });
+
+  it('shows the user role for candidate and interviewer training sessions', () => {
+    expect(source).toContain('historyModeLabel');
+    expect(source).toContain('history.mode.candidate');
+    expect(source).toContain('history.mode.interviewer');
+  });
 });

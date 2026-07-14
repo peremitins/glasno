@@ -2,6 +2,8 @@ import { z } from 'zod';
 import {
   InterviewFocusDto,
   InterviewLevelDto,
+  InterviewQuestionSourceModeDto,
+  InterviewTrainingModeDto,
   InterviewerModeDto,
   InterviewSessionStatusDto,
 } from './interview';
@@ -22,6 +24,8 @@ export const InterviewHistoryItemDto = z.object({
   role: z.string().nullable(),
   level: InterviewLevelDto.nullable(),
   interviewerMode: InterviewerModeDto,
+  trainingMode: InterviewTrainingModeDto,
+  questionSourceMode: InterviewQuestionSourceModeDto,
   answeredQuestions: z.number().int().nonnegative(),
   totalQuestions: z.number().int().positive(),
   createdAt: z.string(),
@@ -68,4 +72,3 @@ export type DashboardQuickScenario = z.infer<typeof DashboardQuickScenarioDto>;
 export type DashboardSummaryResponse = z.infer<
   typeof DashboardSummaryResponseDto
 >;
-

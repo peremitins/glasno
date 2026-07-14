@@ -285,6 +285,33 @@
     },
   ];
 
+  const interviewerScenarioOptions: Array<{
+    value: QuestionSourceMode;
+    title: string;
+    description: string;
+  }> = [
+    {
+      value: 'glasno',
+      title: 'interview.new.customQuestions.mode.glasno.title',
+      description: 'interview.new.customQuestions.mode.glasno.description',
+    },
+    {
+      value: 'custom',
+      title: 'interview.new.customQuestions.mode.custom.title',
+      description: 'interview.new.customQuestions.mode.custom.description',
+    },
+    {
+      value: 'mixed',
+      title: 'interview.new.customQuestions.mode.mixed.title',
+      description: 'interview.new.customQuestions.mode.mixed.description',
+    },
+    {
+      value: 'free',
+      title: 'interview.new.customQuestions.mode.free.title',
+      description: 'interview.new.customQuestions.mode.free.description',
+    },
+  ];
+
   const roleOptions: RoleOption[] = PROFESSIONAL_ROLE_OPTIONS.map((role) => ({
     role: role.name,
     specialization: '',
@@ -458,6 +485,40 @@
       form.questionSourceMode = enabled ? 'custom' : 'mixed';
     },
   });
+
+  const showCustomPlanInput = computed(
+    () =>
+      !isInterviewerTraining.value ||
+      form.questionSourceMode === 'custom' ||
+      form.questionSourceMode === 'mixed'
+  );
+
+  const selectedScenarioSummary = computed(() => {
+    if (!isInterviewerTraining.value) return '';
+    const option = interviewerScenarioOptions.find(
+      (item) => item.value === form.questionSourceMode
+    );
+    return option ? t(option.title) : '';
+  });
+
+  watch(
+    () => form.trainingMode,
+    (trainingMode) => {
+      if (
+        trainingMode === 'interviewer' &&
+        form.questionSourceMode === 'mixed' &&
+        !customQuestionsCombinedText.value
+      ) {
+        form.questionSourceMode = 'glasno';
+      }
+      if (
+        trainingMode === 'candidate' &&
+        ['free', 'glasno'].includes(form.questionSourceMode)
+      ) {
+        form.questionSourceMode = 'mixed';
+      }
+    }
+  );
 
   // Теги-подсказки под выбранную роль. Пока роль не выбрана — пусто, блок скрыт.
   const roleContextSuggestions = computed(() =>
@@ -686,7 +747,11 @@
       sessionGoal: form.sessionGoal,
       questionSourceMode: form.questionSourceMode,
       focus: form.focus ?? undefined,
-      customQuestionsText: customQuestionsCombinedText.value || undefined,
+      customQuestionsText:
+        form.questionSourceMode === 'custom' ||
+        form.questionSourceMode === 'mixed'
+          ? customQuestionsCombinedText.value || undefined
+          : undefined,
       candidatePersona: isInterviewerTraining.value
         ? form.candidatePersona
         : undefined,
@@ -991,7 +1056,7 @@
                 type="url"
                 inputmode="url"
                 placeholder="https://company.ru/careers/product-manager"
-              />
+              >
             </div>
           </div>
 
@@ -1127,7 +1192,7 @@
                     t('interview.new.contextTags.customPlaceholder')
                   "
                   @keydown.enter.prevent="addCustomContextTag"
-                />
+                >
                 <button
                   type="button"
                   class="secondary-button"
@@ -1259,7 +1324,7 @@
                   accept=".pdf,.txt,.md,.png,.jpg,.jpeg,text/plain,text/markdown,application/pdf,image/png,image/jpeg"
                   :disabled="isExtractingResume"
                   @change="onResumeFileChange"
-                />
+                >
                 <label
                   class="file-drop file-drop--compact button-loader-host"
                   for="resume-file"
@@ -1592,7 +1657,31 @@
                 </button>
               </div>
 
-              <div class="custom-questions-grid">
+              <div
+                v-if="isInterviewerTraining"
+                class="interviewer-scenario-grid"
+                role="radiogroup"
+                :aria-label="t('interview.new.customQuestions.scenarioLabel')"
+              >
+                <button
+                  v-for="option in interviewerScenarioOptions"
+                  :key="option.value"
+                  type="button"
+                  class="scenario-card"
+                  :class="{
+                    'scenario-card--active':
+                      form.questionSourceMode === option.value,
+                  }"
+                  role="radio"
+                  :aria-checked="form.questionSourceMode === option.value"
+                  @click="form.questionSourceMode = option.value"
+                >
+                  <strong>{{ t(option.title) }}</strong>
+                  <small>{{ t(option.description) }}</small>
+                </button>
+              </div>
+
+              <div v-if="showCustomPlanInput" class="custom-questions-grid">
                 <div class="field">
                   <label for="custom-questions">{{
                     t(
@@ -1628,7 +1717,7 @@
                         accept=".pdf,.txt,.md,.csv,.xls,.xlsx,.png,.jpg,.jpeg,text/plain,text/markdown,text/csv,application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,image/png,image/jpeg"
                         :disabled="isExtractingQuestionsFile"
                         @change="onCustomQuestionsFileChange"
-                      />
+                      >
                       <label
                         class="file-drop file-drop--compact button-loader-host"
                         for="custom-questions-file"
@@ -1674,8 +1763,8 @@
                     </p>
                   </div>
 
-                  <label class="toggle-option">
-                    <input v-model="customOnlyEnabled" type="checkbox" />
+                  <label v-if="!isInterviewerTraining" class="toggle-option">
+                    <input v-model="customOnlyEnabled" type="checkbox">
                     <span class="toggle-switch" aria-hidden="true" />
                     <span class="toggle-copy">
                       <strong>{{
@@ -1696,6 +1785,15 @@
                   </label>
                 </div>
               </div>
+              <p v-else class="scenario-note">
+                {{
+                  t(
+                    form.questionSourceMode === 'free'
+                      ? 'interview.new.customQuestions.mode.free.note'
+                      : 'interview.new.customQuestions.mode.glasno.note'
+                  )
+                }}
+              </p>
             </section>
           </div>
         </details>
@@ -1714,6 +1812,7 @@
         <p>{{ t('interview.new.sticky.title') }}</p>
         <div class="summary-chips" aria-label="Параметры интервью">
           <span>{{ selectedTrainingModeSummary }}</span>
+          <span v-if="selectedScenarioSummary">{{ selectedScenarioSummary }}</span>
           <span>{{ selectedGoalSummary }}</span>
           <span>{{ selectedFocusSummary }}</span>
           <span>{{ selectedLevelSummary }}</span>
@@ -2749,6 +2848,61 @@
     align-items: start;
   }
 
+  .interviewer-scenario-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .scenario-card {
+    display: grid;
+    gap: 6px;
+    min-width: 0;
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-sm);
+    background: var(--surface-soft);
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 13px;
+    text-align: left;
+    transition: border-color var(--motion-normal) var(--ease-out),
+      background var(--motion-normal) var(--ease-out),
+      transform var(--motion-normal) var(--ease-out);
+  }
+
+  .scenario-card:hover,
+  .scenario-card--active {
+    border-color: color-mix(in srgb, var(--accent) 52%, var(--glass-border));
+    background: var(--surface-raised);
+    transform: translateY(-1px);
+  }
+
+  .scenario-card--active {
+    box-shadow: inset 0 0 0 1px
+      color-mix(in srgb, var(--accent) 28%, transparent);
+  }
+
+  .scenario-card strong {
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 900;
+  }
+
+  .scenario-card span,
+  .scenario-card small,
+  .scenario-note {
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.45;
+  }
+
+  .scenario-note {
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-sm);
+    background: var(--surface-soft);
+    padding: 14px;
+  }
+
   .toggle-option {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr);
@@ -3101,6 +3255,10 @@
       grid-template-columns: 1fr;
     }
 
+    .interviewer-scenario-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
     .context-column--candidate {
       border-left: 0;
       border-top: 1px solid var(--glass-border);
@@ -3229,6 +3387,10 @@
          оставляет место для нижней навигации. Не резервируем её высоту
          повторно, иначе панель зависает слишком высоко над кнопками. */
       bottom: 0;
+    }
+
+    .interviewer-scenario-grid {
+      grid-template-columns: 1fr;
     }
   }
 

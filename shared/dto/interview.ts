@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { hasValidCustomInterviewQuestion } from '../interviewQuestion';
 
 export const InterviewSourceTypeDto = z.enum(['hh_url', 'text', 'profession']);
 export const InterviewTrainingModeDto = z.enum(['candidate', 'interviewer']);
@@ -29,7 +30,12 @@ export const InterviewSessionStatusDto = z.enum(['created', 'running', 'done']);
 export const InterviewTurnKindDto = z.enum(['main', 'clarification']);
 export const InterviewLanguageDto = z.enum(['ru', 'en']);
 export const InterviewSessionGoalDto = z.enum(['quick', 'standard', 'deep']);
-export const InterviewQuestionSourceModeDto = z.enum(['glasno', 'mixed', 'custom']);
+export const InterviewQuestionSourceModeDto = z.enum([
+  'glasno',
+  'mixed',
+  'custom',
+  'free',
+]);
 export const InterviewQuestionSourceDto = z.enum(['glasno', 'user', 'repeat']);
 export const InterviewResponseModeDto = z.enum(['text', 'dictation', 'realtime']);
 export const InterviewHintModeDto = z.enum(['off', 'on_request', 'realtime']);
@@ -92,13 +98,71 @@ export const QuestionPacingDto = z.object({
   reminderCooldownMinutes: z.number().int().positive(),
 });
 
-export const QuestionHintDetailsDto = z.object({
-  focus: z.string(),
-  answerPlan: z.array(z.string()),
-  keyDefinitions: z.array(z.string()),
-  sampleAnswerQuestion: z.string().trim().max(800).optional(),
-  sampleAnswer: z.string(),
-});
+const HintExampleContextDto = z.string().trim().max(1_200);
+const HintExampleTextDto = z.string().trim().min(1).max(700);
+const InterviewerQuestionTextDto = z.string().trim().min(3).max(500);
+
+function isDirectInterviewerQuestion(value: string): boolean {
+  const text = value.trim();
+  return (
+    text.endsWith('?') &&
+    !/(?:^|[\s.!?])(?:я|мы)(?=$|[\s,.!?;:])/iu.test(text)
+  );
+}
+
+const InterviewHintExampleBaseDto = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('candidate_answer'),
+    context: HintExampleContextDto,
+    text: HintExampleTextDto,
+  }),
+  z.object({
+    kind: z.literal('interviewer_question'),
+    context: HintExampleContextDto,
+    text: InterviewerQuestionTextDto,
+    followUps: z.array(InterviewerQuestionTextDto).max(2),
+  }),
+]);
+
+export const InterviewHintExampleDto = InterviewHintExampleBaseDto.superRefine(
+  (value, context) => {
+    if (value.kind !== 'interviewer_question') return;
+    if (!isDirectInterviewerQuestion(value.text)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['text'],
+        message: 'Пример интервьюера должен быть прямым вопросом',
+      });
+    }
+    for (const [index, question] of value.followUps.entries()) {
+      if (isDirectInterviewerQuestion(question)) continue;
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['followUps', index],
+        message: 'Уточнение должно быть прямым вопросом',
+      });
+    }
+  }
+);
+
+export const QuestionHintDetailsDto = z
+  .object({
+    focus: z.string(),
+    answerPlan: z.array(z.string()),
+    keyDefinitions: z.array(z.string()),
+    example: InterviewHintExampleDto.optional(),
+    // Старый формат остаётся только для чтения завершённых/старых сессий.
+    sampleAnswerQuestion: z.string().trim().max(800).optional(),
+    sampleAnswer: z.string().trim().min(1).max(700).optional(),
+  })
+  .superRefine((value, context) => {
+    if (value.example || value.sampleAnswer) return;
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['example'],
+      message: 'Нужен пример ответа или вопроса',
+    });
+  });
 
 export const QuestionHintPackDto = z.object({
   structure: z.string(),
@@ -138,27 +202,51 @@ export const InterviewPlanDto = z.object({
   items: z.array(InterviewPlanItemDto),
 });
 
-export const CreateInterviewSessionRequestDto = z.object({
-  trainingMode: InterviewTrainingModeDto.default('candidate'),
-  source: InterviewSourceDto,
-  resumeText: z.string().trim().max(15_000).optional(),
-  candidatePersona: CandidatePersonaDto.default('strong_brief'),
-  candidateDifficulty: CandidateDifficultyDto.default('realistic'),
-  candidateNotes: z.string().trim().max(4_000).optional(),
-  role: z.string().trim().max(160).optional(),
-  level: InterviewLevelDto.default('middle'),
-  questionCount: QuestionCountDto.optional(),
-  sessionGoal: InterviewSessionGoalDto.default('standard'),
-  questionSourceMode: InterviewQuestionSourceModeDto.optional(),
-  customQuestionsText: z.string().trim().max(10_000).optional(),
-  focus: InterviewFocusDto.optional(),
-  responseMode: InterviewResponseModeDto.default('text'),
-  hintMode: InterviewHintModeDto.default('off'),
-  language: InterviewLanguageDto.default('ru'),
-  interviewerMode: InterviewerModeDto.default('neutral'),
-  interviewerAvatarId: InterviewerAvatarIdDto.default('neutral-pro'),
-  interviewerFaceId: InterviewerFaceIdDto.optional(),
-});
+export const CreateInterviewSessionRequestDto = z
+  .object({
+    trainingMode: InterviewTrainingModeDto.default('candidate'),
+    source: InterviewSourceDto,
+    resumeText: z.string().trim().max(15_000).optional(),
+    candidatePersona: CandidatePersonaDto.default('strong_brief'),
+    candidateDifficulty: CandidateDifficultyDto.default('realistic'),
+    candidateNotes: z.string().trim().max(4_000).optional(),
+    role: z.string().trim().max(160).optional(),
+    level: InterviewLevelDto.default('middle'),
+    questionCount: QuestionCountDto.optional(),
+    sessionGoal: InterviewSessionGoalDto.default('standard'),
+    questionSourceMode: InterviewQuestionSourceModeDto.optional(),
+    customQuestionsText: z.string().trim().max(10_000).optional(),
+    focus: InterviewFocusDto.optional(),
+    responseMode: InterviewResponseModeDto.default('text'),
+    hintMode: InterviewHintModeDto.default('off'),
+    language: InterviewLanguageDto.default('ru'),
+    interviewerMode: InterviewerModeDto.default('neutral'),
+    interviewerAvatarId: InterviewerAvatarIdDto.default('neutral-pro'),
+    interviewerFaceId: InterviewerFaceIdDto.optional(),
+  })
+  .superRefine((value, context) => {
+    if (
+      value.questionSourceMode === 'free' &&
+      value.trainingMode !== 'interviewer'
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['questionSourceMode'],
+        message: 'Свободный сценарий доступен только интервьюеру',
+      });
+    }
+    if (
+      value.questionSourceMode === 'custom' &&
+      !hasValidCustomInterviewQuestion(value.customQuestionsText)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['customQuestionsText'],
+        message:
+          'Добавьте хотя бы один пользовательский вопрос не короче 8 символов',
+      });
+    }
+  });
 
 export const InterviewSessionDto = z.object({
   id: z.string(),
@@ -317,6 +405,7 @@ export type InterviewResponseMode = z.infer<typeof InterviewResponseModeDto>;
 export type InterviewHintMode = z.infer<typeof InterviewHintModeDto>;
 export type InterviewDialogueRole = z.infer<typeof InterviewDialogueRoleDto>;
 export type RealtimeSessionLimits = z.infer<typeof RealtimeSessionLimitsDto>;
+export type InterviewHintExample = z.infer<typeof InterviewHintExampleDto>;
 export type QuestionHintDetails = z.infer<typeof QuestionHintDetailsDto>;
 export type QuestionHintPack = z.infer<typeof QuestionHintPackDto>;
 export type InterviewPlanItem = z.infer<typeof InterviewPlanItemDto>;

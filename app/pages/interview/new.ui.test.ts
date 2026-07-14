@@ -26,6 +26,23 @@ describe('interview new page UI structure', () => {
     expect(source).toContain('id="candidate-notes"');
   });
 
+  it('offers four interviewer scenario modes including a planless free interview', () => {
+    expect(source).toContain('interviewerScenarioOptions');
+    expect(source).toContain("value: 'glasno'");
+    expect(source).toContain("value: 'custom'");
+    expect(source).toContain("value: 'mixed'");
+    expect(source).toContain("value: 'free'");
+    expect(source).toContain('interview.new.customQuestions.mode.free');
+    expect(source).toContain("form.questionSourceMode = 'glasno'");
+  });
+
+  it('restores mixed mode when switching back to candidate training', () => {
+    expect(source).toContain(
+      "['free', 'glasno'].includes(form.questionSourceMode)"
+    );
+    expect(source).toContain("form.questionSourceMode = 'mixed'");
+  });
+
   it('keeps resume file preview next to the upload before candidate notes', () => {
     const uploadIndex = source.indexOf('id="resume-file"');
     const previewIndex = source.indexOf('class="resume-preview"');

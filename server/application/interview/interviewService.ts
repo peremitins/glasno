@@ -6,6 +6,7 @@ import type {
   CreateInterviewSessionRequestInput,
   GenerateInterviewHintsRequest,
   InterviewDialogueMessage,
+  InterviewHintExample,
   InterviewPlan,
   InterviewPlanItem,
   InterviewSession,
@@ -31,6 +32,7 @@ import {
   buildInterviewPlanMetadata,
   injectRepeatPreferences,
   parseInterviewSessionMetadata,
+  populateGeneratedPlanQuestions,
   resolveNextPlannedQuestion,
 } from './interviewPlan';
 import type { QuestionPreferenceRepository } from '@/server/interface/questionPreferenceRepository';
@@ -38,6 +40,7 @@ import {
   buildQuestionContext,
   matchesQuestionContext,
 } from '@/shared/questionContext';
+import { canonicalInterviewQuestionKey } from '@/shared/interviewQuestion';
 import {
   avatarFromMode,
   modeFromFaceId,
@@ -78,6 +81,48 @@ export class InterviewService {
       role: input.role || preparedSource.role,
       vacancyTitle: preparedSource.vacancyTitle,
     });
+    const generatedPlanSlots = metadata.plan.items.filter(
+      (item) => item.source === 'glasno' && !item.question
+    ).length;
+    if (
+      metadata.trainingMode === 'interviewer' &&
+      generatedPlanSlots > 0 &&
+      this.deps.engine.generateInterviewerPlan
+    ) {
+      const existingPlanQuestions = metadata.plan.items
+        .map((item) => item.question)
+        .filter((question): question is string => Boolean(question));
+      const generatedPlan = await this.deps.engine.generateInterviewerPlan({
+        anonymousSessionId: params.anonymousSessionId,
+        userId: params.userId ?? null,
+        role: input.role || preparedSource.role,
+        vacancyTitle: preparedSource.vacancyTitle,
+        vacancyText: preparedSource.vacancyRaw,
+        resumeText: input.resumeText || null,
+        level: input.level,
+        focus: metadata.focus,
+        questionsCount: generatedPlanSlots,
+        existingQuestions: existingPlanQuestions,
+      });
+      const generatedQuestions = normalizeGeneratedPlanQuestions(
+        generatedPlan.questions,
+        existingPlanQuestions
+      );
+      if (generatedQuestions.length !== generatedPlanSlots) {
+        throw apiError(
+          'E_UPSTREAM',
+          'Провайдер не вернул полный план интервью'
+        );
+      }
+      metadata = populateGeneratedPlanQuestions(
+        metadata,
+        generatedQuestions,
+        {
+          role: input.role || preparedSource.role,
+          vacancyTitle: preparedSource.vacancyTitle,
+        }
+      );
+    }
     if (
       input.trainingMode === 'candidate' &&
       this.deps.questionPreferenceRepository
@@ -253,16 +298,24 @@ export class InterviewService {
 
     const normalizedMetadata = normalizeTurnMetadata(turn.metadata);
     const baseMeta = toMetaRecord(turn.metadata);
-    const sampleAnswerQuestion = resolveSampleAnswerQuestion(
+    const dialogue = normalizedMetadata.dialogue.map((message) => ({
+      role: message.role,
+      content: message.content,
+    }));
+    const exampleContext = resolveHintExampleContext(
+      session,
       turn,
       normalizedMetadata.dialogue
     );
 
     if (normalizedMetadata.hintPack?.detailed) {
       const detailed = normalizedMetadata.hintPack.detailed;
-      const storedSampleQuestion =
-        detailed.sampleAnswerQuestion || turn.question.trim();
-      if (storedSampleQuestion === sampleAnswerQuestion) {
+      const storedExample = readStoredHintExample(
+        session,
+        turn,
+        detailed
+      );
+      if (storedExample?.context === exampleContext) {
         return this.getStateForSession(
           params.anonymousSessionId,
           session.id,
@@ -271,26 +324,19 @@ export class InterviewService {
       }
 
       const turns = await this.deps.repository.listTurns(session.id);
-      const sample = await this.deps.engine.generateSampleAnswerHint({
+      const example = await this.generateHintExample({
         session,
         turn,
         turns,
-        targetQuestion: sampleAnswerQuestion,
-        dialogue: normalizedMetadata.dialogue.map((message) => ({
-          role: message.role,
-          content: message.content,
-        })),
+        exampleContext,
+        dialogue,
       });
 
       await this.deps.repository.updateTurnMetadata(session.id, turn.id, {
         ...baseMeta,
         hintPack: {
           ...normalizedMetadata.hintPack,
-          detailed: {
-            ...detailed,
-            sampleAnswerQuestion,
-            sampleAnswer: sample.sampleAnswer,
-          },
+          detailed: replaceHintExample(detailed, example),
         },
       });
 
@@ -313,25 +359,23 @@ export class InterviewService {
       session,
       turn,
       turns,
+      dialogue,
     });
-    const nextDetailed: QuestionHintDetails = {
-      ...detailed,
-      sampleAnswerQuestion: turn.question.trim(),
-    };
+    let nextDetailed = replaceHintExample(
+      detailed,
+      readStoredHintExample(session, turn, detailed) ??
+        fallbackHintExample(session, turn, turn.question.trim())
+    );
 
-    if (sampleAnswerQuestion !== turn.question.trim()) {
-      const sample = await this.deps.engine.generateSampleAnswerHint({
+    if (nextDetailed.example?.context !== exampleContext) {
+      const example = await this.generateHintExample({
         session,
         turn,
         turns,
-        targetQuestion: sampleAnswerQuestion,
-        dialogue: normalizedMetadata.dialogue.map((message) => ({
-          role: message.role,
-          content: message.content,
-        })),
+        exampleContext,
+        dialogue,
       });
-      nextDetailed.sampleAnswerQuestion = sampleAnswerQuestion;
-      nextDetailed.sampleAnswer = sample.sampleAnswer;
+      nextDetailed = replaceHintExample(nextDetailed, example);
     }
 
     await this.deps.repository.updateTurnMetadata(session.id, turn.id, {
@@ -346,6 +390,25 @@ export class InterviewService {
       params.anonymousSessionId,
       session.id,
       params.userId
+    );
+  }
+
+  private async generateHintExample(params: {
+    session: InterviewSessionRecord;
+    turn: InterviewTurnRecord;
+    turns: InterviewTurnRecord[];
+    exampleContext: string;
+    dialogue: Array<{ role: 'user' | 'interviewer'; content: string }>;
+  }): Promise<InterviewHintExample> {
+    if (this.deps.engine.generateHintExample) {
+      const example = await this.deps.engine.generateHintExample(params);
+      if (isUsableHintExample(params.session, example)) return example;
+    }
+
+    return fallbackHintExample(
+      params.session,
+      params.turn,
+      params.exampleContext
     );
   }
 
@@ -704,21 +767,7 @@ export class InterviewService {
       throw apiError('E_NOT_FOUND', 'Вопрос не найден');
     }
 
-    if (!turn.answerTranscript) {
-      const baseMeta = toMetaRecord(turn.metadata);
-      const dialogue = parseDialogue(baseMeta.dialogue);
-      const answerText = dialogue
-        .filter((message) => message.role === 'user')
-        .map((message) => message.content)
-        .join('\n')
-        .trim();
-      // Пустую строку сохранять нельзя — currentTurn ищется по !answerTranscript.
-      await this.deps.repository.saveTurnAnswer(
-        session.id,
-        turn.id,
-        answerText || '—'
-      );
-    }
+    await this.finalizeTurnAnswer(session.id, turn);
 
     const turnsAfter = await this.deps.repository.listTurns(session.id);
     await this.createNextMainQuestionOrFinish(session, turnsAfter);
@@ -729,17 +778,101 @@ export class InterviewService {
     );
   }
 
+  // Завершение доступно в любой момент, в том числе в свободном сценарии,
+  // где кнопки перехода к следующему пункту намеренно нет.
+  async finishInterview(params: {
+    anonymousSessionId: string;
+    userId?: string | null;
+    sessionId: string;
+    input: NextInterviewQuestionRequest;
+  }): Promise<InterviewStateResponse> {
+    const session = await this.requireOwnedSession(
+      params.anonymousSessionId,
+      params.sessionId,
+      params.userId
+    );
+    if (session.status === 'done') {
+      return this.getStateForSession(
+        params.anonymousSessionId,
+        session.id,
+        params.userId
+      );
+    }
+    if (session.status !== 'running') {
+      throw apiError('E_CONFLICT', 'Интервью ещё не начато');
+    }
+
+    const turn = await this.deps.repository.findTurnById(
+      session.id,
+      params.input.turnId
+    );
+    if (!turn) {
+      throw apiError('E_NOT_FOUND', 'Вопрос не найден');
+    }
+
+    await this.finalizeTurnAnswer(session.id, turn);
+    await this.deps.repository.completeSession(session.id);
+    return this.getStateForSession(
+      params.anonymousSessionId,
+      session.id,
+      params.userId
+    );
+  }
+
+  private async finalizeTurnAnswer(
+    sessionId: string,
+    turn: InterviewTurnRecord
+  ): Promise<void> {
+    if (turn.answerTranscript) return;
+
+    const baseMeta = toMetaRecord(turn.metadata);
+    const dialogue = parseDialogue(baseMeta.dialogue);
+    const answerText = dialogue
+      .filter((message) => message.role === 'user')
+      .map((message) => message.content)
+      .join('\n')
+      .trim();
+    // Пустую строку сохранять нельзя — currentTurn ищется по !answerTranscript.
+    await this.deps.repository.saveTurnAnswer(
+      sessionId,
+      turn.id,
+      answerText || '—'
+    );
+  }
+
   private async createNextMainQuestionOrFinish(
     session: InterviewSessionRecord,
     turns: InterviewTurnRecord[]
   ) {
     const mainTurns = turns.filter((turn) => turn.kind === 'main');
+    const metadata = parseInterviewSessionMetadata(session.metadata);
+    if (metadata.questionSourceMode === 'free') {
+      if (mainTurns.length === 0) {
+        await this.deps.repository.createTurn({
+          sessionId: session.id,
+          index: 1,
+          kind: 'main',
+          question: 'Свободное интервью',
+          metadata: {
+            questionSource: 'glasno',
+            hintPack: buildHintPack({
+              question: 'Свободное интервью',
+              role: session.role,
+              vacancyTitle: session.vacancyTitle,
+            }),
+          },
+        });
+        return;
+      }
+      await this.deps.repository.completeSession(session.id);
+      return;
+    }
+
     if (mainTurns.length >= session.questionCount) {
       await this.deps.repository.completeSession(session.id);
       return;
     }
 
-    const metadata = parseInterviewSessionMetadata(session.metadata);
     const planned = resolveNextPlannedQuestion({ metadata, turns });
     if (!planned) {
       await this.deps.repository.completeSession(session.id);
@@ -749,7 +882,7 @@ export class InterviewService {
     let question = planned.question;
     let hintPack = planned.hintPack;
 
-    if (planned.source === 'glasno') {
+    if (planned.source === 'glasno' && !question) {
       const questionContext = this.getSessionQuestionContext(session);
       const questionPreferences = await this.getGenerationPreferences(
         session,
@@ -884,6 +1017,25 @@ function normalizeQuestion(question: string): string {
   const normalized = question.trim().replace(/\s+/g, ' ');
   if (!normalized) {
     throw apiError('E_UPSTREAM', 'LLM вернул пустой вопрос');
+  }
+  return normalized;
+}
+
+function normalizeGeneratedPlanQuestions(
+  questions: string[],
+  existingQuestions: string[] = []
+): string[] {
+  const seen = new Set(
+    existingQuestions.map(canonicalInterviewQuestionKey)
+  );
+  const normalized: string[] = [];
+  for (const rawQuestion of questions) {
+    const question = rawQuestion.trim().replace(/\s+/g, ' ');
+    if (!question) continue;
+    const key = canonicalInterviewQuestionKey(question);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    normalized.push(question);
   }
   return normalized;
 }
@@ -1036,11 +1188,16 @@ function parseDialogue(value: unknown): InterviewDialogueMessage[] {
   return result;
 }
 
-function resolveSampleAnswerQuestion(
+function resolveHintExampleContext(
+  session: InterviewSessionRecord,
   turn: InterviewTurnRecord,
   dialogue: InterviewDialogueMessage[]
 ): string {
-  return latestInterviewerQuestionForHints(dialogue) ?? turn.question.trim();
+  const context =
+    session.trainingMode === 'interviewer'
+      ? latestAiCandidateReplyForHints(dialogue)
+      : latestInterviewerQuestionForHints(dialogue);
+  return normalizeHintContext(context ?? turn.question);
 }
 
 function latestInterviewerQuestionForHints(
@@ -1054,6 +1211,122 @@ function latestInterviewerQuestionForHints(
     if (question && !isMoveOnPrompt(question)) return question;
   }
   return null;
+}
+
+function latestAiCandidateReplyForHints(
+  dialogue: InterviewDialogueMessage[]
+): string | null {
+  for (let index = dialogue.length - 1; index >= 0; index -= 1) {
+    const message = dialogue[index];
+    if (!message || message.role !== 'interviewer') continue;
+    const content = message.content.trim();
+    if (content) return content;
+  }
+  return null;
+}
+
+function normalizeHintContext(value: string): string {
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  return normalized.slice(0, 1_200) || 'Текущий этап интервью.';
+}
+
+function isDirectInterviewerQuestion(value: string): boolean {
+  const text = value.trim();
+  return (
+    text.endsWith('?') &&
+    !/(?:^|[\s.!?])(?:я|мы)(?=$|[\s,.!?;:])/iu.test(text)
+  );
+}
+
+function fallbackInterviewerHintQuestion(
+  session: InterviewSessionRecord,
+  turn: InterviewTurnRecord
+): string {
+  const plannedQuestion = turn.question.trim();
+  if (isDirectInterviewerQuestion(plannedQuestion)) return plannedQuestion;
+
+  const role = session.role?.trim().slice(0, 160);
+  return role
+    ? `Расскажите, пожалуйста, о последнем релевантном проекте в роли ${role}?`
+    : 'Расскажите, пожалуйста, о последнем релевантном проекте?';
+}
+
+function fallbackHintExample(
+  session: InterviewSessionRecord,
+  turn: InterviewTurnRecord,
+  context: string
+): InterviewHintExample {
+  const normalizedContext = normalizeHintContext(context);
+  if (session.trainingMode === 'interviewer') {
+    return {
+      kind: 'interviewer_question',
+      context: normalizedContext,
+      text: fallbackInterviewerHintQuestion(session, turn),
+      followUps: [],
+    };
+  }
+
+  return {
+    kind: 'candidate_answer',
+    context: normalizedContext,
+    text:
+      'Я бы коротко ответил по существу, добавил один релевантный пример и завершил результатом, не выдумывая фактов.',
+  };
+}
+
+function readStoredHintExample(
+  session: InterviewSessionRecord,
+  turn: InterviewTurnRecord,
+  detailed: QuestionHintDetails
+): InterviewHintExample | null {
+  const example = detailed.example;
+  if (session.trainingMode === 'interviewer') {
+    if (example && isUsableHintExample(session, example)) {
+      return example;
+    }
+    return null;
+  }
+
+  if (example?.kind === 'candidate_answer') return example;
+  if (!detailed.sampleAnswer) return null;
+  return {
+    kind: 'candidate_answer',
+    context: normalizeHintContext(
+      detailed.sampleAnswerQuestion || turn.question
+    ),
+    text: detailed.sampleAnswer,
+  };
+}
+
+function isUsableHintExample(
+  session: InterviewSessionRecord,
+  example: InterviewHintExample
+): boolean {
+  if (session.trainingMode !== 'interviewer') {
+    return example.kind === 'candidate_answer' && Boolean(example.text.trim());
+  }
+
+  return (
+    example.kind === 'interviewer_question' &&
+    isDirectInterviewerQuestion(example.text) &&
+    example.followUps.length <= 2 &&
+    example.followUps.every(isDirectInterviewerQuestion)
+  );
+}
+
+function replaceHintExample(
+  detailed: QuestionHintDetails,
+  example: InterviewHintExample
+): QuestionHintDetails {
+  const {
+    sampleAnswer: _legacySampleAnswer,
+    sampleAnswerQuestion: _legacySampleAnswerQuestion,
+    ...nextDetailed
+  } = detailed;
+  return {
+    ...nextDetailed,
+    example,
+  };
 }
 
 function extractQuestionPrompt(content: string): string | null {

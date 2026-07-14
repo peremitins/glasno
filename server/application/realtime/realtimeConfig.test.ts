@@ -54,6 +54,32 @@ describe('realtimeConfig', () => {
     expect(instructions).not.toContain('ты проверяешь кандидата');
   });
 
+  it('uses the same mandatory candidate behavior contract in voice mode', () => {
+    const instructions = buildRealtimeInstructions({
+      ...context,
+      trainingMode: 'interviewer',
+      candidatePersona: 'overconfident',
+      candidateDifficulty: 'challenging',
+    });
+
+    expect(instructions).toContain('ОБЯЗАТЕЛЬНЫЕ ПРОЯВЛЕНИЯ');
+    expect(instructions).toContain('Длину ответа определяет выбранный профиль');
+    expect(instructions).toContain('приписывай себе более широкий вклад');
+    expect(instructions).toContain('не раскрывай противоречия добровольно');
+  });
+
+  it('does not reserve transition phrases for the app in free interviews', () => {
+    const instructions = buildRealtimeInstructions({
+      ...context,
+      trainingMode: 'interviewer',
+      questionSourceMode: 'free',
+    });
+
+    expect(instructions).toContain('Свободное интервью');
+    expect(instructions).toContain('считай обычной частью разговора');
+    expect(instructions).not.toContain('это команда приложению');
+  });
+
   it('includes interviewer gender grammar instruction', () => {
     const instructions = buildRealtimeInstructions({
       ...context,
@@ -102,6 +128,7 @@ describe('realtimeConfig', () => {
       session: {
         id: 'session_1',
         trainingMode: 'candidate' as const,
+        questionSourceMode: 'glasno' as const,
         role: 'Product Manager',
         level: 'senior',
         interviewerMode: 'strict' as const,
@@ -120,6 +147,7 @@ describe('realtimeConfig', () => {
     expect(buildRealtimeContextFromState(state)).toEqual({
       sessionId: 'session_1',
       trainingMode: 'candidate',
+      questionSourceMode: 'glasno',
       role: 'Product Manager',
       level: 'senior',
       interviewerMode: 'strict',

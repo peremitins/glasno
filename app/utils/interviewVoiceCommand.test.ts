@@ -39,6 +39,18 @@ describe('interview voice commands', () => {
   });
 
   it.each([
+    '«следующий пункт»',
+    'следующего пункта',
+    'следующему пункту',
+    'следующим пунктом',
+    'следующем пункте',
+    'перейдем к следующему пункту',
+    'переключи на следующий пункт',
+  ])('accepts next plan item command "%s"', (command) => {
+    expect(isNextQuestionVoiceCommand(command)).toBe(true);
+  });
+
+  it.each([
     'дальше',
     'давай дальше',
     'продолжай дальше',

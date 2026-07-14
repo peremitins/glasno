@@ -58,17 +58,21 @@ describe('interview session hints panel', () => {
     expect(source).not.toContain('class="hint-focus"');
   });
 
-  it('keeps the sample answer as a separate disclosure', () => {
+  it('renders a typed example disclosure for the active training role', () => {
     expect(source).toContain('interview.session.hintsPanel.sampleAnswer');
+    expect(source).toContain('interview.session.hintsPanel.sampleQuestion');
+    expect(source).toContain('currentHintExample');
+    expect(source).toContain('followUps');
+    expect(source).toContain('interview.session.hintsPanel.sampleFollowUps');
     expect(source).toContain('hint-disclosure');
   });
 
-  it('opens the answer guidance and sample answer disclosures by default', () => {
+  it('opens the answer guidance and typed example disclosures by default', () => {
     expect(source).toMatch(
       /class="hint-disclosure hint-disclosure--primary"[\s\S]*?\n\s+open/
     );
     expect(source).toMatch(
-      /v-if="currentHintDetails\?\.sampleAnswer"[\s\S]*?class="hint-disclosure"[\s\S]*?\n\s+open/
+      /v-if="currentHintExample"[\s\S]*?class="hint-disclosure"[\s\S]*?\n\s+open/
     );
     expect(source).toMatch(/<details class="plan-disclosure">/);
   });
@@ -80,10 +84,28 @@ describe('interview session hints panel', () => {
     expect(source).toContain('@keydown.enter="handleComposerKeydown"');
   });
 
-  it('refreshes sample-answer hints when the interviewer asks a follow-up', () => {
+  it('refreshes the active-role example when the AI counterpart replies', () => {
     expect(source).toContain('currentHintsRequestKey');
     expect(source).toContain('latestInterviewerQuestionForHints');
-    expect(source).toContain('sampleAnswerQuestion');
+    expect(source).toContain('latestAiCandidateReplyForHints');
+    expect(source).toContain('hintExampleContextForTurn');
+  });
+
+  it('does not render a legacy candidate answer as an interviewer hint', () => {
+    expect(source).toContain('const currentHintExample');
+    expect(source).toMatch(
+      /if \(isInterviewerTraining\.value\) return null;[\s\S]*?kind: 'candidate_answer'/
+    );
+  });
+
+  it('uses the complete latest AI-candidate reply as interviewer hint context', () => {
+    expect(source).toMatch(
+      /function latestAiCandidateReplyForHints\([\s\S]*?message\.role !== 'interviewer'[\s\S]*?normalizeHintExampleContext\(message\.content\)/
+    );
+    expect(source).toMatch(
+      /if \(isInterviewerTraining\.value\) \{[\s\S]*?latestAiCandidateReplyForHints\(turn\) \|\| turn\.question/
+    );
+    expect(source).toContain('function normalizeHintExampleContext');
   });
 
   it('resets the hints scroll when new or refreshed hints replace the panel content', () => {
@@ -93,13 +115,23 @@ describe('interview session hints panel', () => {
     expect(source).toContain('hintsPane.value?.scrollTo({ top: 0');
     expect(source).toContain('panel.scrollTo({ top: 0');
     expect(source).toMatch(
-      /state\.value = await api<InterviewStateResponse>\([\s\S]*?await nextTick\(\);[\s\S]*?scrollHintsToTop\('auto'\);/
+      /const response = await api<InterviewStateResponse>\([\s\S]*?state\.value = response;[\s\S]*?await nextTick\(\);[\s\S]*?scrollHintsToTop\('auto'\);/
     );
     expect(source).toMatch(
       /\(\) => currentHintsRequestKey\.value,[\s\S]*?scrollHintsToTop\('auto'\);/
     );
     expect(source).toContain('ref="hintsPane"');
     expect(source).toContain(':ref="setHintDetailsPanelRef"');
+  });
+
+  it('retries hints when the AI counterpart adds a newer message during a request', () => {
+    expect(source).toContain('let requestBecameStale = false;');
+    expect(source).toContain(
+      'requestBecameStale = currentHintsRequestKey.value !== requestKey;'
+    );
+    expect(source).toMatch(
+      /if \(requestBecameStale && hintsOpen\.value\) \{[\s\S]*?void generateHintsForCurrentTurn\(\);/
+    );
   });
 
   it('applies persisted realtime dialogue state for hint refreshes', () => {
@@ -169,6 +201,22 @@ describe('interview session hints panel', () => {
     expect(source).toContain('isNextQuestionTransitionReply');
     expect(source).toContain('handleRealtimeAssistantTranscript');
     expect(source).not.toContain('realtimeAdapter.value = null');
+  });
+
+  it('keeps the interviewer-training chat empty until the user asks a question', () => {
+    expect(source).toContain('if (!isInterviewerTraining.value)');
+    expect(source).toMatch(
+      /if \(!isInterviewerTraining\.value\) \{[\s\S]*?persisted\.push\(\{[\s\S]*?question-\$\{turn\.id\}/
+    );
+  });
+
+  it('does not generate a realtime candidate reply when a plan item changes', () => {
+    expect(source).toContain('if (isInterviewerTraining.value) return;');
+  });
+
+  it('hides plan navigation in free interviewer-training mode', () => {
+    expect(source).toContain('isFreeInterviewerTraining');
+    expect(source).toContain('v-if="!isFreeInterviewerTraining"');
   });
 
   it('uses text-only shimmer on the sample answer while follow-up hints refresh', () => {

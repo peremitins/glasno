@@ -66,6 +66,20 @@
         : 'report.strongerStar'
     )
   );
+  const reportMatrixEyebrow = computed(() =>
+    t(
+      isInterviewerTraining.value
+        ? 'report.interviewer.byQuestions'
+        : 'report.byQuestions'
+    )
+  );
+  const reportMatrixTitle = computed(() =>
+    t(
+      isInterviewerTraining.value
+        ? 'report.interviewer.questionMatrix.title'
+        : 'report.questionMatrix.title'
+    )
+  );
   const isReportInitialLoading = computed(() => pending.value && !data.value);
   const isReportBuilding = computed(
     () =>
@@ -175,7 +189,11 @@
         number: index + 1,
         displayNumber: String(index + 1).padStart(2, '0'),
         kindLabel: t(
-          item.kind === 'clarification'
+          isInterviewerTraining.value
+            ? item.kind === 'clarification'
+              ? 'report.interviewer.questionMatrix.clarification'
+              : 'report.interviewer.questionMatrix.main'
+            : item.kind === 'clarification'
             ? 'report.questionMatrix.clarification'
             : 'report.questionMatrix.main'
         ),
@@ -183,6 +201,14 @@
         averageScore: averageScore(criteria),
       };
     })
+  );
+  const reportQuestionCountLabel = computed(() =>
+    t(
+      isInterviewerTraining.value
+        ? 'report.interviewer.questionMatrix.count'
+        : 'report.questionMatrix.count',
+      { count: reportQuestionRows.value.length }
+    )
   );
 
   const pdfUrl = computed(() =>
@@ -290,7 +316,10 @@
       :heights="[240, 320, 180, 220]"
     />
 
-    <ReportGenerationPanel v-else-if="isReportBuilding" />
+    <ReportGenerationPanel
+      v-else-if="isReportBuilding"
+      :training-mode="report?.trainingMode"
+    />
 
     <section v-else-if="!report" class="panel glass-frame">
       <p>{{ t('report.empty') }}</p>
@@ -299,6 +328,7 @@
     <template v-else>
       <ReportGenerationPanel
         v-if="report.status === 'failed'"
+        :training-mode="report.trainingMode"
         :error-message="
           retryErrorMessage || report.errorMessage || t('report.status.failed')
         "
@@ -406,14 +436,10 @@
         <section class="panel glass-frame question-matrix">
           <div class="question-matrix__header">
             <div>
-              <p class="page-kicker">{{ t('report.byQuestions') }}</p>
-              <h2>{{ t('report.questionMatrix.title') }}</h2>
+              <p class="page-kicker">{{ reportMatrixEyebrow }}</p>
+              <h2>{{ reportMatrixTitle }}</h2>
               <span class="question-count">
-                {{
-                  t('report.questionMatrix.count', {
-                    count: reportQuestionRows.length,
-                  })
-                }}
+                {{ reportQuestionCountLabel }}
               </span>
             </div>
             <div class="score-legend" aria-hidden="true">
@@ -630,8 +656,12 @@
 
   .grid {
     display: grid;
-    grid-template-columns: minmax(0, 1.2fr) minmax(260px, 0.8fr);
+    grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);
     gap: 18px;
+  }
+
+  .grid > * {
+    min-width: 0;
   }
 
   .chart-panel {
@@ -753,11 +783,13 @@
   }
 
   .fixes li {
+    min-width: 0;
     border-left: 2px solid var(--accent);
     border-radius: var(--radius-sm);
     background: var(--surface-soft);
     padding: 14px;
     color: var(--text-secondary);
+    overflow-wrap: anywhere;
   }
 
   .question-matrix {

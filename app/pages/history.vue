@@ -72,6 +72,25 @@
     return base;
   }
 
+  function historyModeLabel(item: HistoryItem) {
+    return item.trainingMode === 'interviewer'
+      ? t('history.mode.interviewer')
+      : t('history.mode.candidate');
+  }
+
+  function historyProgressLabel(item: HistoryItem) {
+    if (
+      item.trainingMode === 'interviewer' &&
+      item.questionSourceMode === 'free'
+    ) {
+      return t('history.freeInterview');
+    }
+    return t('history.progress', {
+      answered: item.answeredQuestions,
+      total: item.totalQuestions,
+    });
+  }
+
   function historyTermContext(
     item: HistoryItem,
     label: string
@@ -130,7 +149,10 @@
           @keydown.space.prevent="openHistoryItem(item)"
         >
           <div class="main">
-            <span class="status">{{ t(`common.status.${item.status}`) }}</span>
+            <div class="status-row">
+              <span class="status">{{ t(`common.status.${item.status}`) }}</span>
+              <span class="mode-badge">{{ historyModeLabel(item) }}</span>
+            </div>
             <h2>
               <TextWithInterviewTerms
                 :text="item.title"
@@ -152,10 +174,7 @@
               {{
                 item.report?.overallScore
                   ? t('common.score', { score: item.report.overallScore })
-                  : t('history.progress', {
-                      answered: item.answeredQuestions,
-                      total: item.totalQuestions,
-                    })
+                  : historyProgressLabel(item)
               }}
             </strong>
           </div>
@@ -301,6 +320,23 @@
     font-size: 12px;
     font-weight: 900;
     text-transform: uppercase;
+  }
+
+  .status-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+    align-items: center;
+  }
+
+  .mode-badge {
+    border: 1px solid var(--glass-border);
+    border-radius: 999px;
+    background: var(--surface-soft);
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 850;
+    padding: 3px 8px;
   }
 
   .meta {

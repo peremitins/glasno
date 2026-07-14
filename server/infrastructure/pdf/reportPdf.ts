@@ -81,7 +81,7 @@ export async function renderReportPdf(
     }
 
     if (report.questionAnalysis?.length) {
-      doc.fontSize(15).text('Разбор по вопросам');
+      doc.fontSize(15).text(labels.analysisSection);
       doc.moveDown(0.4);
       for (const item of report.questionAnalysis) {
         doc.fontSize(12).text(formatReportPdfText(item.question), {
@@ -165,7 +165,8 @@ function reportPdfLabels(trainingMode: InterviewTrainingMode) {
   if (trainingMode === 'interviewer') {
     return {
       title: 'Гласно — отчёт по интервьюеру',
-      answer: 'Вопросы интервьюера',
+      analysisSection: 'Разбор ведения интервью',
+      answer: 'Фрагмент разговора',
       modelAnswer: REPORT_PDF_INTERVIEWER_MODEL_ANSWER_LABEL,
       strongerStar: REPORT_PDF_INTERVIEWER_STAR_LABEL,
     };
@@ -173,6 +174,7 @@ function reportPdfLabels(trainingMode: InterviewTrainingMode) {
 
   return {
     title: 'Гласно — отчёт по интервью',
+    analysisSection: 'Разбор по вопросам',
     answer: 'Ответ',
     modelAnswer: REPORT_PDF_MODEL_ANSWER_LABEL,
     strongerStar: REPORT_PDF_STAR_LABEL,
