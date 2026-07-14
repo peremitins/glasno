@@ -34,6 +34,36 @@ describe('DrizzleBillingRepository (модель доступа v2)', () => {
     vi.clearAllMocks();
   });
 
+  it('не считает активную сессию использованным бесплатным интервью до готового отчёта', async () => {
+    const selectRows = [
+      [{ value: 0 }],
+      [{ email: 'hello@mentala.app', telegramId: null }],
+      [],
+    ];
+    const db = {
+      select: vi.fn().mockImplementation(() => {
+        const query = {
+          limit: async () => selectRows.shift() ?? [],
+        };
+        const source = {
+          where: () => query,
+          innerJoin: () => ({ where: () => query }),
+        };
+        return { from: () => source };
+      }),
+    };
+    database.getDb.mockReturnValue(db);
+    const repository = new DrizzleBillingRepository();
+    vi.spyOn(repository, 'countOwnerSessions').mockResolvedValue(1);
+
+    await expect(
+      repository.countOwnerFreeSessionsUsed({
+        anonymousSessionId: 'anon_running',
+        userId: 'user_1',
+      })
+    ).resolves.toBe(0);
+  });
+
   it('creates the access row with fixed renewal terms on the first pass purchase', async () => {
     const harness = createDbHarness({ savedCardWithPayment: true });
     database.getDb.mockReturnValue(harness.db);

@@ -253,11 +253,53 @@ export class DrizzleAuthRepository implements AuthRepository {
       await tx
         .delete(schema.interviewQuestionPreferences)
         .where(eq(schema.interviewQuestionPreferences.userId, userId));
+      const [identity] = await tx
+        .select({
+          email: schema.users.email,
+          telegramId: schema.users.telegramId,
+        })
+        .from(schema.users)
+        .where(eq(schema.users.id, userId))
+        .limit(1);
       const ownedSessions = await tx
         .select({ id: schema.interviewSessions.id })
         .from(schema.interviewSessions)
         .where(eq(schema.interviewSessions.userId, userId));
       const sessionIds = ownedSessions.map((session) => session.id);
+
+      // Старые готовые отчёты, созданные до появления реестра, тоже фиксируем
+      // перед удалением. Иначе удаление аккаунта снова откроет бесплатную
+      // попытку для того же email/Telegram ID.
+      const [completedReport] = sessionIds.length
+        ? await tx
+            .select({ id: schema.interviewReports.id })
+            .from(schema.interviewReports)
+            .where(
+              and(
+                inArray(schema.interviewReports.sessionId, sessionIds),
+                eq(schema.interviewReports.status, 'done')
+              )
+            )
+            .limit(1)
+        : [];
+      if (completedReport) {
+        const email = identity?.email?.trim().toLowerCase() || null;
+        const telegramId = identity?.telegramId || null;
+        if (email || telegramId) {
+          await tx
+            .insert(schema.trialInterviewHistory)
+            .values({ userId, email, telegramId, completedAt: now })
+            .onConflictDoNothing();
+        }
+      }
+
+      // Платёжные списания сохраняем для аудита, но они могут ссылаться на
+      // голосовую сессию. Сначала снимаем эту ссылку, иначе PostgreSQL не даст
+      // удалить realtime_voice_sessions из-за внешнего ключа.
+      await tx
+        .update(schema.realtimeMinuteDebits)
+        .set({ realtimeSessionId: null })
+        .where(eq(schema.realtimeMinuteDebits.userId, userId));
 
       if (sessionIds.length > 0) {
         await tx
@@ -384,6 +426,38 @@ export class DrizzleAuthRepository implements AuthRepository {
           )
         )
         .returning({ id: schema.interviewSessions.id });
+
+      const sessionIds = rows.map((row) => row.id);
+      const [completedReport] = sessionIds.length
+        ? await tx
+            .select({ id: schema.interviewReports.id })
+            .from(schema.interviewReports)
+            .where(
+              and(
+                inArray(schema.interviewReports.sessionId, sessionIds),
+                eq(schema.interviewReports.status, 'done')
+              )
+            )
+            .limit(1)
+        : [];
+      if (completedReport) {
+        const [identity] = await tx
+          .select({
+            email: schema.users.email,
+            telegramId: schema.users.telegramId,
+          })
+          .from(schema.users)
+          .where(eq(schema.users.id, userId))
+          .limit(1);
+        const email = identity?.email?.trim().toLowerCase() || null;
+        const telegramId = identity?.telegramId || null;
+        if (email || telegramId) {
+          await tx
+            .insert(schema.trialInterviewHistory)
+            .values({ userId, email, telegramId })
+            .onConflictDoNothing();
+        }
+      }
 
       const anonymousPreferences = await tx
         .select()

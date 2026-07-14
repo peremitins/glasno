@@ -103,6 +103,32 @@ export class BillingService {
     return await this.giftNotifications.runSweep(params);
   }
 
+  async runPendingPaymentSweep(params?: { limit?: number }) {
+    const orders = await this.deps.repository.listPendingPaymentOrders(params);
+    const results = await Promise.allSettled(
+      orders.map(async (order) => {
+        if (!order.providerPaymentId) return;
+        const verified = await getYooKassaPayment(
+          this.deps.config.yookassa,
+          order.providerPaymentId
+        );
+        await this.applyVerifiedYooKassaPayment(order, verified, 'pending-sweep');
+      })
+    );
+    const failed = results.filter((result) => result.status === 'rejected').length;
+    if (failed > 0) {
+      console.warn('[billing] pending payment sweep completed with errors', {
+        checked: orders.length,
+        failed,
+      });
+    }
+    return {
+      checked: orders.length,
+      reconciled: orders.length - failed,
+      failed,
+    };
+  }
+
   async getPaymentHistory(params: {
     userId: string | null | undefined;
     cursor?: string | null;
@@ -117,31 +143,34 @@ export class BillingService {
       limit: params.limit,
     });
     return {
-      items: page.items.map(({ order, gift }) => {
-        const plan = findBillingPlan(order.planId);
-        return {
-          id: order.id,
-          planId: order.planId,
-          planName: plan?.name ?? order.planId,
-          planType: plan?.type ?? 'pass',
-          amountRub: order.amountRub,
-          currency: order.currency,
-          provider: order.provider,
-          status: order.status,
-          createdAt: order.createdAt.toISOString(),
-          operationId: order.providerPaymentId,
-          gift: gift
-            ? {
-                id: gift.id,
-                recipientEmailMasked: maskEmail(gift.recipientEmail),
-                status: effectiveGiftStatus(gift.status, gift.claimExpiresAt),
-                claimExpiresAt: gift.claimExpiresAt?.toISOString() ?? null,
-                claimedAt: gift.claimedAt?.toISOString() ?? null,
-                notificationStatus: gift.notificationStatus,
-              }
-            : null,
-        };
-      }),
+      // Незавершённый checkout — ещё не покупка: пользователь мог закрыть
+      // виджет или не подтвердить платёж. В историю попадают только финальные
+      // результаты, чтобы не создавать ложное впечатление списания.
+      items: page.items
+        .filter(({ order }) => !isPendingPaymentStatus(order.status))
+        .map(({ order, gift }) => {
+          const plan = findBillingPlan(order.planId);
+          return {
+            id: order.id,
+            planId: order.planId,
+            planName: plan?.name ?? order.planId,
+            planType: plan?.type ?? 'pass',
+            amountRub: order.amountRub,
+            currency: order.currency,
+            status: order.status,
+            createdAt: order.createdAt.toISOString(),
+            gift: gift
+              ? {
+                  id: gift.id,
+                  recipientEmailMasked: maskEmail(gift.recipientEmail),
+                  status: effectiveGiftStatus(gift.status, gift.claimExpiresAt),
+                  claimExpiresAt: gift.claimExpiresAt?.toISOString() ?? null,
+                  claimedAt: gift.claimedAt?.toISOString() ?? null,
+                  notificationStatus: gift.notificationStatus,
+                }
+              : null,
+          };
+        }),
       nextCursor: page.nextCursor,
     };
   }

@@ -134,6 +134,13 @@
       "when": 1783964362571,
       "tag": "0018_common_runaways",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1784018463798,
+      "tag": "0019_kind_ogun",
+      "breakpoints": true
     }
   ]
 }

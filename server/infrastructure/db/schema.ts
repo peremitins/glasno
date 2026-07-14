@@ -429,6 +429,19 @@ export const trialGrantHistory = pgTable('trial_grant_history', {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
+// Учёт личностей, завершивших бесплатное интервью. В отличие от voice-триала,
+// запись создаётся только после окончания интервью и не удаляется вместе с
+// аккаунтом: это не даёт получить новую бесплатную попытку после удаления.
+export const trialInterviewHistory = pgTable('trial_interview_history', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  email: text('email').unique(),
+  telegramId: text('telegram_id').unique(),
+  userId: uuid('user_id').references(() => users.id),
+  completedAt: timestamp('completed_at', { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+});
+
 // Детальный учёт использования AI. Одна запись = один вызов модели.
 // Позволяет точно посчитать стоимость по пользователям/сессиям.
 export const aiUsage = pgTable('ai_usage', {

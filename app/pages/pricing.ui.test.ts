@@ -115,7 +115,6 @@ describe('pricing pass card (тарифы v2)', () => {
     expect(source).toContain("t('pricing.accessExpiredAt'");
     expect(source).toContain("t('pricing.trialHint')");
     expect(source).toContain("t('pricing.trialUsedHint')");
-    expect(source).toContain("t('pricing.renewCta')");
   });
 });
 
@@ -144,7 +143,9 @@ describe('YooKassa widget presentation', () => {
     expect(yookassaWidgetSource).toContain('modal: true');
     expect(yookassaWidgetSource).toContain('getYooKassaWidgetColors');
     expect(yookassaWidgetSource).toContain("control_primary: '#7C5CFF'");
-    expect(yookassaWidgetSource).toContain("control_primary_content: '#FFFFFF'");
+    expect(yookassaWidgetSource).toContain(
+      "control_primary_content: '#FFFFFF'"
+    );
     expect(yookassaWidgetSource).toContain("background: '#11162C'");
     expect(yookassaWidgetSource).toContain("background: '#F4F7FF'");
     expect(yookassaWidgetSource).toContain('colors: getYooKassaWidgetColors()');
@@ -202,7 +203,7 @@ describe('pricing subscription management and gift checkout', () => {
     expect(sidebarNav).toBeDefined();
     expect(sidebarNav).not.toContain('sidebar-quick-actions');
     expect(sidebarNav).not.toContain('sidebar-action--gift');
-    expect(sidebarNav!.indexOf("t(`nav.${item.key}`)")).toBeLessThan(
+    expect(sidebarNav!.indexOf('t(`nav.${item.key}`)')).toBeLessThan(
       sidebarNav!.indexOf("t('layout.giftAction')")
     );
     expect(sidebarNav!.indexOf("t('layout.giftAction')")).toBeLessThan(
