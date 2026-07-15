@@ -8,12 +8,34 @@ import {
   normalizeSampleAnswerHint,
   normalizeQuestionHintDetails,
   parseJsonObject,
+  resolveConverseMaxOutputTokens,
   selectGeneratedQuestionCandidate,
 } from './openaiInterviewEngine';
 import type { ConverseParams } from '@/server/interface/interviewEngine';
 import { readFileSync } from 'node:fs';
 
 describe('openai interview engine helpers', () => {
+  it('reserves more output tokens for the verbose AI candidate', () => {
+    expect(
+      resolveConverseMaxOutputTokens({
+        trainingMode: 'interviewer',
+        metadata: { candidatePersona: 'verbose_vague' },
+      })
+    ).toBe(650);
+    expect(
+      resolveConverseMaxOutputTokens({
+        trainingMode: 'interviewer',
+        metadata: { candidatePersona: 'strong_brief' },
+      })
+    ).toBe(380);
+    expect(
+      resolveConverseMaxOutputTokens({
+        trainingMode: 'candidate',
+        metadata: { candidatePersona: 'verbose_vague' },
+      })
+    ).toBe(380);
+  });
+
   it('extracts text from every Responses API output content block', () => {
     const text = extractResponsesText({
       output: [

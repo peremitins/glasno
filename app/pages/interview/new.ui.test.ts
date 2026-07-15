@@ -22,7 +22,7 @@ describe('interview new page UI structure', () => {
     expect(source).toContain('interview.new.aiCandidate.title');
     expect(source).toContain('interview.new.aiCandidate.resumeFile');
     expect(source).toContain('candidatePersonaOptions');
-    expect(source).toContain('candidateDifficultyOptions');
+    expect(source).not.toContain('candidateDifficultyOptions');
     expect(source).toContain('id="candidate-notes"');
   });
 
@@ -118,6 +118,92 @@ describe('interview new page UI structure', () => {
     expect(source).toContain('focus-chip-grid');
     expect(source).toContain('interview.focus.salaryNegotiation');
     expect(source).not.toContain('focus-select');
+  });
+
+  it('keeps candidate interview settings flat and visible', () => {
+    const focusIndex = source.indexOf('class="focus-chip-grid"');
+    const interviewerModeIndex = source.indexOf(
+      'parameter-group--interviewer-mode'
+    );
+    const customQuestionsIndex = source.indexOf(
+      'custom-questions-panel parameter-group'
+    );
+
+    expect(source).not.toContain('class="advanced-panel"');
+    expect(focusIndex).toBeGreaterThan(-1);
+    expect(interviewerModeIndex).toBeGreaterThan(focusIndex);
+    expect(customQuestionsIndex).toBeGreaterThan(interviewerModeIndex);
+  });
+
+  it('keeps option descriptions accessible through compact tooltip controls', () => {
+    const settingsSource = source.slice(
+      source.indexOf('<section id="settings"'),
+      source.indexOf('<div v-if="errorMessage"')
+    );
+
+    expect(source).toContain('class="option-help-icon"');
+    expect(source).not.toContain('class="option-help-button"');
+    expect(source).toContain('function optionHelpText(');
+    expect(source).toContain('v-tooltip="optionTooltip(option.description');
+    expect(source).toContain(':aria-label="optionHelpText(option.description');
+    expect(source).toContain("triggers: ['hover', 'focus', 'click', 'touch']");
+    expect(settingsSource).not.toContain(
+      '<small>{{ t(option.description) }}</small>'
+    );
+    expect(source).toContain('width: 16px;');
+    expect(source).toContain('top: 50%;');
+    expect(source).toContain('transform: translateY(-50%);');
+  });
+
+  it('uses the same compact card pattern for interviewer style', () => {
+    const interviewerModeSource = source.slice(
+      source.indexOf('parameter-group--interviewer-mode'),
+      source.indexOf('custom-questions-panel parameter-group')
+    );
+
+    expect(interviewerModeSource).toContain('class="goal-grid"');
+    expect(interviewerModeSource).toContain(
+      'class="goal-card compact-option__choice"'
+    );
+    expect(interviewerModeSource).not.toContain('segmented--compact');
+  });
+
+  it('keeps one four-option AI candidate behavior control', () => {
+    expect(source).not.toContain('candidateDifficultyOptions');
+    expect(source).not.toContain('aiCandidate.difficultyTitle');
+    expect(source).not.toContain("value: 'weak_hard_good_soft'");
+
+    const personaSource = source.slice(
+      source.indexOf('const candidatePersonaOptions'),
+      source.indexOf('const interviewerScenarioOptions')
+    );
+    expect(personaSource.match(/value: '/g)).toHaveLength(4);
+  });
+
+  it('uses selectable cards with indicators for interviewer question plans', () => {
+    const scenarioSource = source.slice(
+      source.indexOf('class="interviewer-scenario-grid"'),
+      source.indexOf('<div v-if="showCustomPlanInput"')
+    );
+
+    expect(scenarioSource).toContain(
+      'class="goal-card compact-option__choice"'
+    );
+    expect(scenarioSource).toContain("'goal-card--active':");
+    expect(scenarioSource).toContain('class="option-help-icon"');
+    expect(scenarioSource).not.toContain('scenario-card');
+  });
+
+  it('uses compact buttons instead of large file drop zones', () => {
+    const fileStyles = source.slice(
+      source.indexOf('.file-upload {'),
+      source.indexOf('.resume-preview {')
+    );
+
+    expect(source).toContain('class="file-button button-loader-host"');
+    expect(source).toContain('.file-button {');
+    expect(source).not.toContain('.file-drop {');
+    expect(fileStyles).not.toContain('min-height: 112px');
   });
 
   it('closes the custom profession menu and returns focus to the input', () => {
