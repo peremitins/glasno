@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   extractHhVacancyId,
   prepareInterviewSource,
@@ -6,6 +6,10 @@ import {
 } from './source';
 
 describe('interview source preparation', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it('extracts vacancy ids from common hh.ru URLs', () => {
     expect(extractHhVacancyId('https://hh.ru/vacancy/123456?from=main')).toBe(
       '123456'
@@ -24,16 +28,64 @@ describe('interview source preparation', () => {
     );
   });
 
+  it('rejects unsupported sites before fetching the page', async () => {
+    let fetchCalled = false;
+
+    await expect(
+      prepareInterviewSource(
+        {
+          type: 'hh_url',
+          url: 'https://www.youtube.com/watch?v=bzz622DshiM',
+        },
+        {
+          hhClient: null,
+          fetchHtml: async () => {
+            fetchCalled = true;
+            return '<main><h1>Видео</h1><p>Длинное описание видео на YouTube.</p></main>';
+          },
+        }
+      )
+    ).rejects.toThrow('ссылка не поддерживается');
+
+    expect(fetchCalled).toBe(false);
+  });
+
+  it('does not follow redirects to unsupported sites', async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(null, {
+        status: 302,
+        headers: {
+          Location: 'https://www.youtube.com/watch?v=bzz622DshiM',
+        },
+      })
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      prepareInterviewSource(
+        {
+          type: 'hh_url',
+          url: 'https://jobs.lever.co/acme/product-manager-id',
+        },
+        { hhClient: null }
+      )
+    ).rejects.toThrow('ссылка не поддерживается');
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it('loads and normalizes a vacancy from a generic public page', async () => {
     const source = await prepareInterviewSource(
       {
         type: 'hh_url',
-        url: 'https://jobs.example.com/product-manager',
+        url: 'https://jobs.lever.co/acme/product-manager-id',
       },
       {
         hhClient: null,
         fetchHtml: async (url: URL) => {
-          expect(url.href).toBe('https://jobs.example.com/product-manager');
+          expect(url.href).toBe(
+            'https://jobs.lever.co/acme/product-manager-id'
+          );
           return `
             <html>
               <head>
@@ -57,7 +109,7 @@ describe('interview source preparation', () => {
     expect(source).toMatchObject({
       source: 'hh_url',
       vacancyTitle: 'Product Manager',
-      vacancyUrl: 'https://jobs.example.com/product-manager',
+      vacancyUrl: 'https://jobs.lever.co/acme/product-manager-id',
       role: 'Product Manager',
       companyName: null,
     });
@@ -70,7 +122,7 @@ describe('interview source preparation', () => {
     const source = await prepareInterviewSource(
       {
         type: 'hh_url',
-        url: 'https://jobs.example.com/huge-vacancy',
+        url: 'https://career.habr.com/vacancies/100500',
       },
       {
         hhClient: null,

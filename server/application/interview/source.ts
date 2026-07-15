@@ -1,10 +1,15 @@
 import type { InterviewSource } from '@/shared/dto';
-import { apiError } from '@/server/utils/errors';
+import {
+  UNSUPPORTED_VACANCY_URL_MESSAGE,
+  validateVacancyUrl,
+} from '@/shared/vacancyUrl';
+import { apiError, isApiError } from '@/server/utils/errors';
 import type { HhClient } from '@/server/interface/hh';
 
 const MAX_VACANCY_CONTEXT_CHARS = 12_000;
 const MAX_GENERIC_VACANCY_HTML_BYTES = 1_000_000;
 const GENERIC_VACANCY_FETCH_TIMEOUT_MS = 12_000;
+const MAX_VACANCY_REDIRECTS = 5;
 
 const ENTITY_MAP: Record<string, string> = {
   nbsp: ' ',
@@ -107,6 +112,13 @@ function parsePublicVacancyUrl(rawUrl: string): URL {
   if (url.username || url.password || isLocalOrPrivateHostname(url.hostname)) {
     throw apiError('E_VALIDATION', 'Вставьте публичную ссылку на вакансию');
   }
+  const validation = validateVacancyUrl(url.href);
+  if (!validation.ok) {
+    throw apiError(
+      'E_VALIDATION',
+      validation.message || UNSUPPORTED_VACANCY_URL_MESSAGE
+    );
+  }
   return url;
 }
 
@@ -201,15 +213,35 @@ async function fetchGenericVacancyHtml(url: URL): Promise<string> {
   );
 
   try {
-    const response = await fetch(url, {
-      headers: {
-        Accept: 'text/html,application/xhtml+xml,text/plain;q=0.8',
-        'User-Agent':
-          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
-      },
-      redirect: 'follow',
-      signal: controller.signal,
-    });
+    let currentUrl = url;
+    let response: Response | null = null;
+
+    for (
+      let redirectCount = 0;
+      redirectCount <= MAX_VACANCY_REDIRECTS;
+      redirectCount += 1
+    ) {
+      response = await fetch(currentUrl, {
+        headers: {
+          Accept: 'text/html,application/xhtml+xml,text/plain;q=0.8',
+          'User-Agent':
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+        },
+        redirect: 'manual',
+        signal: controller.signal,
+      });
+
+      if (![301, 302, 303, 307, 308].includes(response.status)) break;
+
+      const location = response.headers.get('location');
+      if (!location || redirectCount === MAX_VACANCY_REDIRECTS) {
+        throw new Error('Слишком много перенаправлений вакансии');
+      }
+
+      currentUrl = parsePublicVacancyUrl(new URL(location, currentUrl).href);
+    }
+
+    if (!response) throw new Error('Пустой ответ сервера вакансии');
 
     if (!response.ok || !response.body) {
       throw new Error(`HTTP ${response.status}`);
@@ -244,6 +276,7 @@ async function fetchGenericVacancyHtml(url: URL): Promise<string> {
     html += decoder.decode();
     return html;
   } catch (err) {
+    if (isApiError(err) && err.data.code === 'E_VALIDATION') throw err;
     throw apiError(
       'E_UPSTREAM',
       'Не получилось прочитать вакансию по этой ссылке. Сайт может закрывать доступ или страница требует входа. Скопируйте описание вакансии во вкладку «Текст вакансии».',
