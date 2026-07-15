@@ -22,6 +22,28 @@ describe('extractInterviewFileText', () => {
 
     expect(source).toContain("import '@napi-rs/canvas';");
   });
+
+  it('встраивает PDF worker как data URL для минимального production image', () => {
+    const source = readFileSync(
+      'server/infrastructure/files/extractInterviewFileText.ts',
+      'utf8'
+    );
+
+    expect(source).toContain("from 'pdf-parse/worker'");
+    expect(source).toContain('PDFParse.setWorker(getData())');
+  });
+
+  it('извлекает текст из PDF-файла', async () => {
+    const text = await extractInterviewFileText({
+      data: readFileSync(
+        'apps/landing/public/reports/example-interview-report.pdf'
+      ),
+      fileName: 'resume.pdf',
+      mimeType: 'application/pdf',
+    });
+
+    expect(text).toContain('отчёт по интервью');
+  });
   it('extracts readable text files without flattening all line breaks', async () => {
     const text = await extractInterviewFileText({
       data: Buffer.from('Вопрос 1?\n\n   Вопрос   2?   ', 'utf8'),

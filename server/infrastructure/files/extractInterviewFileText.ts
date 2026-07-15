@@ -2,6 +2,7 @@
 // pdf-parse в минимальный production image.
 import '@napi-rs/canvas';
 import { PDFParse } from 'pdf-parse';
+import { getData } from 'pdf-parse/worker';
 // CommonJS-вход xlsx требует dist/cpexcel.js через динамический require.
 // Nitro превращает его в абсолютный build-time путь, которого нет в runtime-образе.
 // ESM-вход самодостаточен и корректно попадает в production bundle.
@@ -10,6 +11,10 @@ import { apiError } from '@/server/utils/errors';
 
 const DEFAULT_MAX_BYTES = 6 * 1024 * 1024;
 const DEFAULT_MAX_CHARS = 30_000;
+
+// Минимальный Nitro image не переносит динамически импортируемый pdf.worker.mjs.
+// Встроенный data URL не зависит от файловой структуры runtime-контейнера.
+PDFParse.setWorker(getData());
 
 export interface ExtractInterviewFileTextParams {
   data: Buffer;
