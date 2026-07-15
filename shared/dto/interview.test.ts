@@ -139,6 +139,17 @@ describe('interview DTO hints', () => {
     expect(parsed.trainingMode).toBe('candidate');
   });
 
+  it('rejects unsupported vacancy URLs at the DTO boundary', () => {
+    expect(() =>
+      CreateInterviewSessionRequestDto.parse({
+        source: {
+          type: 'hh_url',
+          url: 'https://www.youtube.com/watch?v=bzz622DshiM',
+        },
+      })
+    ).toThrow('ссылка не поддерживается');
+  });
+
   it('accepts interviewer training settings with a real candidate resume', () => {
     const parsed = CreateInterviewSessionRequestDto.parse({
       trainingMode: 'interviewer',

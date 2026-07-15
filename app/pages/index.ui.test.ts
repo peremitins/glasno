@@ -17,11 +17,13 @@ describe('dashboard page UI structure', () => {
     expect(source).toContain('how-it-works');
   });
 
-  it('runs the free quick format from the dashboard quick launcher', () => {
-    // Free-лимит покрывает только «Быстро» (3 вопроса) — быстрый старт всегда
-    // запускает его, чтобы бесплатный пользователь не упирался в E_FORBIDDEN.
-    expect(source).toContain("sessionGoal: 'quick'");
-    expect(source).not.toContain("sessionGoal: 'standard'");
+  it('uses the standard format by default when the user has full access', () => {
+    // Free-лимит покрывает только «Быстро» (3 вопроса), а полный доступ
+    // должен сразу запускать стандартную репетицию из шести вопросов.
+    expect(source).toContain('await billing.ensureLoaded()');
+    expect(source).toContain('allowedSessionGoals.includes(\'standard\')');
+    expect(source).toContain("sessionGoal: hasFullInterviewAccess.value ? 'standard' : 'quick'");
+    expect(source).toContain('dashboard.standardDefault');
     expect(source).toContain('dashboard.launcherChipQuick');
     expect(source).not.toContain('dashboard-goal-picker');
   });

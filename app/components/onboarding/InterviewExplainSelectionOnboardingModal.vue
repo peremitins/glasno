@@ -155,7 +155,8 @@
   .interview-onboarding__panel {
     position: relative;
     display: grid;
-    grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.85fr);
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto;
     gap: clamp(16px, 2.2vw, 28px);
     width: min(1120px, 100%);
     max-height: 100%;

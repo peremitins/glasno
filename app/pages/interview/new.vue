@@ -2,7 +2,6 @@
   import {
     ArrowRightIcon,
     CheckIcon,
-    ChevronDownIcon,
     Cross2Icon,
     CubeIcon,
     FileTextIcon,
@@ -46,6 +45,7 @@
   import PaywallModal from '@/app/components/billing/PaywallModal.vue';
   import {
     buildManualInterviewSource,
+    getVacancyUrlError,
     isManualInterviewSourceReady,
     resolveProfessionSelection,
   } from '@/app/utils/interviewSource';
@@ -80,6 +80,18 @@
   const route = useRoute();
   const api = useAPI();
   const billing = useBillingStatus();
+
+  function optionHelpText(description: string, meta?: string): string {
+    return [t(description), meta ? t(meta) : ''].filter(Boolean).join(' · ');
+  }
+
+  function optionTooltip(description: string, meta?: string) {
+    return {
+      content: optionHelpText(description, meta),
+      triggers: ['hover', 'focus', 'click', 'touch'],
+      placement: 'top',
+    };
+  }
 
   onMounted(() => {
     void billing.ensureLoaded();
@@ -262,27 +274,6 @@
       description:
         'interview.new.aiCandidate.persona.overconfident.description',
     },
-    {
-      value: 'weak_hard_good_soft',
-      title: 'interview.new.aiCandidate.persona.weakHardGoodSoft.title',
-      description:
-        'interview.new.aiCandidate.persona.weakHardGoodSoft.description',
-    },
-  ];
-
-  const candidateDifficultyOptions: Array<{
-    value: CandidateDifficulty;
-    label: string;
-  }> = [
-    { value: 'calm', label: 'interview.new.aiCandidate.difficulty.calm' },
-    {
-      value: 'realistic',
-      label: 'interview.new.aiCandidate.difficulty.realistic',
-    },
-    {
-      value: 'challenging',
-      label: 'interview.new.aiCandidate.difficulty.challenging',
-    },
   ];
 
   const interviewerScenarioOptions: Array<{
@@ -322,17 +313,45 @@
   const levelOptions: Array<{
     value: InterviewLevel;
     label: string;
-    code: string;
+    description: string;
   }> = [
-    { value: 'junior', label: 'interview.level.junior', code: 'Junior' },
-    { value: 'middle', label: 'interview.level.middle', code: 'Middle' },
-    { value: 'senior', label: 'interview.level.senior', code: 'Senior' },
+    {
+      value: 'junior',
+      label: 'interview.level.junior',
+      description: 'interview.levelHint.junior',
+    },
+    {
+      value: 'middle',
+      label: 'interview.level.middle',
+      description: 'interview.levelHint.middle',
+    },
+    {
+      value: 'senior',
+      label: 'interview.level.senior',
+      description: 'interview.levelHint.senior',
+    },
   ];
 
-  const modeOptions: Array<{ value: InterviewerMode; label: string }> = [
-    { value: 'soft', label: 'interview.mode.soft' },
-    { value: 'neutral', label: 'interview.mode.neutral' },
-    { value: 'strict', label: 'interview.mode.strict' },
+  const modeOptions: Array<{
+    value: InterviewerMode;
+    label: string;
+    description: string;
+  }> = [
+    {
+      value: 'soft',
+      label: 'interview.mode.soft',
+      description: 'interview.mode.softDescription',
+    },
+    {
+      value: 'neutral',
+      label: 'interview.mode.neutral',
+      description: 'interview.mode.neutralDescription',
+    },
+    {
+      value: 'strict',
+      label: 'interview.mode.strict',
+      description: 'interview.mode.strictDescription',
+    },
   ];
 
   const focusOptions: Array<{
@@ -458,17 +477,6 @@
       form.professionRole = value;
       selectedRoleOption.value = null;
     },
-  });
-
-  const selectedSourceHint = computed(() => {
-    if (isInterviewerTraining.value) {
-      if (sourceMode.value === 'hh_url') {
-        return t('interview.new.sourceHint.hhInterviewer');
-      }
-      return t('interview.new.sourceHint.manualInterviewer');
-    }
-    if (sourceMode.value === 'hh_url') return t('interview.new.sourceHint.hh');
-    return t('interview.new.sourceHint.manual');
   });
 
   const isInterviewerTraining = computed(
@@ -600,8 +608,12 @@
     return vacancyText.length === 0 || vacancyText.length >= 10;
   });
 
+  const vacancyUrlError = computed(() => getVacancyUrlError(form.hhUrl));
+
   const sourceContextReady = computed(() => {
-    if (sourceMode.value === 'hh_url') return form.hhUrl.trim().length > 0;
+    if (sourceMode.value === 'hh_url') {
+      return form.hhUrl.trim().length > 0 && !vacancyUrlError.value;
+    }
     return isManualInterviewSourceReady({
       role: form.professionRole,
       vacancyText: form.vacancyText,
@@ -632,7 +644,7 @@
     const prefix = isInterviewerTraining.value
       ? t('interview.new.aiCandidate.levelPrefix')
       : '';
-    const label = option ? `${t(option.label)} · ${option.code}` : 'Middle';
+    const label = option ? t(option.label) : t('interview.level.middle');
     return prefix ? `${prefix}: ${label}` : label;
   });
 
@@ -1005,26 +1017,6 @@
                 }}
               </h2>
             </div>
-            <button
-              v-tooltip="
-                t(
-                  isInterviewerTraining
-                    ? 'interview.new.sourceHelpInterviewer'
-                    : 'interview.new.sourceHelp'
-                )
-              "
-              class="help-button"
-              type="button"
-              :aria-label="
-                t(
-                  isInterviewerTraining
-                    ? 'interview.new.sourceHelpInterviewer'
-                    : 'interview.new.sourceHelp'
-                )
-              "
-            >
-              <QuestionMarkCircledIcon aria-hidden="true" />
-            </button>
           </div>
 
           <div class="source-tabs" role="tablist">
@@ -1043,8 +1035,6 @@
             </button>
           </div>
 
-          <p class="source-hint">{{ selectedSourceHint }}</p>
-
           <div v-if="sourceMode === 'hh_url'" class="field">
             <label for="hh-url">{{ t('interview.new.fields.hhUrl') }}</label>
             <div class="input-shell">
@@ -1055,9 +1045,21 @@
                 class="text-control"
                 type="url"
                 inputmode="url"
-                placeholder="https://company.ru/careers/product-manager"
+                :aria-invalid="Boolean(vacancyUrlError)"
+                :aria-describedby="
+                  vacancyUrlError ? 'vacancy-url-error' : undefined
+                "
+                placeholder="https://hh.ru/vacancy/123456"
               >
             </div>
+            <p
+              v-if="vacancyUrlError"
+              id="vacancy-url-error"
+              class="field-error"
+              role="alert"
+            >
+              {{ vacancyUrlError }}
+            </p>
           </div>
 
           <div v-else class="manual-source-stack">
@@ -1192,7 +1194,7 @@
                     t('interview.new.contextTags.customPlaceholder')
                   "
                   @keydown.enter.prevent="addCustomContextTag"
-                >
+                />
                 <button
                   type="button"
                   class="secondary-button"
@@ -1266,56 +1268,38 @@
                 {{ t('interview.new.aiCandidate.personaTitle') }}
               </span>
               <div class="candidate-option-grid" role="radiogroup">
-                <button
+                <div
                   v-for="option in candidatePersonaOptions"
                   :key="option.value"
-                  type="button"
-                  class="focus-chip"
-                  :class="{
-                    'focus-chip--active':
-                      form.candidatePersona === option.value,
-                  }"
-                  role="radio"
-                  :aria-checked="form.candidatePersona === option.value"
-                  @click="form.candidatePersona = option.value"
+                  class="compact-option"
                 >
-                  <strong>{{ t(option.title) }}</strong>
-                  <small>{{ t(option.description) }}</small>
-                </button>
+                  <button
+                    type="button"
+                    class="focus-chip compact-option__choice"
+                    :class="{
+                      'focus-chip--active':
+                        form.candidatePersona === option.value,
+                    }"
+                    role="radio"
+                    :aria-checked="form.candidatePersona === option.value"
+                    @click="form.candidatePersona = option.value"
+                  >
+                    <strong>{{ t(option.title) }}</strong>
+                    <span
+                      v-tooltip="optionTooltip(option.description)"
+                      class="option-help-icon"
+                      :aria-label="optionHelpText(option.description)"
+                      :title="optionHelpText(option.description)"
+                      @click.stop
+                    >
+                      <QuestionMarkCircledIcon aria-hidden="true" />
+                    </span>
+                  </button>
+                </div>
               </div>
             </div>
 
-            <div v-if="isInterviewerTraining" class="field">
-              <span class="field-label">
-                {{ t('interview.new.aiCandidate.difficultyTitle') }}
-              </span>
-              <div class="segmented segmented--compact" role="radiogroup">
-                <button
-                  v-for="option in candidateDifficultyOptions"
-                  :key="option.value"
-                  type="button"
-                  class="segment"
-                  :class="{
-                    'segment--active':
-                      form.candidateDifficulty === option.value,
-                  }"
-                  role="radio"
-                  :aria-checked="form.candidateDifficulty === option.value"
-                  @click="form.candidateDifficulty = option.value"
-                >
-                  {{ t(option.label) }}
-                </button>
-              </div>
-            </div>
-
-            <div class="field">
-              <label for="resume-file">{{
-                t(
-                  isInterviewerTraining
-                    ? 'interview.new.aiCandidate.resumeFile'
-                    : 'interview.new.resume.file'
-                )
-              }}</label>
+            <div class="file-field">
               <div class="file-upload file-upload--compact">
                 <input
                   id="resume-file"
@@ -1324,41 +1308,42 @@
                   accept=".pdf,.txt,.md,.png,.jpg,.jpeg,text/plain,text/markdown,application/pdf,image/png,image/jpeg"
                   :disabled="isExtractingResume"
                   @change="onResumeFileChange"
-                >
+                />
                 <label
-                  class="file-drop file-drop--compact button-loader-host"
+                  class="file-button button-loader-host"
                   for="resume-file"
+                  :aria-label="
+                    t(
+                      isInterviewerTraining
+                        ? 'interview.new.aiCandidate.resumeFile'
+                        : 'interview.new.resume.file'
+                    )
+                  "
+                  :title="
+                    t(
+                      isInterviewerTraining
+                        ? 'interview.new.aiCandidate.uploadHint'
+                        : 'interview.new.resume.uploadHint'
+                    )
+                  "
                 >
                   <ButtonLoader v-if="isExtractingResume" />
                   <span
-                    class="button-loader-content file-drop__content"
+                    class="button-loader-content file-button__content"
                     :class="{
                       'button-loader-content--loading': isExtractingResume,
                     }"
                   >
-                    <span class="file-drop__icon" aria-hidden="true">
-                      <FileTextIcon />
-                    </span>
-                    <span class="file-drop__copy">
-                      <strong>
-                        {{
-                          t(
-                            isInterviewerTraining
-                              ? 'interview.new.aiCandidate.uploadTitle'
-                              : 'interview.new.resume.uploadTitle'
-                          )
-                        }}
-                      </strong>
-                      <small>
-                        {{
-                          activeResumeFileName ||
-                          t(
-                            isInterviewerTraining
-                              ? 'interview.new.aiCandidate.uploadHint'
-                              : 'interview.new.resume.uploadHint'
-                          )
-                        }}
-                      </small>
+                    <FileTextIcon aria-hidden="true" />
+                    <span class="file-button__label">
+                      {{
+                        activeResumeFileName ||
+                        t(
+                          isInterviewerTraining
+                            ? 'interview.new.aiCandidate.uploadTitle'
+                            : 'interview.new.resume.uploadTitle'
+                        )
+                      }}
                     </span>
                   </span>
                 </label>
@@ -1466,31 +1451,42 @@
             <h3>{{ t('interview.new.fields.sessionGoal') }}</h3>
           </div>
           <div class="goal-grid" role="radiogroup">
-            <button
+            <div
               v-for="option in sessionGoalOptions"
               :key="option.value"
-              type="button"
-              class="goal-card"
-              :class="{
-                'goal-card--active': form.sessionGoal === option.value,
-                'goal-card--locked': isSessionGoalLocked(option.value),
-              }"
-              role="radio"
-              :aria-checked="form.sessionGoal === option.value"
-              :aria-disabled="isSessionGoalLocked(option.value)"
-              @click="selectSessionGoal(option.value)"
+              class="compact-option"
             >
-              <strong>{{ t(option.title) }}</strong>
-              <span>{{ t(option.description) }}</span>
-              <small>{{ t(option.meta) }}</small>
-              <span
-                v-if="isSessionGoalLocked(option.value)"
-                class="goal-card__lock"
+              <button
+                type="button"
+                class="goal-card compact-option__choice"
+                :class="{
+                  'goal-card--active': form.sessionGoal === option.value,
+                  'goal-card--locked': isSessionGoalLocked(option.value),
+                }"
+                role="radio"
+                :aria-checked="form.sessionGoal === option.value"
+                :aria-disabled="isSessionGoalLocked(option.value)"
+                @click="selectSessionGoal(option.value)"
               >
-                <LockClosedIcon aria-hidden="true" />
-                {{ t('interview.goal.lockedBadge') }}
-              </span>
-            </button>
+                <strong>{{ t(option.title) }}</strong>
+                <span
+                  v-if="isSessionGoalLocked(option.value)"
+                  class="goal-card__lock"
+                >
+                  <LockClosedIcon aria-hidden="true" />
+                  {{ t('interview.goal.lockedBadge') }}
+                </span>
+                <span
+                  v-tooltip="optionTooltip(option.description, option.meta)"
+                  class="option-help-icon"
+                  :aria-label="optionHelpText(option.description, option.meta)"
+                  :title="optionHelpText(option.description, option.meta)"
+                  @click.stop
+                >
+                  <QuestionMarkCircledIcon aria-hidden="true" />
+                </span>
+              </button>
+            </div>
           </div>
           <p v-if="lockedSessionGoals.length" class="goal-locked-hint">
             {{ t('interview.goal.lockedHint') }}
@@ -1513,19 +1509,31 @@
             </h3>
           </div>
           <div class="goal-grid" role="radiogroup">
-            <button
+            <div
               v-for="option in levelOptions"
               :key="option.value"
-              type="button"
-              class="goal-card"
-              :class="{ 'goal-card--active': form.level === option.value }"
-              role="radio"
-              :aria-checked="form.level === option.value"
-              @click="form.level = option.value"
+              class="compact-option"
             >
-              <strong>{{ t(option.label) }}</strong>
-              <small>{{ option.code }}</small>
-            </button>
+              <button
+                type="button"
+                class="goal-card compact-option__choice"
+                :class="{ 'goal-card--active': form.level === option.value }"
+                role="radio"
+                :aria-checked="form.level === option.value"
+                @click="form.level = option.value"
+              >
+                <strong>{{ t(option.label) }}</strong>
+                <span
+                  v-tooltip="optionTooltip(option.description)"
+                  class="option-help-icon"
+                  :aria-label="optionHelpText(option.description)"
+                  :title="optionHelpText(option.description)"
+                  @click.stop
+                >
+                  <QuestionMarkCircledIcon aria-hidden="true" />
+                </span>
+              </button>
+            </div>
           </div>
         </section>
 
@@ -1540,136 +1548,132 @@
                 )
               }}
             </h3>
-            <p>
-              {{
-                t(
-                  isInterviewerTraining
-                    ? 'interview.new.fields.focusHintInterviewer'
-                    : 'interview.new.fields.focusHint'
-                )
-              }}
-            </p>
           </div>
           <div class="focus-chip-grid" role="radiogroup">
-            <button
+            <div
               v-for="option in focusOptions"
               :key="option.label"
-              type="button"
-              class="focus-chip"
-              :class="{ 'focus-chip--active': form.focus === option.value }"
-              role="radio"
-              :aria-checked="form.focus === option.value"
-              @click="form.focus = option.value"
+              class="compact-option"
             >
-              <strong>{{ t(option.label) }}</strong>
-              <small>{{ t(option.description) }}</small>
-            </button>
+              <button
+                type="button"
+                class="focus-chip compact-option__choice"
+                :class="{ 'focus-chip--active': form.focus === option.value }"
+                role="radio"
+                :aria-checked="form.focus === option.value"
+                @click="form.focus = option.value"
+              >
+                <strong>{{ t(option.label) }}</strong>
+                <span
+                  v-tooltip="optionTooltip(option.description)"
+                  class="option-help-icon"
+                  :aria-label="optionHelpText(option.description)"
+                  :title="optionHelpText(option.description)"
+                  @click.stop
+                >
+                  <QuestionMarkCircledIcon aria-hidden="true" />
+                </span>
+              </button>
+            </div>
           </div>
         </section>
 
-        <details class="advanced-panel">
-          <summary>
-            <span>
-              <strong>{{ t('interview.new.advanced.title') }}</strong>
-              <small>
+        <section
+          v-if="!isInterviewerTraining"
+          class="parameter-group parameter-group--interviewer-mode"
+        >
+          <div class="parameter-copy">
+            <h3>{{ t('interview.new.fields.interviewerMode') }}</h3>
+          </div>
+          <div class="goal-grid" role="radiogroup">
+            <div
+              v-for="option in modeOptions"
+              :key="option.value"
+              class="compact-option"
+            >
+              <button
+                type="button"
+                class="goal-card compact-option__choice"
+                :class="{
+                  'goal-card--active': form.interviewerMode === option.value,
+                }"
+                role="radio"
+                :aria-checked="form.interviewerMode === option.value"
+                @click="form.interviewerMode = option.value"
+              >
+                <strong>{{ t(option.label) }}</strong>
+                <span
+                  v-tooltip="optionTooltip(option.description)"
+                  class="option-help-icon"
+                  :aria-label="optionHelpText(option.description)"
+                  :title="optionHelpText(option.description)"
+                  @click.stop
+                >
+                  <QuestionMarkCircledIcon aria-hidden="true" />
+                </span>
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <section class="custom-questions-panel parameter-group">
+          <div class="parameter-copy">
+            <div class="parameter-title-row">
+              <h3>
                 {{
                   t(
                     isInterviewerTraining
-                      ? 'interview.new.advanced.summaryInterviewer'
-                      : 'interview.new.advanced.summary'
+                      ? 'interview.new.customQuestions.titleInterviewer'
+                      : 'interview.new.customQuestions.title'
                   )
                 }}
-              </small>
-            </span>
-            <span class="advanced-panel__chevron" aria-hidden="true">
-              <ChevronDownIcon />
-            </span>
-          </summary>
+              </h3>
+              <span
+                v-tooltip="
+                  optionTooltip(
+                    isInterviewerTraining
+                      ? 'interview.new.customQuestions.tooltipInterviewer'
+                      : 'interview.new.customQuestions.tooltip'
+                  )
+                "
+                class="option-help-icon option-help-icon--inline"
+                :aria-label="
+                  optionHelpText(
+                    isInterviewerTraining
+                      ? 'interview.new.customQuestions.tooltipInterviewer'
+                      : 'interview.new.customQuestions.tooltip'
+                  )
+                "
+                :title="
+                  optionHelpText(
+                    isInterviewerTraining
+                      ? 'interview.new.customQuestions.tooltipInterviewer'
+                      : 'interview.new.customQuestions.tooltip'
+                  )
+                "
+              >
+                <QuestionMarkCircledIcon aria-hidden="true" />
+              </span>
+            </div>
+          </div>
 
-          <div class="advanced-content">
-            <section
-              v-if="!isInterviewerTraining"
-              class="parameter-group parameter-group--advanced"
+          <div class="custom-questions-content">
+            <div
+              v-if="isInterviewerTraining"
+              class="interviewer-scenario-grid"
+              role="radiogroup"
+              :aria-label="t('interview.new.customQuestions.scenarioLabel')"
             >
-              <div class="parameter-copy">
-                <h3>{{ t('interview.new.fields.interviewerMode') }}</h3>
-                <p>{{ t('interview.new.advanced.interviewerSummary') }}</p>
-              </div>
-              <div class="segmented segmented--compact" role="radiogroup">
-                <button
-                  v-for="option in modeOptions"
-                  :key="option.value"
-                  type="button"
-                  class="segment"
-                  :class="{
-                    'segment--active': form.interviewerMode === option.value,
-                  }"
-                  role="radio"
-                  :aria-checked="form.interviewerMode === option.value"
-                  @click="form.interviewerMode = option.value"
-                >
-                  {{ t(option.label) }}
-                </button>
-              </div>
-            </section>
-
-            <section class="custom-questions-panel">
-              <div class="panel-head panel-head--compact">
-                <div>
-                  <p class="panel-label">
-                    {{
-                      t(
-                        isInterviewerTraining
-                          ? 'interview.new.customQuestions.kickerInterviewer'
-                          : 'interview.new.customQuestions.kicker'
-                      )
-                    }}
-                  </p>
-                  <h3>
-                    {{
-                      t(
-                        isInterviewerTraining
-                          ? 'interview.new.customQuestions.titleInterviewer'
-                          : 'interview.new.customQuestions.title'
-                      )
-                    }}
-                  </h3>
-                </div>
-                <button
-                  v-tooltip="
-                    t(
-                      isInterviewerTraining
-                        ? 'interview.new.customQuestions.tooltipInterviewer'
-                        : 'interview.new.customQuestions.tooltip'
-                    )
-                  "
-                  class="help-button"
-                  type="button"
-                  :aria-label="
-                    t(
-                      isInterviewerTraining
-                        ? 'interview.new.customQuestions.tooltipInterviewer'
-                        : 'interview.new.customQuestions.tooltip'
-                    )
-                  "
-                >
-                  <QuestionMarkCircledIcon aria-hidden="true" />
-                </button>
-              </div>
-
               <div
-                v-if="isInterviewerTraining"
-                class="interviewer-scenario-grid"
-                role="radiogroup"
-                :aria-label="t('interview.new.customQuestions.scenarioLabel')"
+                v-for="option in interviewerScenarioOptions"
+                :key="option.value"
+                class="compact-option"
               >
                 <button
-                  v-for="option in interviewerScenarioOptions"
-                  :key="option.value"
                   type="button"
-                  class="scenario-card"
+                  class="goal-card compact-option__choice"
                   :class="{
-                    'scenario-card--active':
+                    'goal-card--active':
                       form.questionSourceMode === option.value,
                   }"
                   role="radio"
@@ -1677,126 +1681,121 @@
                   @click="form.questionSourceMode = option.value"
                 >
                   <strong>{{ t(option.title) }}</strong>
-                  <small>{{ t(option.description) }}</small>
+                  <span
+                    v-tooltip="optionTooltip(option.description)"
+                    class="option-help-icon"
+                    :aria-label="optionHelpText(option.description)"
+                    :title="optionHelpText(option.description)"
+                    @click.stop
+                  >
+                    <QuestionMarkCircledIcon aria-hidden="true" />
+                  </span>
                 </button>
               </div>
+            </div>
 
-              <div v-if="showCustomPlanInput" class="custom-questions-grid">
-                <div class="field">
-                  <label for="custom-questions">{{
+            <div v-if="showCustomPlanInput" class="custom-questions-grid">
+              <div class="field">
+                <label for="custom-questions">{{
+                  t(
+                    isInterviewerTraining
+                      ? 'interview.new.customQuestions.labelInterviewer'
+                      : 'interview.new.customQuestions.label'
+                  )
+                }}</label>
+                <VoiceTextarea
+                  id="custom-questions"
+                  v-model="form.customQuestionsText"
+                  class="compact-voice-textarea"
+                  :rows="3"
+                  :placeholder="
                     t(
                       isInterviewerTraining
-                        ? 'interview.new.customQuestions.labelInterviewer'
-                        : 'interview.new.customQuestions.label'
+                        ? 'interview.new.customQuestions.placeholderInterviewer'
+                        : 'interview.new.customQuestions.placeholder'
                     )
-                  }}</label>
-                  <VoiceTextarea
-                    id="custom-questions"
-                    v-model="form.customQuestionsText"
-                    :rows="5"
-                    :placeholder="
-                      t(
-                        isInterviewerTraining
-                          ? 'interview.new.customQuestions.placeholderInterviewer'
-                          : 'interview.new.customQuestions.placeholder'
-                      )
-                    "
+                  "
+                />
+              </div>
+
+              <div class="question-options">
+                <div class="file-upload file-upload--compact">
+                  <input
+                    id="custom-questions-file"
+                    class="file-input"
+                    type="file"
+                    accept=".pdf,.txt,.md,.csv,.xls,.xlsx,.png,.jpg,.jpeg,text/plain,text/markdown,text/csv,application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,image/png,image/jpeg"
+                    :disabled="isExtractingQuestionsFile"
+                    @change="onCustomQuestionsFileChange"
                   />
-                </div>
-
-                <div class="question-options">
-                  <div class="field">
-                    <label for="custom-questions-file">{{
-                      t('interview.new.customQuestions.file')
-                    }}</label>
-                    <div class="file-upload file-upload--compact">
-                      <input
-                        id="custom-questions-file"
-                        class="file-input"
-                        type="file"
-                        accept=".pdf,.txt,.md,.csv,.xls,.xlsx,.png,.jpg,.jpeg,text/plain,text/markdown,text/csv,application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,image/png,image/jpeg"
-                        :disabled="isExtractingQuestionsFile"
-                        @change="onCustomQuestionsFileChange"
-                      >
-                      <label
-                        class="file-drop file-drop--compact button-loader-host"
-                        for="custom-questions-file"
-                      >
-                        <ButtonLoader v-if="isExtractingQuestionsFile" />
-                        <span
-                          class="button-loader-content file-drop__content"
-                          :class="{
-                            'button-loader-content--loading':
-                              isExtractingQuestionsFile,
-                          }"
-                        >
-                          <span class="file-drop__icon" aria-hidden="true">
-                            <FileTextIcon />
-                          </span>
-                          <span class="file-drop__copy">
-                            <strong>
-                              {{
-                                t('interview.new.customQuestions.uploadTitle')
-                              }}
-                            </strong>
-                            <small>
-                              {{
-                                questionsFileName ||
-                                t('interview.new.customQuestions.uploadHint')
-                              }}
-                            </small>
-                          </span>
-                        </span>
-                      </label>
-                    </div>
-                    <GlassSkeletonStack
-                      v-if="isExtractingQuestionsFile"
-                      class="custom-questions-skeleton"
-                      :heights="[34, 76]"
-                    />
-                    <p v-if="questionsFileText" class="file-note">
-                      {{
-                        t('interview.new.customQuestions.fileAdded', {
-                          count: questionsFileText.length,
-                        })
-                      }}
-                    </p>
-                  </div>
-
-                  <label v-if="!isInterviewerTraining" class="toggle-option">
-                    <input v-model="customOnlyEnabled" type="checkbox">
-                    <span class="toggle-switch" aria-hidden="true" />
-                    <span class="toggle-copy">
-                      <strong>{{
-                        t(
-                          isInterviewerTraining
-                            ? 'interview.new.customQuestions.onlyMineInterviewer'
-                            : 'interview.new.customQuestions.onlyMine'
-                        )
-                      }}</strong>
-                      <small>{{
-                        t(
-                          isInterviewerTraining
-                            ? 'interview.new.customQuestions.onlyMineHintInterviewer'
-                            : 'interview.new.customQuestions.onlyMineHint'
-                        )
-                      }}</small>
+                  <label
+                    class="file-button button-loader-host"
+                    for="custom-questions-file"
+                    :title="t('interview.new.customQuestions.uploadHint')"
+                  >
+                    <ButtonLoader v-if="isExtractingQuestionsFile" />
+                    <span
+                      class="button-loader-content file-button__content"
+                      :class="{
+                        'button-loader-content--loading':
+                          isExtractingQuestionsFile,
+                      }"
+                    >
+                      <FileTextIcon aria-hidden="true" />
+                      <span class="file-button__label">
+                        {{
+                          questionsFileName ||
+                          t('interview.new.customQuestions.uploadTitle')
+                        }}
+                      </span>
                     </span>
                   </label>
                 </div>
+
+                <div v-if="!isInterviewerTraining" class="toggle-option">
+                  <label class="toggle-option__control">
+                    <input v-model="customOnlyEnabled" type="checkbox" />
+                    <span class="toggle-switch" aria-hidden="true" />
+                    <span class="toggle-copy">
+                      <strong>{{
+                        t('interview.new.customQuestions.onlyMine')
+                      }}</strong>
+                    </span>
+                  </label>
+                  <span
+                    v-tooltip="
+                      optionTooltip(
+                        'interview.new.customQuestions.onlyMineHint'
+                      )
+                    "
+                    class="option-help-icon option-help-icon--inline"
+                    :aria-label="
+                      optionHelpText(
+                        'interview.new.customQuestions.onlyMineHint'
+                      )
+                    "
+                    :title="
+                      optionHelpText(
+                        'interview.new.customQuestions.onlyMineHint'
+                      )
+                    "
+                  >
+                    <QuestionMarkCircledIcon aria-hidden="true" />
+                  </span>
+                </div>
               </div>
-              <p v-else class="scenario-note">
-                {{
-                  t(
-                    form.questionSourceMode === 'free'
-                      ? 'interview.new.customQuestions.mode.free.note'
-                      : 'interview.new.customQuestions.mode.glasno.note'
-                  )
-                }}
-              </p>
-            </section>
+            </div>
+            <p v-else class="scenario-note">
+              {{
+                t(
+                  form.questionSourceMode === 'free'
+                    ? 'interview.new.customQuestions.mode.free.note'
+                    : 'interview.new.customQuestions.mode.glasno.note'
+                )
+              }}
+            </p>
           </div>
-        </details>
+        </section>
       </div>
     </section>
 
@@ -1812,7 +1811,9 @@
         <p>{{ t('interview.new.sticky.title') }}</p>
         <div class="summary-chips" aria-label="Параметры интервью">
           <span>{{ selectedTrainingModeSummary }}</span>
-          <span v-if="selectedScenarioSummary">{{ selectedScenarioSummary }}</span>
+          <span v-if="selectedScenarioSummary">{{
+            selectedScenarioSummary
+          }}</span>
           <span>{{ selectedGoalSummary }}</span>
           <span>{{ selectedFocusSummary }}</span>
           <span>{{ selectedLevelSummary }}</span>
@@ -1992,14 +1993,14 @@
 
   .training-mode-card strong {
     color: var(--text-primary);
-    font-size: 17px;
-    font-weight: 950;
+    font-size: 15px;
+    font-weight: 850;
   }
 
   .training-mode-card small {
     max-width: 56ch;
     color: var(--text-secondary);
-    font-size: 13px;
+    font-size: 12px;
     line-height: 1.45;
   }
 
@@ -2027,7 +2028,7 @@
   .manual-source-stack,
   .candidate-stack,
   .settings-stack,
-  .advanced-content,
+  .custom-questions-content,
   .question-options {
     display: grid;
     gap: 14px;
@@ -2072,20 +2073,21 @@
   h1,
   h2 {
     color: var(--text-primary);
-    font-size: clamp(22px, 2.35vw, 30px);
-    line-height: 1.08;
+    font-size: clamp(18px, 1.7vw, 22px);
+    font-weight: 750;
+    line-height: 1.2;
   }
 
   h3 {
     color: var(--text-primary);
-    font-size: 15px;
-    font-weight: 900;
+    font-size: 14px;
+    font-weight: 800;
   }
 
   .panel-helper {
     max-width: 42ch;
     color: var(--text-secondary);
-    font-size: 13px;
+    font-size: 12px;
     line-height: 1.5;
     text-align: right;
   }
@@ -2197,18 +2199,21 @@
 
   .source-hint,
   .field-hint,
-  .file-note,
-  .parameter-copy p,
-  .toggle-copy small,
-  .focus-chip small,
-  .advanced-panel summary small {
+  .parameter-copy p {
     color: var(--text-secondary);
-    font-size: 13px;
+    font-size: 12px;
     line-height: 1.45;
   }
 
   .source-hint {
     margin: 12px 0 14px;
+  }
+
+  .field-error {
+    margin: 0;
+    color: var(--danger);
+    font-size: 12px;
+    line-height: 1.45;
   }
 
   .field {
@@ -2223,8 +2228,8 @@
 
   .field label {
     color: var(--text-secondary);
-    font-size: 13px;
-    font-weight: 900;
+    font-size: 12px;
+    font-weight: 800;
   }
 
   .input-shell {
@@ -2416,7 +2421,13 @@
 
   .file-upload {
     position: relative;
-    min-height: 112px;
+    display: inline-flex;
+    max-width: 100%;
+  }
+
+  .file-field {
+    display: flex;
+    min-width: 0;
   }
 
   .file-input {
@@ -2429,70 +2440,50 @@
     white-space: nowrap;
   }
 
-  .file-drop {
-    display: flex;
+  .file-button {
+    display: inline-flex;
     align-items: center;
-    gap: 14px;
-    min-height: 112px;
-    border: 1px dashed var(--glass-border-strong);
-    border-radius: var(--radius-control);
-    background: color-mix(in srgb, var(--accent) 8%, var(--surface-soft));
+    max-width: 100%;
+    min-height: 42px;
+    border: 1px solid var(--glass-border);
+    border-radius: 999px;
+    background: var(--surface-soft);
     color: var(--text-secondary);
     cursor: pointer;
-    padding: 16px;
+    padding: 0 13px;
     transition: border-color var(--motion-normal) var(--ease-out),
       background var(--motion-normal) var(--ease-out),
       box-shadow var(--motion-normal) var(--ease-out);
   }
 
-  .file-input:focus-visible + .file-drop,
-  .file-drop:hover {
+  .file-input:focus-visible + .file-button,
+  .file-button:hover {
     border-color: var(--focus-ring);
     background: var(--surface-raised);
     box-shadow: 0 0 0 4px color-mix(in srgb, var(--focus-ring) 14%, transparent);
   }
 
-  .file-drop__content {
-    justify-content: flex-start;
-    gap: 14px;
+  .file-button__content {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
     min-width: 0;
   }
 
-  .file-drop__icon {
-    display: inline-grid;
+  .file-button__content svg {
     flex: 0 0 auto;
-    width: 46px;
-    height: 46px;
-    place-items: center;
-    border: 1px solid var(--glass-border);
-    border-radius: 14px;
-    background: var(--button-bg);
-    color: var(--button-text);
-    box-shadow: var(--button-shadow);
+    width: 16px;
+    height: 16px;
   }
 
-  .file-drop__copy {
-    display: grid;
-    gap: 5px;
-    min-width: 0;
-  }
-
-  .file-drop__copy strong,
-  .file-drop__copy small {
+  .file-button__label {
     overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .file-drop__copy strong {
     color: var(--text-primary);
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 900;
-  }
-
-  .file-drop__copy small {
-    color: var(--text-secondary);
-    font-size: 12px;
-    line-height: 1.35;
+    min-width: 0;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .resume-preview {
@@ -2639,6 +2630,13 @@
     min-width: 0;
   }
 
+  .parameter-title-row {
+    display: flex;
+    gap: 5px;
+    align-items: center;
+    justify-content: flex-start;
+  }
+
   .goal-grid,
   .focus-chip-grid,
   .candidate-option-grid,
@@ -2657,6 +2655,16 @@
 
   .candidate-option-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .compact-option {
+    position: relative;
+    min-width: 0;
+  }
+
+  .compact-option__choice {
+    width: 100%;
+    height: 100%;
   }
 
   .goal-card,
@@ -2682,23 +2690,62 @@
     min-height: 92px;
   }
 
+  .goal-card.compact-option__choice,
+  .focus-chip.compact-option__choice {
+    display: flex;
+    gap: 5px;
+    align-items: center;
+    min-height: 64px;
+    padding: 12px 32px 12px 13px;
+  }
+
+  .compact-option__choice strong {
+    min-width: 0;
+  }
+
+  .option-help-icon {
+    display: inline-grid;
+    flex: 0 0 auto;
+    width: 16px;
+    height: 16px;
+    place-items: center;
+    border-radius: 999px;
+    color: var(--text-muted);
+    cursor: help;
+    transition: color var(--motion-normal) var(--ease-out);
+  }
+
+  .option-help-icon:hover {
+    color: var(--text-primary);
+  }
+
+  .option-help-icon svg {
+    width: 15px;
+    height: 15px;
+  }
+
+  .option-help-icon--inline {
+    vertical-align: middle;
+  }
+
   .goal-card::after,
   .focus-chip::after {
     content: '';
     position: absolute;
-    top: 14px;
+    top: 50%;
     right: 14px;
     width: 9px;
     height: 9px;
     border-radius: 999px;
     box-shadow: inset 0 0 0 1px var(--glass-border-strong);
+    transform: translateY(-50%);
   }
 
   .goal-card strong,
   .focus-chip strong {
     color: var(--text-primary);
-    font-size: 14px;
-    padding-right: 16px;
+    font-size: 13px;
+    font-weight: 800;
   }
 
   .goal-card span,
@@ -2784,68 +2831,23 @@
       0 0 22px color-mix(in srgb, var(--accent) 30%, transparent);
   }
 
-  .advanced-panel {
-    overflow: hidden;
-    border: 1px solid var(--glass-border);
-    border-radius: var(--radius-control);
-    background: var(--surface-soft);
-  }
-
-  .advanced-panel summary {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 16px;
-    align-items: center;
-    cursor: pointer;
-    list-style: none;
-    padding: 16px;
-  }
-
-  .advanced-panel summary::-webkit-details-marker {
-    display: none;
-  }
-
-  .advanced-panel summary span {
-    display: grid;
-    gap: 4px;
-    min-width: 0;
-  }
-
-  .advanced-panel summary strong {
-    color: var(--text-primary);
-    font-size: 15px;
-  }
-
-  .advanced-panel__chevron {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--text-muted);
-    transition: transform var(--motion-normal) var(--ease-out);
-  }
-
-  .advanced-panel__chevron svg {
-    width: 18px;
-    height: 18px;
-  }
-
-  .advanced-panel[open] .advanced-panel__chevron {
-    transform: rotate(180deg);
-  }
-
-  .advanced-content {
-    border-top: 1px solid var(--glass-border);
-    padding: 16px;
-  }
-
   .custom-questions-panel {
-    display: grid;
-    gap: 14px;
+    align-items: start;
   }
 
   .custom-questions-grid {
-    grid-template-columns: minmax(0, 1.15fr) minmax(280px, 0.85fr);
-    align-items: start;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .question-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+  }
+
+  .compact-voice-textarea :deep(.voice-textarea__control) {
+    min-height: 92px;
   }
 
   .interviewer-scenario-grid {
@@ -2854,42 +2856,6 @@
     gap: 8px;
   }
 
-  .scenario-card {
-    display: grid;
-    gap: 6px;
-    min-width: 0;
-    border: 1px solid var(--glass-border);
-    border-radius: var(--radius-sm);
-    background: var(--surface-soft);
-    color: var(--text-secondary);
-    cursor: pointer;
-    padding: 13px;
-    text-align: left;
-    transition: border-color var(--motion-normal) var(--ease-out),
-      background var(--motion-normal) var(--ease-out),
-      transform var(--motion-normal) var(--ease-out);
-  }
-
-  .scenario-card:hover,
-  .scenario-card--active {
-    border-color: color-mix(in srgb, var(--accent) 52%, var(--glass-border));
-    background: var(--surface-raised);
-    transform: translateY(-1px);
-  }
-
-  .scenario-card--active {
-    box-shadow: inset 0 0 0 1px
-      color-mix(in srgb, var(--accent) 28%, transparent);
-  }
-
-  .scenario-card strong {
-    color: var(--text-primary);
-    font-size: 13px;
-    font-weight: 900;
-  }
-
-  .scenario-card span,
-  .scenario-card small,
   .scenario-note {
     color: var(--text-secondary);
     font-size: 12px;
@@ -2904,15 +2870,23 @@
   }
 
   .toggle-option {
+    display: inline-flex;
+    gap: 4px;
+    align-items: center;
+    min-width: 0;
+  }
+
+  .toggle-option__control {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr);
-    gap: 12px;
+    gap: 10px;
     align-items: center;
+    min-height: 42px;
     border: 1px solid var(--glass-border);
-    border-radius: var(--radius-sm);
+    border-radius: 999px;
     background: var(--surface-soft);
     cursor: pointer;
-    padding: 14px;
+    padding: 0 11px;
   }
 
   .toggle-option input {
@@ -3152,8 +3126,8 @@
 
   .interview-start-content h2 {
     color: var(--text-primary);
-    font-size: clamp(22px, 2.4vw, 32px);
-    line-height: 1.05;
+    font-size: clamp(18px, 2vw, 24px);
+    line-height: 1.15;
   }
 
   .interview-start-content > p:not(.panel-label) {
@@ -3405,8 +3379,19 @@
       text-align: left;
     }
 
-    .advanced-panel summary {
-      grid-template-columns: minmax(0, 1fr) auto;
+    .question-options {
+      align-items: stretch;
+    }
+
+    .toggle-option,
+    .toggle-option__control,
+    .file-upload,
+    .file-button {
+      width: 100%;
+    }
+
+    .toggle-option__control {
+      justify-content: flex-start;
     }
   }
 </style>

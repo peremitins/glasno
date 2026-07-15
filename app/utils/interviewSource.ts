@@ -1,4 +1,5 @@
 import type { CreateInterviewSessionRequestInput } from '@/shared/dto';
+import { validateVacancyUrl } from '@/shared/vacancyUrl';
 
 type ManualInterviewSource = Extract<
   CreateInterviewSessionRequestInput['source'],
@@ -30,6 +31,14 @@ export interface ProfessionSelectionResult {
 // Классификация ввода в едином поле «Вакансия или роль» на главной:
 // одно поле принимает ссылку, свободное описание или короткую должность.
 export type QuickSourceKind = 'empty' | 'url' | 'text' | 'role';
+
+export function getVacancyUrlError(value: string): string | null {
+  const url = value.trim();
+  if (!url) return null;
+
+  const validation = validateVacancyUrl(url);
+  return validation.ok ? null : validation.message;
+}
 
 // Нормализует ввод к URL, если он похож на ссылку (с протоколом или как
 // «домен/путь»). Иначе — null. Используется и для UI-подсказки, и для сборки
