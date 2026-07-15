@@ -1,5 +1,11 @@
+// Явный import нужен Nitro-трассировщику, чтобы перенести нативные canvas-полифиллы
+// pdf-parse в минимальный production image.
+import '@napi-rs/canvas';
 import { PDFParse } from 'pdf-parse';
-import { read, utils } from 'xlsx';
+// CommonJS-вход xlsx требует dist/cpexcel.js через динамический require.
+// Nitro превращает его в абсолютный build-time путь, которого нет в runtime-образе.
+// ESM-вход самодостаточен и корректно попадает в production bundle.
+import { read, utils } from 'xlsx/xlsx.mjs';
 import { apiError } from '@/server/utils/errors';
 
 const DEFAULT_MAX_BYTES = 6 * 1024 * 1024;
