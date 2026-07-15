@@ -31,6 +31,10 @@
   const api = useAPI();
   const billing = useBillingStatus();
 
+  // До первого рендера получаем актуальный доступ: подарок, покупка и другие
+  // способы полного доступа должны показывать одинаковый стартовый сценарий.
+  await billing.ensureLoaded();
+
   onMounted(() => {
     // После готового отчёта trial становится использованным. При возврате
     // на главную сверяем серверное состояние, а не общий SPA-кэш.
@@ -45,6 +49,11 @@
     const status = billing.status.value;
     return Boolean(status) && !status!.unlimited && !status!.canCreateInterview;
   });
+
+  const hasFullInterviewAccess = computed(
+    () =>
+      billing.status.value?.allowedSessionGoals.includes('standard') ?? false
+  );
 
   const { data: summary, pending } = await useLazyAsyncData(
     'dashboard-summary',
@@ -63,19 +72,23 @@
     return Math.max(totals?.sessions ?? 0, totals?.freeSessionsUsed ?? 0) > 0;
   });
 
-  // Быстрый старт всегда запускает бесплатный тестовый формат (3 вопроса).
-  // «Бесплатно» показываем только тем, у кого ещё нет активного пропуска.
+  // Free ограничен форматом «Быстро». При полном доступе сразу предлагаем
+  // стандартную репетицию, не привязываясь к способу получения доступа.
   const quickLauncherDefaults = computed(() => {
-    const chips = [t('dashboard.launcherChipQuick'), t('dashboard.mixedDefault')];
-    if (!billing.hasActivePaidAccess.value) {
-      chips.push(t('dashboard.launcherChipFree'));
+    if (hasFullInterviewAccess.value) {
+      return [t('dashboard.standardDefault'), t('dashboard.mixedDefault')];
     }
-    return chips;
+
+    return [
+      t('dashboard.launcherChipQuick'),
+      t('dashboard.mixedDefault'),
+      t('dashboard.launcherChipFree'),
+    ];
   });
 
   const stats = computed(() => {
     const totals = summary.value?.totals;
-    return [
+    const items = [
       {
         key: 'sessions',
         label: t('dashboard.stats.sessions'),
@@ -106,6 +119,10 @@
         icon: LightningBoltIcon,
       },
     ];
+
+    return hasFullInterviewAccess.value
+      ? items.filter((item) => item.key !== 'trial')
+      : items;
   });
 
   const howItWorks = computed(() => [
@@ -220,7 +237,7 @@
         source,
         resumeText: dashboardQuickForm.resumeText.trim() || undefined,
         level: 'middle',
-        sessionGoal: 'quick',
+        sessionGoal: hasFullInterviewAccess.value ? 'standard' : 'quick',
         questionSourceMode: 'mixed',
         language: 'ru',
         interviewerMode: 'neutral',
@@ -258,7 +275,15 @@
         <article class="quick-launcher quick-launcher--hero glass-frame">
           <div class="launcher-copy">
             <p class="page-kicker">{{ t('dashboard.eyebrow') }}</p>
-            <h1 class="page-title">{{ t('dashboard.launcherTitle') }}</h1>
+            <h1 class="page-title">
+              {{
+                t(
+                  hasFullInterviewAccess
+                    ? 'dashboard.launcherTitleReturning'
+                    : 'dashboard.launcherTitle'
+                )
+              }}
+            </h1>
             <p class="page-subtitle">{{ t('dashboard.launcherHelper') }}</p>
           </div>
 
