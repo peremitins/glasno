@@ -73,6 +73,18 @@ function usageContext(session: InterviewSessionRecord) {
 }
 
 const DEFAULT_MODEL = 'gpt-5.4-nano'; // была 'gpt-4o-mini' (заменено 2026-07)
+const DEFAULT_CONVERSE_MAX_OUTPUT_TOKENS = 380;
+const VERBOSE_CANDIDATE_MAX_OUTPUT_TOKENS = 650;
+
+export function resolveConverseMaxOutputTokens(session: {
+  trainingMode?: InterviewTrainingMode | null;
+  metadata?: Record<string, unknown> | null;
+}): number {
+  return session.trainingMode === 'interviewer' &&
+    session.metadata?.candidatePersona === 'verbose_vague'
+    ? VERBOSE_CANDIDATE_MAX_OUTPUT_TOKENS
+    : DEFAULT_CONVERSE_MAX_OUTPUT_TOKENS;
+}
 
 export function extractResponsesText(response: any): string {
   const chunks: string[] = [];
@@ -1135,7 +1147,7 @@ export class OpenAiInterviewEngine implements InterviewEngine {
     try {
       const stream = await client.responses.create({
         model,
-        max_output_tokens: 380,
+        max_output_tokens: resolveConverseMaxOutputTokens(params.session),
         stream: true,
         input: [
           {
