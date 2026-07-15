@@ -568,6 +568,7 @@
     border: 1px solid var(--glass-border);
     border-radius: var(--radius-md);
     background: var(--surface-soft);
+    word-break: break-word;
   }
 
   .verify-note p,
@@ -677,7 +678,6 @@
       padding: 18px;
     }
 
-    .auth-card__head,
     .code-meta,
     .verify-actions {
       flex-direction: column;
