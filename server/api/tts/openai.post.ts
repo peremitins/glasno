@@ -3,6 +3,7 @@ import { TtsRequestDto } from '@/shared/dto';
 import { resolveOpenAiConfig } from '@/server/application/config/openaiConfig';
 import { resolveTtsConfig } from '@/server/application/tts/ttsConfig';
 import { apiError } from '@/server/utils/errors';
+import { assertDirectOpenAiAccessAllowed } from '@/server/infrastructure/llm/openaiResponsesClient';
 import { defineApiHandler } from '@/server/utils/handler';
 import { readDto } from '@/server/utils/validate';
 
@@ -21,6 +22,8 @@ export default defineApiHandler(async (event) => {
   }
 
   const input = await readDto(event, TtsRequestDto);
+  // При включённом relay запрещаем незаметный обход через прямой api.openai.com.
+  assertDirectOpenAiAccessAllowed();
   const format = input.format || 'mp3';
 
   try {

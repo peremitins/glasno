@@ -1,4 +1,5 @@
 import WebSocket from 'ws';
+import { assertDirectOpenAiAccessAllowed } from '@/server/infrastructure/llm/openaiResponsesClient';
 import {
   buildOpenAiRealtimeWebsocketUrl,
   buildRealtimeProxyConnectedEvent,
@@ -75,6 +76,8 @@ function connectOpenAiRealtime(
   state: ProxyState,
   connectMessage: { model: string; clientSecret: string }
 ) {
+  // WebSocket relay пока не поддерживает; при включённом relay работаем fail-closed.
+  assertDirectOpenAiAccessAllowed();
   const upstream = new WebSocket(
     buildOpenAiRealtimeWebsocketUrl(connectMessage.model),
     {

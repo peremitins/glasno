@@ -1,8 +1,27 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { utils, write } from 'xlsx';
 import { extractInterviewFileText } from './extractInterviewFileText';
 
 describe('extractInterviewFileText', () => {
+  it('использует ESM-сборку xlsx без runtime-зависимости от cpexcel.js', () => {
+    const source = readFileSync(
+      'server/infrastructure/files/extractInterviewFileText.ts',
+      'utf8'
+    );
+
+    expect(source).toContain("from 'xlsx/xlsx.mjs'");
+    expect(source).not.toContain("from 'xlsx';");
+  });
+
+  it('явно включает canvas-полифиллы pdf-parse в production bundle', () => {
+    const source = readFileSync(
+      'server/infrastructure/files/extractInterviewFileText.ts',
+      'utf8'
+    );
+
+    expect(source).toContain("import '@napi-rs/canvas';");
+  });
   it('extracts readable text files without flattening all line breaks', async () => {
     const text = await extractInterviewFileText({
       data: Buffer.from('Вопрос 1?\n\n   Вопрос   2?   ', 'utf8'),

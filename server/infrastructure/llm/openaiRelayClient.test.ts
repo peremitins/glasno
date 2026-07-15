@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  assertDirectOpenAiAccessAllowed,
   buildRelayRequest,
   isRelayEnabled,
   sendOpenAiRealtimeCallRequest,
@@ -29,6 +30,17 @@ describe('openai responses relay client', () => {
       true
     );
     expect(isRelayEnabled({})).toBe(false);
+  });
+
+  it('запрещает прямой вызов OpenAI при включённом relay', () => {
+    expect(() =>
+      assertDirectOpenAiAccessAllowed({
+        AI_USE_RELAY: 'true',
+        AI_RELAY_URL: 'https://relay.example.com',
+      })
+    ).toThrowError(/AI Relay/u);
+
+    expect(() => assertDirectOpenAiAccessAllowed({})).not.toThrow();
   });
 
   it('builds signed relay requests without provider authorization headers', () => {

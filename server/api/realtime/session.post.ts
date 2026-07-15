@@ -18,6 +18,7 @@ import {
 } from '@/server/application/realtime/realtimeVoiceSessionService';
 import { resolveRealtimeVoiceForFace } from '@/shared/interviewerVoice';
 import { apiError } from '@/server/utils/errors';
+import { assertDirectOpenAiAccessAllowed } from '@/server/infrastructure/llm/openaiResponsesClient';
 import { defineApiHandler } from '@/server/utils/handler';
 import { readDto } from '@/server/utils/validate';
 
@@ -94,6 +95,9 @@ export default defineApiHandler(async (event) => {
       expiresAt: null,
     });
   }
+
+  // Relay пока не выдаёт ephemeral secrets; на проде не обходим его напрямую.
+  assertDirectOpenAiAccessAllowed();
 
   const payload = buildRealtimeSessionPayload(
     realtimeContext,

@@ -14,6 +14,9 @@ importers:
       '@fontsource-variable/onest':
         specifier: ^5.2.11
         version: 5.2.11
+      '@napi-rs/canvas':
+        specifier: 0.1.80
+        version: 0.1.80
       '@pinia/nuxt':
         specifier: ^0.11.0
         version: 0.11.3(magicast@0.5.3)(pinia@3.0.4(typescript@5.9.3)(vue@3.5.39(typescript@5.9.3)))
