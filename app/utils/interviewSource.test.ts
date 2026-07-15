@@ -1,11 +1,25 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildManualInterviewSource,
+  getVacancyUrlError,
   isManualInterviewSourceReady,
   resolveProfessionSelection,
 } from './interviewSource';
 
 describe('manual interview source', () => {
+  it('explains unsupported vacancy links before submit', () => {
+    expect(getVacancyUrlError('')).toBeNull();
+    expect(
+      getVacancyUrlError('https://www.youtube.com/watch?v=bzz622DshiM')
+    ).toContain('ссылка не поддерживается');
+    expect(
+      getVacancyUrlError('https://spb.hh.ru/vacancy/123456')
+    ).toBeNull();
+    expect(
+      getVacancyUrlError('https://jobs.lever.co/acme/1234-abcd')
+    ).toBeNull();
+  });
+
   it('uses profession source when the user provides only a role', () => {
     expect(
       buildManualInterviewSource({

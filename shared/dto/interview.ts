@@ -1,5 +1,9 @@
 import { z } from 'zod';
 import { hasValidCustomInterviewQuestion } from '../interviewQuestion';
+import {
+  isSupportedVacancyUrl,
+  UNSUPPORTED_VACANCY_URL_MESSAGE,
+} from '../vacancyUrl';
 
 export const InterviewSourceTypeDto = z.enum(['hh_url', 'text', 'profession']);
 export const InterviewTrainingModeDto = z.enum(['candidate', 'interviewer']);
@@ -66,7 +70,12 @@ export const InterviewerFaceIdDto = z.enum([
 export const InterviewSourceDto = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('hh_url'),
-    url: z.string().url(),
+    url: z
+      .string()
+      .url()
+      .refine(isSupportedVacancyUrl, {
+        message: UNSUPPORTED_VACANCY_URL_MESSAGE,
+      }),
   }),
   z.object({
     type: z.literal('text'),

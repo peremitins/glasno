@@ -45,6 +45,7 @@
   import PaywallModal from '@/app/components/billing/PaywallModal.vue';
   import {
     buildManualInterviewSource,
+    getVacancyUrlError,
     isManualInterviewSourceReady,
     resolveProfessionSelection,
   } from '@/app/utils/interviewSource';
@@ -478,17 +479,6 @@
     },
   });
 
-  const selectedSourceHint = computed(() => {
-    if (isInterviewerTraining.value) {
-      if (sourceMode.value === 'hh_url') {
-        return t('interview.new.sourceHint.hhInterviewer');
-      }
-      return t('interview.new.sourceHint.manualInterviewer');
-    }
-    if (sourceMode.value === 'hh_url') return t('interview.new.sourceHint.hh');
-    return t('interview.new.sourceHint.manual');
-  });
-
   const isInterviewerTraining = computed(
     () => form.trainingMode === 'interviewer'
   );
@@ -618,8 +608,12 @@
     return vacancyText.length === 0 || vacancyText.length >= 10;
   });
 
+  const vacancyUrlError = computed(() => getVacancyUrlError(form.hhUrl));
+
   const sourceContextReady = computed(() => {
-    if (sourceMode.value === 'hh_url') return form.hhUrl.trim().length > 0;
+    if (sourceMode.value === 'hh_url') {
+      return form.hhUrl.trim().length > 0 && !vacancyUrlError.value;
+    }
     return isManualInterviewSourceReady({
       role: form.professionRole,
       vacancyText: form.vacancyText,
@@ -1023,26 +1017,6 @@
                 }}
               </h2>
             </div>
-            <button
-              v-tooltip="
-                t(
-                  isInterviewerTraining
-                    ? 'interview.new.sourceHelpInterviewer'
-                    : 'interview.new.sourceHelp'
-                )
-              "
-              class="help-button"
-              type="button"
-              :aria-label="
-                t(
-                  isInterviewerTraining
-                    ? 'interview.new.sourceHelpInterviewer'
-                    : 'interview.new.sourceHelp'
-                )
-              "
-            >
-              <QuestionMarkCircledIcon aria-hidden="true" />
-            </button>
           </div>
 
           <div class="source-tabs" role="tablist">
@@ -1061,8 +1035,6 @@
             </button>
           </div>
 
-          <p class="source-hint">{{ selectedSourceHint }}</p>
-
           <div v-if="sourceMode === 'hh_url'" class="field">
             <label for="hh-url">{{ t('interview.new.fields.hhUrl') }}</label>
             <div class="input-shell">
@@ -1073,9 +1045,21 @@
                 class="text-control"
                 type="url"
                 inputmode="url"
-                placeholder="https://company.ru/careers/product-manager"
-              />
+                :aria-invalid="Boolean(vacancyUrlError)"
+                :aria-describedby="
+                  vacancyUrlError ? 'vacancy-url-error' : undefined
+                "
+                placeholder="https://hh.ru/vacancy/123456"
+              >
             </div>
+            <p
+              v-if="vacancyUrlError"
+              id="vacancy-url-error"
+              class="field-error"
+              role="alert"
+            >
+              {{ vacancyUrlError }}
+            </p>
           </div>
 
           <div v-else class="manual-source-stack">
@@ -1564,15 +1548,6 @@
                 )
               }}
             </h3>
-            <p>
-              {{
-                t(
-                  isInterviewerTraining
-                    ? 'interview.new.fields.focusHintInterviewer'
-                    : 'interview.new.fields.focusHint'
-                )
-              }}
-            </p>
           </div>
           <div class="focus-chip-grid" role="radiogroup">
             <div
@@ -2232,6 +2207,13 @@
 
   .source-hint {
     margin: 12px 0 14px;
+  }
+
+  .field-error {
+    margin: 0;
+    color: var(--danger);
+    font-size: 12px;
+    line-height: 1.45;
   }
 
   .field {
