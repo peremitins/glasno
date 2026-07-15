@@ -5,7 +5,7 @@ const source = readFileSync('app/pages/interview/new.vue', 'utf8');
 
 describe('interview new page UI structure', () => {
   it('offers candidate and interviewer training modes before the source fields', () => {
-    const modeIndex = source.indexOf('class="training-mode-grid"');
+    const modeIndex = source.indexOf('class="training-mode-switch"');
     const sourceIndex = source.indexOf('id="vacancy"');
 
     expect(modeIndex).toBeGreaterThan(-1);
@@ -15,6 +15,27 @@ describe('interview new page UI structure', () => {
     expect(source).toContain("value: 'interviewer'");
     expect(source).toContain('interview.new.trainingMode.candidate.title');
     expect(source).toContain('interview.new.trainingMode.interviewer.title');
+  });
+
+  it('places compact training modes beside the heading without truncating mobile labels', () => {
+    const modeSource = source.slice(
+      source.indexOf('class="setup-context-head"'),
+      source.indexOf('<div class="context-grid"')
+    );
+
+    expect(modeSource).toContain('class="setup-head"');
+    expect(modeSource).toContain('class="training-mode-switch"');
+    expect(modeSource).toContain('class="training-mode-option"');
+    expect(modeSource).toContain('class="training-mode-option__help"');
+    expect(modeSource).toContain('v-tooltip="optionTooltip(option.description)"');
+    expect(modeSource).toContain(':aria-label="optionHelpText(option.description)"');
+    expect(modeSource).not.toContain('<small>{{ t(option.description) }}</small>');
+    expect(source).toContain('grid-template-columns: repeat(2, max-content);');
+    expect(source).toContain('white-space: normal;');
+    expect(source).toContain('.training-mode-option::after');
+    expect(source).toContain('@media (max-width: 360px)');
+    expect(source).toContain('display: none;');
+    expect(source).not.toContain('class="training-mode-card"');
   });
 
   it('replaces candidate experience with AI candidate setup in interviewer mode', () => {
@@ -109,7 +130,7 @@ describe('interview new page UI structure', () => {
   });
 
   it('uses focusable help buttons for tooltips', () => {
-    expect(source).toContain('class="help-button"');
+    expect(source).toContain('class="training-mode-option__help"');
     expect(source).toContain('type="button"');
     expect(source).not.toContain('class="source-help"');
   });

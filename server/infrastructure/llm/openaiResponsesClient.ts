@@ -40,6 +40,17 @@ export function isRelayEnabled(env: EnvMap = process.env): boolean {
   return hasValue(env.AI_RELAY_URL);
 }
 
+export function assertDirectOpenAiAccessAllowed(
+  env: EnvMap = process.env
+): void {
+  if (isRelayEnabled(env)) {
+    throw apiError(
+      'E_UPSTREAM',
+      'Этот режим пока не поддерживается через AI Relay'
+    );
+  }
+}
+
 export function buildRelayRequest(input: RelayRequestInput) {
   const env = input.env ?? process.env;
   const relayUrl = normalizeRelayUrl(env.AI_RELAY_URL);

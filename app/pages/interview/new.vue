@@ -968,31 +968,49 @@
 <template>
   <form class="interview-page app-page" @submit.prevent="submit">
     <section class="setup-shell glass-frame">
-      <div class="setup-head">
-        <p class="panel-label">{{ t('interview.new.context.kicker') }}</p>
-        <h1>{{ t('interview.new.context.title') }}</h1>
-      </div>
+      <div class="setup-context-head">
+        <div class="setup-head">
+          <p class="panel-label">{{ t('interview.new.context.kicker') }}</p>
+          <h1>{{ t('interview.new.context.title') }}</h1>
+        </div>
 
-      <section class="training-mode-grid" role="radiogroup">
-        <button
-          v-for="option in trainingModeOptions"
-          :key="option.value"
-          type="button"
-          class="training-mode-card"
-          :class="{
-            'training-mode-card--active': form.trainingMode === option.value,
-          }"
-          role="radio"
-          :aria-checked="form.trainingMode === option.value"
-          @click="form.trainingMode = option.value"
+        <section
+          class="training-mode-switch"
+          role="radiogroup"
+          :aria-label="t('interview.new.context.title')"
         >
-          <span>
-            <strong>{{ t(option.title) }}</strong>
-            <small>{{ t(option.description) }}</small>
-          </span>
-          <em>{{ t(option.meta) }}</em>
-        </button>
-      </section>
+          <div
+            v-for="option in trainingModeOptions"
+            :key="option.value"
+            class="training-mode-option"
+            :class="{
+              'training-mode-option--active':
+                form.trainingMode === option.value,
+            }"
+          >
+            <button
+              type="button"
+              class="training-mode-option__choice"
+              role="radio"
+              :aria-checked="form.trainingMode === option.value"
+              @click="form.trainingMode = option.value"
+            >
+              <span>{{ t(option.title) }}</span>
+              <em>{{ t(option.meta) }}</em>
+            </button>
+            <button
+              v-tooltip="optionTooltip(option.description)"
+              type="button"
+              class="training-mode-option__help"
+              :aria-label="optionHelpText(option.description)"
+              :title="optionHelpText(option.description)"
+              @click.stop
+            >
+              <QuestionMarkCircledIcon aria-hidden="true" />
+            </button>
+          </div>
+        </section>
+      </div>
 
       <div class="context-grid">
         <article id="vacancy" class="context-column section-anchor">
@@ -1050,7 +1068,7 @@
                   vacancyUrlError ? 'vacancy-url-error' : undefined
                 "
                 placeholder="https://hh.ru/vacancy/123456"
-              >
+              />
             </div>
             <p
               v-if="vacancyUrlError"
@@ -1929,93 +1947,134 @@
     padding: clamp(16px, 2.3vw, 28px);
   }
 
+  .setup-context-head {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px 24px;
+    align-items: flex-end;
+    margin-bottom: 18px;
+  }
+
   .setup-head {
-    margin-bottom: 18px;
+    flex: 0 1 auto;
   }
 
-  .training-mode-grid {
+  .training-mode-switch {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 10px;
-    margin-bottom: 18px;
+    grid-template-columns: repeat(2, max-content);
+    gap: 8px;
+    width: auto;
+    max-width: 100%;
   }
 
-  .training-mode-card {
+  .training-mode-option {
     position: relative;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 14px;
+    grid-template-columns: minmax(0, auto) 60px;
     align-items: center;
-    min-height: 112px;
+    min-width: 0;
     border: 1px solid var(--glass-border);
     border-radius: var(--radius-control);
     background: var(--surface-soft);
     color: var(--text-secondary);
-    cursor: pointer;
-    padding: 16px;
-    text-align: left;
     transition: background var(--motion-normal) var(--ease-out),
       border-color var(--motion-normal) var(--ease-out),
-      box-shadow var(--motion-normal) var(--ease-out),
-      transform var(--motion-normal) var(--ease-out);
+      box-shadow var(--motion-normal) var(--ease-out);
   }
 
-  .training-mode-card:hover,
-  .training-mode-card--active {
+  .training-mode-option:hover,
+  .training-mode-option--active {
     border-color: color-mix(in srgb, var(--accent) 52%, var(--glass-border));
     background: var(--surface-raised);
     box-shadow: inset 0 1px 0 var(--inner-highlight),
-      0 14px 32px color-mix(in srgb, var(--accent) 14%, transparent);
-    transform: translateY(-1px);
+      0 8px 20px color-mix(in srgb, var(--accent) 12%, transparent);
   }
 
-  .training-mode-card::after {
+  .training-mode-option::after {
     content: '';
     position: absolute;
-    top: 16px;
-    right: 16px;
-    width: 10px;
-    height: 10px;
+    top: 50%;
+    right: 11px;
+    width: 9px;
+    height: 9px;
     border-radius: 999px;
     box-shadow: inset 0 0 0 1px var(--glass-border-strong);
+    pointer-events: none;
+    transform: translateY(-50%);
   }
 
-  .training-mode-card--active::after {
+  .training-mode-option--active::after {
     background: var(--accent-2);
     box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 16%, transparent);
   }
 
-  .training-mode-card span {
+  .training-mode-option__choice {
     display: grid;
-    gap: 7px;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px;
+    align-items: center;
     min-width: 0;
-  }
-
-  .training-mode-card strong {
+    min-height: 48px;
+    border: 0;
+    background: transparent;
     color: var(--text-primary);
-    font-size: 15px;
+    cursor: pointer;
+    padding: 7px 2px 7px 12px;
+    text-align: left;
+  }
+
+  .training-mode-option__choice span {
+    font-size: 14px;
     font-weight: 850;
+    line-height: 1.25;
+    white-space: normal;
+
+    @media (max-width: 480px) {
+      font-size: 10px;
+    }
   }
 
-  .training-mode-card small {
-    max-width: 56ch;
-    color: var(--text-secondary);
-    font-size: 12px;
-    line-height: 1.45;
-  }
-
-  .training-mode-card em {
-    align-self: end;
+  .training-mode-option__choice em {
     border: 1px solid var(--glass-border);
     border-radius: 999px;
     background: var(--surface-soft);
-    color: var(--text-primary);
+    color: var(--text-secondary);
     font-family: var(--font-mono);
-    font-size: 11px;
+    font-size: 10px;
     font-style: normal;
     font-weight: 900;
-    padding: 6px 9px;
+    padding: 4px 7px;
     white-space: nowrap;
+  }
+
+  .training-mode-option--active .training-mode-option__choice em {
+    border-color: color-mix(in srgb, var(--accent) 42%, var(--glass-border));
+    color: var(--accent-2);
+  }
+
+  .training-mode-option__help {
+    display: grid;
+    width: 40px;
+    height: 44px;
+    place-items: center;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: help;
+    transition: background var(--motion-normal) var(--ease-out),
+      color var(--motion-normal) var(--ease-out);
+  }
+
+  .training-mode-option__help:hover,
+  .training-mode-option__help:focus-visible {
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    color: var(--text-primary);
+  }
+
+  .training-mode-option__help svg {
+    width: 16px;
+    height: 16px;
   }
 
   .context-grid {
@@ -3276,9 +3335,13 @@
       text-align: left;
     }
 
+    .training-mode-switch {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      width: 100%;
+    }
+
     .goal-grid,
     .focus-chip-grid,
-    .training-mode-grid,
     .candidate-option-grid,
     .segmented,
     .segmented--compact,
@@ -3369,8 +3432,16 @@
   }
 
   @media (max-width: 480px) {
-    .source-tabs {
+    .training-mode-switch {
       grid-template-columns: 1fr;
+    }
+
+    .source-tabs {
+      .source-tab {
+        font-size: 10px;
+        padding: 0 5px;
+        min-height: 40px;
+      }
     }
 
     .source-tab {
