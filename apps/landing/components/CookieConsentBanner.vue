@@ -26,7 +26,7 @@
 <template>
   <aside v-if="isOpen" class="cookie-banner" aria-label="Уведомление о cookie">
     <p>
-      Мы используем cookie для работы сайта и улучшения сервиса. Подробнее — в
+      Мы используем cookie для работы сайта и улучшения сервиса. Подробнее в
       <a href="/legal/privacy-policy-ru.html" target="_blank" rel="noopener">
         политике конфиденциальности
       </a>.

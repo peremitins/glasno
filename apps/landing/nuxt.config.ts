@@ -51,13 +51,13 @@ const config = {
   app: {
     head: {
       htmlAttrs: { lang: 'ru' },
-      title: 'Гласно — тренажёр собеседований',
+      title: 'Гласно: тренажёр собеседований',
       viewport: 'width=device-width, initial-scale=1, viewport-fit=cover',
       meta: [
         {
           name: 'description',
           content:
-            'Гласно — тренажёр собеседований с живым голосовым AI-интервьюером, подсказками во время ответа и подробным разбором.',
+            'Гласно: тренажёр собеседований с голосовым AI-интервьюером, подсказками во время ответа и подробным разбором.',
         },
         { name: 'robots', content: 'index, follow' },
         { name: 'application-name', content: 'Гласно' },

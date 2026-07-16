@@ -21,7 +21,7 @@
   const ogImage = computed(() => `${siteUrl.value}/og-cover.png`);
 
   const description =
-    'Отрепетируйте собеседование голосом: интервью по вашей вакансии, подсказки во время ответа и честный разбор каждого ответа — до встречи с работодателем.';
+    'Проговорите ответы до собеседования: интервью по вашей вакансии, подсказки во время ответа и разбор, который поможет подготовиться к встрече с работодателем.';
 
   const yandexVerification = String(
     runtimeConfig.public.yandexVerification || ''
@@ -79,7 +79,7 @@
   ]);
 
   useHead(() => ({
-    title: 'Гласно — тренажёр собеседований голосом',
+    title: 'Гласно: тренажёр собеседований голосом',
     link: [{ rel: 'canonical', href: canonicalUrl.value }],
     meta: [
       { name: 'description', content: description },
@@ -95,7 +95,7 @@
       ...(googleVerification
         ? [{ name: 'google-site-verification', content: googleVerification }]
         : []),
-      { property: 'og:title', content: 'Гласно — репетиция собеседования голосом' },
+      { property: 'og:title', content: 'Гласно: репетиция собеседования голосом' },
       { property: 'og:description', content: description },
       { property: 'og:type', content: 'website' },
       { property: 'og:url', content: canonicalUrl.value },
@@ -107,10 +107,10 @@
       { property: 'og:image:type', content: 'image/png' },
       {
         property: 'og:image:alt',
-        content: 'Гласно — тренажёр собеседований голосом',
+        content: 'Гласно: тренажёр собеседований голосом',
       },
       { name: 'twitter:card', content: 'summary_large_image' },
-      { name: 'twitter:title', content: 'Гласно — тренажёр собеседований' },
+      { name: 'twitter:title', content: 'Гласно: тренажёр собеседований' },
       { name: 'twitter:description', content: description },
       { name: 'twitter:image', content: ogImage.value },
     ],
