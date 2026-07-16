@@ -171,6 +171,11 @@
       "middle": "Уверенный (Middle)",
       "senior": "Эксперт (Senior)"
     },
+    "questionPreference": {
+      "repeat": "Повторять",
+      "mastered": "Освоено",
+      "hidden": "Не показывать"
+    },
     "levelHint": {
       "junior": "Первые шаги в профессии",
       "middle": "Есть опыт и кейсы",
@@ -930,8 +935,7 @@
     },
     "preferences": {
       "kicker": "Интерфейс",
-      "fontTitle": "Шрифт приложения",
-      "fontHint": "Выбор сохранится на этом устройстве."
+      "fontTitle": "Шрифт приложения"
     },
     "documents": {
       "title": "Юридическая информация",

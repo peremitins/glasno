@@ -462,7 +462,10 @@ export function withRealtimeSessionInstructions(
     typeof response.instructions === 'string'
       ? response.instructions.trim()
       : '';
-  const baseInstructions = sessionInstructions.trim();
+  // Инструкции сессии создаются на первом вопросе и не меняются автоматически.
+  // В response.create всегда приходит свежий bridge-контекст текущего вопроса,
+  // поэтому старую строку нужно убрать: иначе модель видит два разных вопроса.
+  const baseInstructions = withoutStaleRealtimeQuestion(sessionInstructions);
   if (!responseInstructions || !baseInstructions) return event;
 
   return {
@@ -472,6 +475,14 @@ export function withRealtimeSessionInstructions(
       instructions: `${baseInstructions}\n\n${responseInstructions}`,
     },
   };
+}
+
+function withoutStaleRealtimeQuestion(instructions: string): string {
+  return instructions
+    .split('\n')
+    .filter((line) => !/^Текущий (?:вопрос|этап):/u.test(line.trim()))
+    .join('\n')
+    .trim();
 }
 
 function extractApiError(error: unknown): string {

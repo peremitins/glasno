@@ -42,6 +42,20 @@ function createInMemoryRepository() {
       session.metadata = fields.metadata;
       return session;
     },
+    async listCanonicalQuestionIdsForOwner(owner: {
+      anonymousSessionId: string;
+      userId?: string | null;
+    }) {
+      return sessions
+        .filter((session) =>
+          owner.userId
+            ? session.userId === owner.userId
+            : !session.userId && session.anonymousSessionId === owner.anonymousSessionId
+        )
+        .flatMap((session) => session.metadata?.plan?.items ?? [])
+        .map((item) => item.canonicalQuestionId)
+        .filter((id): id is string => typeof id === 'string' && Boolean(id));
+    },
     async listTurns(sessionId: string) {
       return turns
         .filter((turn) => turn.sessionId === sessionId)
@@ -101,6 +115,86 @@ function createInMemoryRepository() {
 }
 
 describe('InterviewService', () => {
+  it('continues the canonical question cycle for the same interview owner', async () => {
+    const repository = createInMemoryRepository();
+    const candidates = Array.from({ length: 7 }, (_, index) => ({
+      id: `canonical_${index + 1}`,
+      corpusId: `frontend_concept_${index + 1}`,
+      roleKey: 'it-frontend',
+      roleLabel: 'Frontend-разработчик',
+      framework: 'none' as const,
+      seniority: 'middle' as const,
+      interviewType: 'technical' as const,
+      topic: 'javascript',
+      subtopic: null,
+      question: `Канонический вопрос ${index + 1}?`,
+      tags: ['javascript'],
+      expectedConcepts: [],
+    }));
+    const engine = {
+      normalizeCustomQuestions: vi.fn(),
+      generateQuestion: vi
+        .fn()
+        .mockResolvedValue({ question: 'Контекстный вопрос?' }),
+      evaluateAnswer: vi.fn(),
+      generateQuestionHints: vi.fn(),
+      generateSampleAnswerHint: vi.fn(),
+      converse: vi.fn(),
+      converseStream: vi.fn(),
+    };
+    const service = new InterviewService({
+      repository,
+      engine,
+      hhClient: null,
+      canonicalQuestionRepository: {
+        listCandidates: vi.fn().mockResolvedValue(candidates),
+        findCanonicalById: vi.fn(),
+      },
+    });
+    const input = {
+      source: { type: 'profession' as const, role: 'Frontend-разработчик' },
+      level: 'middle' as const,
+      sessionGoal: 'standard' as const,
+      responseMode: 'text' as const,
+      hintMode: 'off' as const,
+      language: 'ru' as const,
+      interviewerMode: 'neutral' as const,
+      interviewerAvatarId: 'neutral-pro' as const,
+      focus: 'professional' as const,
+    };
+
+    await service.createSession({
+      anonymousSessionId: 'anon_cycle',
+      input,
+    });
+    const second = await service.createSession({
+      anonymousSessionId: 'anon_cycle',
+      input,
+    });
+
+    const selectedIds = (session: (typeof repository.sessions)[number]) =>
+      ((session.metadata?.plan as { items?: Array<{ canonicalQuestionId?: string }> })
+        ?.items ?? [])
+        .map((item) => item.canonicalQuestionId)
+        .filter((id): id is string => Boolean(id));
+
+    expect(selectedIds(repository.sessions[0])).toEqual([
+      'canonical_1',
+      'canonical_2',
+      'canonical_3',
+      'canonical_4',
+      'canonical_5',
+    ]);
+    expect(selectedIds(repository.sessions[1])).toEqual([
+      'canonical_6',
+      'canonical_7',
+      'canonical_1',
+      'canonical_2',
+      'canonical_3',
+    ]);
+    expect(second.currentTurn?.question).toBe('Канонический вопрос 6?');
+  });
+
   it('finishes a running interview early and finalizes the current dialogue', async () => {
     const repository = createInMemoryRepository();
     const service = new InterviewService({

@@ -1,11 +1,13 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import {
   buildRealtimeAudioConstraints,
   computeRealtimeInputVolume,
   shouldNotifyRealtimeInputActivity,
-  shouldNotifyRemoteAudioPlaybackActivity,
   waitForRealtimeIceGatheringComplete,
 } from './realtimeWebrtcClient';
+
+const source = readFileSync('app/services/realtime/realtimeWebrtcClient.ts', 'utf8');
 
 describe('realtimeWebrtcClient helpers', () => {
   it('requests browser audio processing for realtime microphone capture', () => {
@@ -52,25 +54,10 @@ describe('realtimeWebrtcClient helpers', () => {
     ).toBe(false);
   });
 
-  it('throttles remote audio playback activity notifications', () => {
-    expect(
-      shouldNotifyRemoteAudioPlaybackActivity({
-        now: 1_000,
-        lastRemoteAudioActivityAtMs: 0,
-      })
-    ).toBe(true);
-    expect(
-      shouldNotifyRemoteAudioPlaybackActivity({
-        now: 2_000,
-        lastRemoteAudioActivityAtMs: 1_000,
-      })
-    ).toBe(false);
-    expect(
-      shouldNotifyRemoteAudioPlaybackActivity({
-        now: 6_000,
-        lastRemoteAudioActivityAtMs: 1_000,
-      })
-    ).toBe(true);
+  it('does not treat continuous MediaStream time updates as assistant speech', () => {
+    expect(source).not.toContain(
+      "remoteAudio.addEventListener('timeupdate', notifyRemoteAudioActivity)"
+    );
   });
 
   it('waits for ICE gathering to complete before handshake', async () => {

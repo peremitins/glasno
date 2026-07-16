@@ -13,14 +13,14 @@ const preference = (id: string, lastPracticedAt: string | null) => ({
 });
 
 describe('repeat question scheduling', () => {
-  it('limits repeats to no more than one third of the interview', () => {
-    expect(getRepeatQuestionLimit(3)).toBe(1);
-    expect(getRepeatQuestionLimit(6)).toBe(2);
-    expect(getRepeatQuestionLimit(10)).toBe(3);
+  it('uses every free slot except one reserved for a new contextual question', () => {
+    expect(getRepeatQuestionLimit(3)).toBe(2);
+    expect(getRepeatQuestionLimit(6)).toBe(5);
+    expect(getRepeatQuestionLimit(10)).toBe(9);
   });
 
   it('does not displace user-authored questions', () => {
-    expect(getRepeatQuestionLimit(6, 5)).toBe(1);
+    expect(getRepeatQuestionLimit(6, 5)).toBe(0);
     expect(getRepeatQuestionLimit(3, 3)).toBe(0);
   });
 

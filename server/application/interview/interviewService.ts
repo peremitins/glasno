@@ -32,15 +32,18 @@ import {
   buildInterviewPlanMetadata,
   injectRepeatPreferences,
   parseInterviewSessionMetadata,
+  populateCanonicalPlanQuestions,
   populateGeneratedPlanQuestions,
   resolveNextPlannedQuestion,
 } from './interviewPlan';
 import type { QuestionPreferenceRepository } from '@/server/interface/questionPreferenceRepository';
+import type { CanonicalQuestionRepository } from '@/server/interface/canonicalQuestionRepository';
 import {
   buildQuestionContext,
   matchesQuestionContext,
 } from '@/shared/questionContext';
 import { canonicalInterviewQuestionKey } from '@/shared/interviewQuestion';
+import { selectCanonicalQuestions } from '@/server/application/questionBank/canonicalQuestionSelection';
 import {
   avatarFromMode,
   modeFromFaceId,
@@ -55,6 +58,7 @@ export class InterviewService {
       engine: InterviewEngine;
       hhClient: HhClient | null;
       questionPreferenceRepository?: QuestionPreferenceRepository;
+      canonicalQuestionRepository?: CanonicalQuestionRepository;
     }
   ) {}
 
@@ -123,10 +127,7 @@ export class InterviewService {
         }
       );
     }
-    if (
-      input.trainingMode === 'candidate' &&
-      this.deps.questionPreferenceRepository
-    ) {
+    if (input.trainingMode === 'candidate') {
       const context = buildQuestionContext({
         role:
           input.role ||
@@ -141,16 +142,72 @@ export class InterviewService {
         vacancyText: preparedSource.vacancyRaw,
         focus: metadata.focus,
       });
-      const preferences = await this.deps.questionPreferenceRepository.listForOwner({
-        anonymousSessionId: params.anonymousSessionId,
-        userId: params.userId ?? null,
-      });
-      metadata = injectRepeatPreferences(
-        metadata,
-        preferences.filter((preference) =>
-          matchesQuestionContext(preference, context)
-        )
+      const preferences = this.deps.questionPreferenceRepository
+        ? await this.deps.questionPreferenceRepository.listForOwner({
+            anonymousSessionId: params.anonymousSessionId,
+            userId: params.userId ?? null,
+          })
+        : [];
+      const matchingPreferences = preferences.filter((preference) =>
+        matchesQuestionContext(preference, context)
       );
+      if (this.deps.questionPreferenceRepository) {
+        metadata = injectRepeatPreferences(metadata, matchingPreferences);
+      }
+
+      if (this.deps.canonicalQuestionRepository) {
+        const frameworks = [
+          'none',
+          ...context.contextTags.filter(
+            (tag) => tag === 'react' || tag === 'vue' || tag === 'angular'
+          ),
+        ] as Array<'none' | 'react' | 'vue' | 'angular'>;
+        const interviewTypes =
+          context.focus === 'behavioral'
+            ? (['behavioral'] as const)
+            : context.focus === 'hr_screening' ||
+                context.focus === 'salary_negotiation'
+              ? ([] as const)
+              : (['technical', 'live_coding', 'system_design'] as const);
+        if (interviewTypes.length) {
+          const [candidates, previouslySelectedCanonicalQuestionIds] =
+            await Promise.all([
+              this.deps.canonicalQuestionRepository.listCandidates({
+                roleKey: context.roleKey,
+                seniority: context.level,
+                frameworks: [...new Set(frameworks)],
+                interviewTypes: [...interviewTypes],
+              }),
+              this.deps.repository.listCanonicalQuestionIdsForOwner({
+                anonymousSessionId: params.anonymousSessionId,
+                userId: params.userId ?? null,
+              }),
+            ]);
+          const selected = selectCanonicalQuestions({
+            candidates,
+            context: {
+              ...context,
+              sourceText: [
+                preparedSource.vacancyTitle,
+                preparedSource.vacancyRaw,
+                input.resumeText,
+                input.source.type === 'profession'
+                  ? input.source.specialization
+                  : null,
+              ]
+                .filter(Boolean)
+                .join(' '),
+            },
+            preferences: matchingPreferences.map((preference) => ({
+              conceptKey: preference.conceptKey,
+              status: preference.status,
+            })),
+            previouslySelectedCanonicalQuestionIds,
+            count: metadata.plan.items.length,
+          });
+          metadata = populateCanonicalPlanQuestions(metadata, selected);
+        }
+      }
     }
 
     const session = await this.deps.repository.createSession({
@@ -939,6 +996,7 @@ export class InterviewService {
         planItemId: planned.planItemId,
         questionSource: planned.source,
         hintPack,
+        canonicalQuestionId: planned.canonicalQuestionId ?? null,
         preferenceId: planned.preferenceId ?? null,
         semantic: planned.semantic ?? null,
       },

@@ -1,0 +1,1 @@
+CREATE INDEX "question_bank_selection_idx" ON "question_bank" USING btree ("role","seniority","framework","interview_type","technical_review","editorial_review","status");

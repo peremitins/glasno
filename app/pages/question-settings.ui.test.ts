@@ -27,15 +27,13 @@ describe('question preference UI', () => {
     expect(component).not.toContain('SewingPinIcon');
   });
 
-  it('provides a separate settings page with filters and deletion', () => {
-    const page = read('app/pages/question-settings.vue');
+  it('moves question settings into the unified question bank', () => {
+    const page = read('app/pages/questions.vue');
     const layout = read('app/layouts/default.vue');
 
-    expect(page).toContain("'repeat'");
-    expect(page).toContain("'mastered'");
-    expect(page).toContain("'hidden'");
-    expect(page).toContain('/api/question-preferences');
-    expect(page).toContain("method: 'DELETE'");
-    expect(layout).toContain("to: '/question-settings'");
+    expect(page).toContain('QuestionPreferenceMenu');
+    expect(page).toContain('/api/question-preferences/bank');
+    expect(layout).toContain("to: '/questions'");
+    expect(layout).not.toContain("to: '/question-settings'");
   });
 });

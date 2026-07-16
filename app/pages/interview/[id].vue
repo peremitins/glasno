@@ -20,6 +20,7 @@
     LearningTermContext,
     QuestionHintPack,
     QuestionPreference,
+    QuestionPreferenceStatus,
   } from '@/shared/dto';
   import {
     VideoIcon,
@@ -257,6 +258,10 @@
     state.value.turns = state.value.turns.map((turn) =>
       turn.id === current.id ? { ...turn, preference: summary } : turn
     );
+  }
+
+  function questionPreferenceLabel(status: QuestionPreferenceStatus): string {
+    return t(`interview.questionPreference.${status}`);
   }
   const replyPlaceholder = computed(() =>
     t(
@@ -1633,13 +1638,22 @@
 
           <!-- Текущий вопрос -->
           <div class="now-question">
-            <span class="badge">
-              {{
-                isInterviewerTraining
-                  ? t('interview.session.contextTitle')
-                  : currentTurnLabel
-              }}
-            </span>
+            <div class="now-question-meta">
+              <span class="badge">
+                {{
+                  isInterviewerTraining
+                    ? t('interview.session.contextTitle')
+                    : currentTurnLabel
+                }}
+              </span>
+              <span
+                v-if="!isInterviewerTraining && currentTurn.preference?.status"
+                class="question-preference-badge"
+                :data-status="currentTurn.preference.status"
+              >
+                {{ questionPreferenceLabel(currentTurn.preference.status) }}
+              </span>
+            </div>
             <p v-if="isInterviewerTraining">
               <TextWithInterviewTerms
                 :text="interviewContextTitle"
@@ -2887,7 +2901,7 @@
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     grid-template-areas:
-      'badge .'
+      'meta .'
       'question actions';
     align-items: start;
     column-gap: 14px;
@@ -2899,8 +2913,42 @@
     background: var(--surface-soft);
   }
 
-  .now-question .badge {
-    grid-area: badge;
+  .now-question-meta {
+    grid-area: meta;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    min-width: 0;
+    gap: 8px;
+  }
+
+  .question-preference-badge {
+    display: inline-flex;
+    align-items: center;
+    min-height: 24px;
+    padding: 4px 8px;
+    border: 1px solid var(--glass-border);
+    border-radius: 999px;
+    background: var(--surface-raised);
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 800;
+    line-height: 1;
+    white-space: nowrap;
+  }
+
+  .question-preference-badge[data-status='repeat'] {
+    border-color: color-mix(in srgb, var(--accent) 42%, var(--glass-border));
+    color: var(--accent-2);
+  }
+
+  .question-preference-badge[data-status='mastered'] {
+    border-color: color-mix(in srgb, var(--success) 38%, var(--glass-border));
+    color: var(--success);
+  }
+
+  .question-preference-badge[data-status='hidden'] {
+    color: var(--text-muted);
   }
 
   .now-question p {
@@ -3513,7 +3561,7 @@
     .now-question {
       grid-template-columns: minmax(0, 1fr) auto;
       grid-template-areas:
-        'badge actions'
+        'meta actions'
         'question question';
       align-items: start;
       padding: 12px;

@@ -3,6 +3,7 @@ import type {
   QuestionPreference,
   QuestionPreferenceListResponse,
   QuestionSemanticPassport,
+  SetBankQuestionPreferenceRequest,
   SetTurnQuestionPreferenceRequest,
   UpdateQuestionPreferenceRequest,
   InterviewFocus,
@@ -18,12 +19,14 @@ import type {
 } from '@/server/interface/questionPreferenceRepository';
 import { apiError } from '@/server/utils/errors';
 import { assertOwnedInterviewSession } from '@/server/application/interview/sessionOwnership';
+import type { CanonicalQuestionRepository } from '@/server/interface/canonicalQuestionRepository';
 
 export class QuestionPreferenceService {
   constructor(
     private readonly deps: {
       repository: QuestionPreferenceRepository;
       interviewRepository: InterviewRepository;
+      questionBankRepository: CanonicalQuestionRepository;
     }
   ) {}
 
@@ -89,6 +92,41 @@ export class QuestionPreferenceService {
       }
     );
 
+    return recordToDto(row);
+  }
+
+  async setForBankQuestion(params: QuestionPreferenceOwner & {
+    input: SetBankQuestionPreferenceRequest;
+  }): Promise<QuestionPreference> {
+    const question = await this.deps.questionBankRepository.findCanonicalById(
+      params.input.questionId
+    );
+    if (!question) throw apiError('E_NOT_FOUND', 'Вопрос не найден');
+
+    const focus =
+      question.interviewType === 'behavioral' ? 'behavioral' : 'professional';
+    const semantic = QuestionSemanticPassportDto.parse({
+      conceptKey: question.corpusId,
+      conceptLabel: question.subtopic
+        ? `${question.topic}: ${question.subtopic}`
+        : question.topic,
+      topicTags: question.tags.slice(0, 8),
+      requiredContextTags:
+        question.framework === 'none' ? [] : [question.framework],
+      focus,
+    });
+    const row = await this.deps.repository.upsert({
+      ...ownerFrom(params),
+      status: params.input.status,
+      question: question.question,
+      conceptKey: question.corpusId,
+      semantic,
+      roleKey: question.roleKey,
+      roleLabel: question.roleLabel,
+      level: question.seniority,
+      contextTags: semantic.requiredContextTags,
+      focus,
+    });
     return recordToDto(row);
   }
 

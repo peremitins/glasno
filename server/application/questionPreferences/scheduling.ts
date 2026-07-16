@@ -9,9 +9,10 @@ export function getRepeatQuestionLimit(
   questionCount: number,
   userQuestionCount = 0
 ): number {
-  const quota = Math.floor(questionCount / 3);
   const freeSlots = Math.max(0, questionCount - userQuestionCount);
-  return Math.min(quota, freeSlots);
+  // Пользовательские вопросы не вытесняем и всегда оставляем одно место
+  // для нового вопроса по контексту конкретной вакансии и резюме.
+  return Math.max(0, freeSlots - 1);
 }
 
 export function selectRepeatPreferences<T extends RepeatPreferenceCandidate>(

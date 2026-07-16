@@ -81,9 +81,29 @@ function createFixture(overrides: Record<string, unknown> = {}) {
       return turn;
     },
   };
+  const questionBankRepository = {
+    async findCanonicalById(id: string) {
+      if (id !== 'bank_1') return null;
+      return {
+        id: 'bank_1',
+        corpusId: 'frontend_vue_reactivity',
+        roleKey: 'it-frontend',
+        roleLabel: 'Frontend-разработчик',
+        framework: 'vue',
+        seniority: 'middle',
+        interviewType: 'technical',
+        topic: 'vue',
+        subtopic: 'reactivity',
+        question: 'Как работает реактивность во Vue?',
+        tags: ['vue', 'reactivity'],
+        expectedConcepts: ['Proxy'],
+      };
+    },
+  };
   const service = new QuestionPreferenceService({
     repository: repository as any,
     interviewRepository: interviewRepository as any,
+    questionBankRepository: questionBankRepository as any,
   });
   return { service, repository, turn };
 }
@@ -137,5 +157,24 @@ describe('QuestionPreferenceService', () => {
         input: { turnId: 'turn_1', status: 'hidden' },
       })
     ).rejects.toMatchObject({ statusCode: 400 });
+  });
+
+  it('stores a canonical preference directly from the question bank', async () => {
+    const { service } = createFixture();
+
+    const result = await service.setForBankQuestion({
+      anonymousSessionId: 'anon_1',
+      userId: null,
+      input: { questionId: 'bank_1', status: 'repeat' },
+    });
+
+    expect(result).toMatchObject({
+      status: 'repeat',
+      question: 'Как работает реактивность во Vue?',
+      roleKey: 'it-frontend',
+      level: 'middle',
+      contextTags: ['vue'],
+      semantic: { conceptKey: 'frontend_vue_reactivity' },
+    });
   });
 });
