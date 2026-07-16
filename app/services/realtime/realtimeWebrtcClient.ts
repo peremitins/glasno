@@ -8,7 +8,6 @@ type RealtimeVoiceWindow = Window &
 const INPUT_ACTIVITY_VOLUME_THRESHOLD = 4;
 const INPUT_ACTIVITY_CHECK_INTERVAL_MS = 750;
 const INPUT_ACTIVITY_THROTTLE_MS = 1_500;
-const REMOTE_AUDIO_ACTIVITY_THROTTLE_MS = 4_000;
 const ICE_GATHERING_TIMEOUT_MS = 3_000;
 
 export interface RealtimeWebrtcClient {
@@ -28,8 +27,8 @@ export interface RealtimeVoiceClientOptions {
   // НЕ сбрасывает таймер простоя — иначе тишина никогда не приводит к
   // автоотключению (фоновый шум постоянно «переставлял» бы таймер).
   onKeepAlive?: () => void;
-  // Реальное воспроизведение голоса ассистента: это уже не тишина, поэтому
-  // сбрасывает idle-таймер до момента, когда интервьюер замолчит.
+  // Используется WebSocket-транспортом для фактических PCM-чанков. В WebRTC
+  // границу речи задают события output_audio_buffer, а не MediaStream.
   onAssistantAudioActivity?: () => void;
   onPlaybackBlocked?: (error: unknown) => void;
   // SDP-обмен идёт через наш бэкенд (/api/realtime/session/sdp — AI-relay),
@@ -61,7 +60,6 @@ export async function startRealtimeWebrtcClient(
   let inputAudioSource: MediaStreamAudioSourceNode | null = null;
   let inputAnalyser: AnalyserNode | null = null;
   let lastInputActivityAtMs = 0;
-  let lastRemoteAudioActivityAtMs = 0;
 
   // Элемент воспроизведения голоса ассистента. Важно: «отвязанный»
   // (не добавленный в DOM) <audio> с autoplay браузеры часто глушат,
@@ -75,33 +73,10 @@ export async function startRealtimeWebrtcClient(
   remoteAudio.style.display = 'none';
   document.body.appendChild(remoteAudio);
 
-  const notifyRemoteAudioActivity = () => {
-    if (stopped) return;
-    const now = Date.now();
-    if (
-      !shouldNotifyRemoteAudioPlaybackActivity({
-        now,
-        lastRemoteAudioActivityAtMs,
-      })
-    ) {
-      return;
-    }
-
-    lastRemoteAudioActivityAtMs = now;
-    options.onAssistantAudioActivity?.();
-  };
-
-  remoteAudio.addEventListener('playing', notifyRemoteAudioActivity);
-  remoteAudio.addEventListener('timeupdate', notifyRemoteAudioActivity);
-  remoteAudio.addEventListener('ended', notifyRemoteAudioActivity);
-
   const playRemoteAudio = () => {
     const promise = remoteAudio.play();
     if (promise && typeof promise.catch === 'function') {
       promise
-        .then(() => {
-          notifyRemoteAudioActivity();
-        })
         .catch((error) => {
           // Автовоспроизведение могли заблокировать. Сессию не рвём (это
           // оборвало бы и распознавание) — показываем пользователю инструкцию.
@@ -312,17 +287,6 @@ export function shouldNotifyRealtimeInputActivity(input: {
   return (
     input.volume > INPUT_ACTIVITY_VOLUME_THRESHOLD &&
     input.now - input.lastInputActivityAtMs >= INPUT_ACTIVITY_THROTTLE_MS
-  );
-}
-
-export function shouldNotifyRemoteAudioPlaybackActivity(input: {
-  now: number;
-  lastRemoteAudioActivityAtMs: number;
-}): boolean {
-  return (
-    input.lastRemoteAudioActivityAtMs <= 0 ||
-    input.now - input.lastRemoteAudioActivityAtMs >=
-      REMOTE_AUDIO_ACTIVITY_THROTTLE_MS
   );
 }
 

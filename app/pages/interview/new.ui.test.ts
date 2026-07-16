@@ -17,6 +17,12 @@ describe('interview new page UI structure', () => {
     expect(source).toContain('interview.new.trainingMode.interviewer.title');
   });
 
+  it('explains the experience levels with their industry names', () => {
+    expect(source).toContain("label: 'interview.levelUniversal.junior'");
+    expect(source).toContain("label: 'interview.levelUniversal.middle'");
+    expect(source).toContain("label: 'interview.levelUniversal.senior'");
+  });
+
   it('places compact training modes beside the heading without truncating mobile labels', () => {
     const modeSource = source.slice(
       source.indexOf('class="setup-context-head"'),

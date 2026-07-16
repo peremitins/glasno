@@ -117,4 +117,24 @@ describe('useRealtimeVoiceSession helpers', () => {
       },
     });
   });
+
+  it('does not carry the initial session question into a next-question override', () => {
+    const event = withRealtimeSessionInstructions(
+      {
+        type: 'response.create',
+        response: {
+          instructions: 'Текущий вопрос: «Новый вопрос». Озвучь его дословно.',
+        },
+      },
+      [
+        'Ты голосовой интервьюер. Никогда не отвечай вместо кандидата.',
+        'Текущий вопрос: «Старый вопрос».',
+      ].join('\n')
+    );
+
+    const instructions = (event.response as { instructions: string })
+      .instructions;
+    expect(instructions).toContain('Новый вопрос');
+    expect(instructions).not.toContain('Старый вопрос');
+  });
 });

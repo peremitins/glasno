@@ -2,6 +2,7 @@ import type { H3Event } from 'h3';
 import { QuestionPreferenceService } from './questionPreferenceService';
 import { DrizzleQuestionPreferenceRepository } from '@/server/infrastructure/questionPreferences/drizzleQuestionPreferenceRepository';
 import { DrizzleInterviewRepository } from '@/server/infrastructure/interview/drizzleInterviewRepository';
+import { DrizzleCanonicalQuestionRepository } from '@/server/infrastructure/questionBank/drizzleCanonicalQuestionRepository';
 
 export function createQuestionPreferenceService(
   _event?: H3Event
@@ -9,5 +10,6 @@ export function createQuestionPreferenceService(
   return new QuestionPreferenceService({
     repository: new DrizzleQuestionPreferenceRepository(),
     interviewRepository: new DrizzleInterviewRepository(),
+    questionBankRepository: new DrizzleCanonicalQuestionRepository(),
   });
 }

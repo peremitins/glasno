@@ -42,6 +42,11 @@ export const SetTurnQuestionPreferenceRequestDto = z.object({
   status: QuestionPreferenceStatusDto,
 });
 
+export const SetBankQuestionPreferenceRequestDto = z.object({
+  questionId: z.string().trim().min(1),
+  status: QuestionPreferenceStatusDto,
+});
+
 export const UpdateQuestionPreferenceRequestDto = z.object({
   status: QuestionPreferenceStatusDto,
 });
@@ -99,6 +104,9 @@ export type QuestionPreferenceListQuery = z.infer<
 >;
 export type SetTurnQuestionPreferenceRequest = z.infer<
   typeof SetTurnQuestionPreferenceRequestDto
+>;
+export type SetBankQuestionPreferenceRequest = z.infer<
+  typeof SetBankQuestionPreferenceRequestDto
 >;
 export type UpdateQuestionPreferenceRequest = z.infer<
   typeof UpdateQuestionPreferenceRequestDto
