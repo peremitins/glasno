@@ -14,29 +14,39 @@ jobs:
     name: Detect changed areas
     runs-on: ubuntu-latest
     outputs:
-      app: ${{ steps.filter.outputs.app }}
-      landing: ${{ steps.filter.outputs.landing }}
+      app: ${{ steps.app-filter.outputs.app }}
+      landing: ${{ steps.landing-filter.outputs.landing }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Filter paths
-        id: filter
+      # Для приложения нужны исключения, поэтому путь должен совпасть со
+      # всеми правилами: включающим и исключающими.
+      - name: Filter application paths
+        id: app-filter
         uses: dorny/paths-filter@v3
         with:
-          # 'every': файл считается изменённым, только если подходит под ВСЕ
-          # паттерны фильтра — так работают исключения через '!'.
           predicate-quantifier: 'every'
           filters: |
-            landing:
-              - 'apps/landing/**'
-              - 'deploy/landing/**'
-              - '.github/workflows/deploy-prod.yml'
             app:
               - '**'
               - '!apps/landing/**'
               - '!.docs/**'
               - '!**/*.md'
+
+      # Для лендинга достаточно изменения любого из его путей. Нельзя
+      # объединять этот фильтр с `app-filter`: `every` потребовал бы, чтобы
+      # один файл одновременно совпал со всеми тремя каталогами.
+      - name: Filter landing paths
+        id: landing-filter
+        uses: dorny/paths-filter@v3
+        with:
+          predicate-quantifier: 'some'
+          filters: |
+            landing:
+              - 'apps/landing/**'
+              - 'deploy/landing/**'
+              - '.github/workflows/deploy-prod.yml'
 
   # Ранняя диагностика секретов: падает с понятной ошибкой ДО сборки,
   # если PROD_SSH_KEY пуст или не парсится как приватный ключ.
