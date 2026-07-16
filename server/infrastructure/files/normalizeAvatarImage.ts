@@ -96,10 +96,9 @@ export async function normalizeAvatarImage(
       limitInputPixels: MAX_AVATAR_PIXELS,
     })
       .rotate()
-      .resize(AVATAR_SIZE, AVATAR_SIZE, {
-        fit: 'cover',
-        position: 'attention',
-      })
+      // Ограничиваем размер, но не обрезаем фото до квадрата: аватар может
+      // использоваться как полноразмерный кадр в плитке видеозвонка.
+      .resize(AVATAR_SIZE, AVATAR_SIZE, { fit: 'inside' })
       .webp({ quality: 86, effort: 4 })
       .toBuffer();
   } catch (error) {

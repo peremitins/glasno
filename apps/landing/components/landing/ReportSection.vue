@@ -94,6 +94,7 @@
         :eyebrow="report.eyebrow"
         :title="report.title"
         :lead="report.lead"
+        align="center"
       />
 
       <article class="report-preview" data-reveal>
@@ -156,7 +157,7 @@
                 <p><strong>Что усилить:</strong> {{ question.whatWeak }}</p>
               </div>
             </div>
-            <span class="preview-question__average">{{ index === 0 ? '72' : '68' }}</span>
+            <span class="preview-question__average">{{ question.score }}</span>
           </article>
         </section>
 
@@ -230,7 +231,6 @@
       </div>
 
       <footer class="report-preview-dialog__footer">
-        <a :href="report.examplePdfSrc" target="_blank" rel="noopener">Открыть PDF-пример</a>
         <button type="button" class="dialog-done" @click="closePreview">Понятно</button>
       </footer>
     </dialog>
@@ -304,6 +304,5 @@
   .dialog-question__model { border: 1px solid oklch(.85 .095 200 / .25); background: oklch(.85 .095 200 / .07) !important; }
   .dialog-question__practice strong { color: var(--l-text); }
   .report-preview-dialog__footer { border-top: 1px solid var(--l-line); }
-  .report-preview-dialog__footer a { color: var(--l-warm); font-size: var(--l-fs-sm); }
   @media (max-width: 680px) { .report-preview__overview, .dialog-overview, .dialog-hero, .preview-question__detail, .dialog-question__insights { grid-template-columns: 1fr; } .preview-question { grid-template-columns: 28px 1fr; } .preview-question__average { display: none; } .dialog-hero > div:first-child strong { font-size: 2.4rem; } .report-preview-dialog { width: calc(100vw - 32px); height: calc(100vh - 32px); } }
 </style>

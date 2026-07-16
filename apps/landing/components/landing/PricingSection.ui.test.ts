@@ -31,9 +31,9 @@ describe('PricingSection', () => {
       },
     ]);
     expect(pricing.plans[1]?.highlighted).toBe(true);
-    // Остальные сроки упомянуты отдельной строкой, автопродление раскрыто.
-    expect(pricing.plansNote).toContain('365 дней — 4 990 ₽');
-    expect(pricing.subtitle).toContain('Продлевается автоматически');
+    // Остальные сроки упомянуты отдельной строкой, ценность доступа раскрыта.
+    expect(pricing.plansNote).toContain('365 дней за 4 990 ₽');
+    expect(pricing.subtitle).toContain('разбор и PDF-отчёт');
     expect(pricing.packsNote).toBe(
       'Пакеты минут докупаются к активному доступу.'
     );

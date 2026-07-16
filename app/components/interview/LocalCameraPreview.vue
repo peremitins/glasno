@@ -114,9 +114,12 @@ onBeforeUnmount(stopCamera);
       muted
       aria-label="local camera"
     />
-    <div v-if="!isActive && avatarUrl && !avatarFailed" class="placeholder">
+    <div
+      v-if="!isActive && avatarUrl && !avatarFailed"
+      class="placeholder placeholder--avatar"
+    >
       <img
-        class="avatar avatar--image"
+        class="avatar-photo"
         :src="avatarUrl"
         alt=""
         @error="avatarFailed = true"
@@ -209,8 +212,27 @@ onBeforeUnmount(stopCamera);
   height: 100%;
 }
 
-.avatar--image {
-  object-fit: cover;
+.placeholder--avatar {
+  padding: 0;
+}
+
+.avatar-photo {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: center;
+}
+
+.placeholder--avatar .placeholder-text {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 1;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--app-bg) 72%, transparent);
 }
 
 .placeholder-text {

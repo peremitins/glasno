@@ -15,7 +15,7 @@ export interface S3AvatarStorageConfig {
   secretAccessKey: string;
 }
 
-// Аватар уже ограничен 512×512, поэтому десяти секунд достаточно даже для
+// Длинная сторона аватара ограничена 512 px, поэтому десяти секунд достаточно даже для
 // медленного S3-compatible endpoint. AbortSignal ограничивает весь запрос,
 // включая повторные попытки SDK, а не только установление соединения.
 export const S3_AVATAR_REQUEST_TIMEOUT_MS = 10_000;

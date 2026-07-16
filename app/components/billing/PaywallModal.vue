@@ -12,6 +12,8 @@
     BillingCheckoutResponse,
     BillingPlansResponse,
   } from '@/shared/dto';
+  import { YandexMetrikaGoal } from '@/shared/analytics/yandexMetrika';
+  import { reachYandexMetrikaGoal } from '@/app/utils/yandexMetrika';
 
   const props = defineProps<{
     open: boolean;
@@ -160,6 +162,7 @@
       // Нативное окно YooKassa откроется watcher-ом после сохранения токена.
       checkoutToken.value = response.confirmationToken;
       checkoutReturnUrl.value = response.returnUrl;
+      reachYandexMetrikaGoal(YandexMetrikaGoal.checkoutCreated);
     } catch (err) {
       const data = (err as { data?: { error?: { message?: string } } })?.data;
       errorMessage.value = data?.error?.message || t('paywall.checkoutError');

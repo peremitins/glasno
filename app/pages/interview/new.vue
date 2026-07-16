@@ -51,6 +51,8 @@
   } from '@/app/utils/interviewSource';
   import { buildResumePreviewBlocks } from '@/app/utils/resumePreview';
   import { sanitizeProviderErrorMessage } from '@/app/utils/providerErrorMessage';
+  import { YandexMetrikaGoal } from '@/shared/analytics/yandexMetrika';
+  import { reachYandexMetrikaGoal } from '@/app/utils/yandexMetrika';
 
   type SourceMode = 'hh_url' | 'manual';
   type InterviewLevel = CreateInterviewSessionRequest['level'];
@@ -944,6 +946,7 @@
           body: buildPayload(),
         }
       );
+      reachYandexMetrikaGoal(YandexMetrikaGoal.interviewStarted);
       await navigateTo(`/interview/${state.session.id}`);
     } catch (err) {
       errorMessage.value = extractApiError(err);

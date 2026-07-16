@@ -15,6 +15,11 @@
     BillingPlansResponse,
     BillingStatusResponse,
   } from '@/shared/dto';
+  import { YandexMetrikaGoal } from '@/shared/analytics/yandexMetrika';
+  import {
+    reachYandexMetrikaGoal,
+    trackPaidMetrikaGoal,
+  } from '@/app/utils/yandexMetrika';
   import type { z } from 'zod';
 
   const { t } = useI18n();
@@ -196,6 +201,7 @@
       // пользователя на /pricing, где отработает обычная сверка статуса.
       checkoutToken.value = response.confirmationToken;
       checkoutReturnUrl.value = response.returnUrl;
+      reachYandexMetrikaGoal(YandexMetrikaGoal.checkoutCreated);
     } catch (err) {
       if (err && typeof err === 'object' && 'data' in err) {
         const data = (err as { data?: { error?: { message?: string } } }).data;
@@ -419,6 +425,7 @@
     try {
       for (let attempt = 0; attempt < 8; attempt += 1) {
         const paymentStatus = await fetchCheckoutStatus();
+        trackPaidMetrikaGoal(paymentStatus);
         await refreshStatus();
 
         if (

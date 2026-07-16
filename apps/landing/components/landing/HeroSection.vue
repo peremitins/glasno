@@ -1,16 +1,23 @@
 <script setup lang="ts">
   import { onBeforeUnmount, onMounted, ref } from 'vue';
   import { useNuxtApp } from 'nuxt/app';
+  import { useYandexMetrika } from '#imports';
   import { gsap } from 'gsap';
   import { ArrowRightIcon, PlayIcon } from '@radix-icons/vue';
   import { useLandingContent } from '@/composables/useLandingContent';
   import { useLandingAppAuthUrl } from '@/composables/useLandingAppAuthUrl';
   import { useScrollTo } from '@/composables/useMotion';
+  import { YandexMetrikaGoal } from '../../../../shared/analytics/yandexMetrika';
 
   const { hero } = useLandingContent();
   const appAuthUrl = useLandingAppAuthUrl();
   const scrollTo = useScrollTo();
   const nuxtApp = useNuxtApp();
+  const { reachGoal } = useYandexMetrika();
+
+  function trackAppOpen() {
+    reachGoal(YandexMetrikaGoal.landingAppOpen, {});
+  }
 
   const root = ref<HTMLElement | null>(null);
 
@@ -33,7 +40,7 @@
         .from('.hero__eyebrow', { opacity: 0, y: 18, duration: 0.6 }, 0.1)
         .from('.hero__lead', { opacity: 0, y: 20, duration: 0.7 }, 0.35)
         .from(
-          '.hero__actions > *',
+          '.hero__actions > *, .hero__note',
           { opacity: 0, y: 20, duration: 0.6, stagger: 0.1 },
           0.5
         )
@@ -82,22 +89,28 @@
 
       <p class="hero__lead">{{ hero.lead }}</p>
 
-      <div class="hero__actions">
-        <a class="l-btn l-btn--primary l-btn--lg" :href="appAuthUrl">
-          <span>{{ hero.primaryCta }}</span>
-          <ArrowRightIcon aria-hidden="true" />
-        </a>
-        <button
-          class="l-btn l-btn--ghost l-btn--lg"
-          type="button"
-          @click="scrollTo('#voice', -70)"
-        >
-          <PlayIcon aria-hidden="true" />
-          <span>{{ hero.secondaryCta }}</span>
-        </button>
-      </div>
+      <div class="hero__cta">
+        <div class="hero__actions">
+          <a
+            class="l-btn l-btn--primary l-btn--lg"
+            :href="appAuthUrl"
+            @click="trackAppOpen"
+          >
+            <span>{{ hero.primaryCta }}</span>
+            <ArrowRightIcon aria-hidden="true" />
+          </a>
+          <button
+            class="l-btn l-btn--ghost l-btn--lg"
+            type="button"
+            @click="scrollTo('#how', -70)"
+          >
+            <PlayIcon aria-hidden="true" />
+            <span>{{ hero.secondaryCta }}</span>
+          </button>
+        </div>
 
-      <p class="hero__note">Первое интервью бесплатно. Карта не нужна.</p>
+        <p class="hero__note">Первое интервью бесплатно. Карта не нужна.</p>
+      </div>
 
       <div class="hero__wave" aria-hidden="true">
         <span
@@ -197,16 +210,22 @@
     color: var(--l-text-soft);
   }
 
+  .hero__cta {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 24px;
+    margin-top: 38px;
+  }
+
   .hero__actions {
     display: flex;
     flex-wrap: wrap;
     justify-content: center;
     gap: 14px;
-    margin-top: 38px;
   }
 
   .hero__note {
-    margin-top: 18px;
     font-size: var(--l-fs-sm);
     color: var(--l-text-dim);
   }
@@ -263,6 +282,9 @@
     .hero__actions {
       width: 100%;
       flex-direction: column;
+    }
+    .hero__cta {
+      width: 100%;
     }
     .hero__actions > * {
       width: 100%;

@@ -13,7 +13,11 @@ apps/landing/.output
 .idea
 *.log
 bitbucket.log
-deploy
+# В рантайм-образ нужен только entrypoint, который сохраняет ассеты для
+# Webvisor; остальная deploy-конфигурация остаётся вне Docker-контекста.
+deploy/*
+!deploy/webvisor/
+!deploy/webvisor/seed-webvisor-assets.sh
 README.md
 CLAUDE.md
 AGENTS.md

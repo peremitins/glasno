@@ -48,7 +48,7 @@
           :src="voice.videoSrc"
           :caption="voice.videoCaption"
           :sound-hint="voice.soundOnHint"
-          aspect="16 / 9"
+          aspect="2000 / 1080"
         >
           <template #poster>
             <div class="poster">
