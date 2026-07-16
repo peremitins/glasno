@@ -8,6 +8,8 @@ import type {
   DeleteAccountResponse,
   EmailLoginStartResponse,
 } from '@/shared/dto';
+import { YandexMetrikaGoal } from '@/shared/analytics/yandexMetrika';
+import { reachYandexMetrikaGoal } from '@/app/utils/yandexMetrika';
 
 export const useAuthStore = defineStore('auth', () => {
   const user = ref<AuthUser | null>(null);
@@ -83,6 +85,7 @@ export const useAuthStore = defineStore('auth', () => {
         }
       );
       user.value = response.user;
+      reachYandexMetrikaGoal(YandexMetrikaGoal.authCompleted);
       return response;
     } catch (err) {
       errorMessage.value = extractApiError(err);

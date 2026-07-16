@@ -1,10 +1,17 @@
 <script setup lang="ts">
+  import { useYandexMetrika } from '#imports';
   import { ArrowRightIcon, CheckIcon } from '@radix-icons/vue';
   import { useLandingContent } from '@/composables/useLandingContent';
   import { useLandingAppAuthUrl } from '@/composables/useLandingAppAuthUrl';
+  import { YandexMetrikaGoal } from '../../../../shared/analytics/yandexMetrika';
 
   const { pricing } = useLandingContent();
   const appAuthUrl = useLandingAppAuthUrl();
+  const { reachGoal } = useYandexMetrika();
+
+  function trackAppOpen() {
+    reachGoal(YandexMetrikaGoal.landingAppOpen, {});
+  }
 </script>
 
 <template>
@@ -44,6 +51,7 @@
             class="l-btn plan__cta"
             :class="plan.highlighted ? 'l-btn--primary' : 'l-btn--ghost'"
             :href="appAuthUrl"
+            @click="trackAppOpen"
           >
             <span>{{ plan.cta }}</span>
             <ArrowRightIcon aria-hidden="true" />

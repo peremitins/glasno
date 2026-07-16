@@ -8,6 +8,12 @@ const source = readFileSync(
 );
 
 describe('ReportSection', () => {
+  it('centres the wider introduction above the report preview', () => {
+    expect(source).toMatch(
+      /<SectionHeading[\s\S]*:lead="report\.lead"[\s\S]*align="center"/
+    );
+  });
+
   it('uses the selected frontend interview report as the landing example', () => {
     const { report } = useLandingContent();
 

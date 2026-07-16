@@ -39,6 +39,9 @@ FROM node:20-alpine AS runner
 WORKDIR /app
 
 COPY --from=build /app/.output ./.output
+COPY --from=build /app/.output/public/_nuxt /app/webvisor-assets-seed
+COPY deploy/webvisor/seed-webvisor-assets.sh /usr/local/bin/seed-webvisor-assets.sh
+RUN chmod +x /usr/local/bin/seed-webvisor-assets.sh
 
 ENV NODE_ENV=production
 ENV PORT=3000
@@ -50,4 +53,5 @@ EXPOSE 3000
 HEALTHCHECK --interval=10s --timeout=3s --start-period=30s --retries=5 \
   CMD wget --quiet --spider --tries=1 http://127.0.0.1:3000/api/health || exit 1
 
+ENTRYPOINT ["/usr/local/bin/seed-webvisor-assets.sh"]
 CMD ["node", ".output/server/index.mjs"]

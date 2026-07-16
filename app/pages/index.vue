@@ -22,6 +22,8 @@
   import QuickStartSourceField from '@/app/components/dashboard/QuickStartSourceField.vue';
   import QuickStartResumeField from '@/app/components/dashboard/QuickStartResumeField.vue';
   import PaywallModal from '@/app/components/billing/PaywallModal.vue';
+  import { YandexMetrikaGoal } from '@/shared/analytics/yandexMetrika';
+  import { reachYandexMetrikaGoal } from '@/app/utils/yandexMetrika';
   import {
     classifyQuickSource,
     normalizeVacancyUrl,
@@ -250,6 +252,7 @@
           body,
         }
       );
+      reachYandexMetrikaGoal(YandexMetrikaGoal.interviewStarted);
       await navigateTo(`/interview/${state.session.id}`);
     } catch (error) {
       quickStartError.value =

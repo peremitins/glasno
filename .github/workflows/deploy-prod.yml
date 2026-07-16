@@ -138,7 +138,9 @@ jobs:
           rsync -avz --delete -e "ssh -i ~/.ssh/landing_deploy_key -o StrictHostKeyChecking=no" \
             apps/landing/.output/public/ \
             ${{ secrets.PROD_SSH_USER }}@${{ secrets.PROD_SSH_HOST }}:/var/www/glasno-landing/releases/${RELEASE_ID}/
-          rsync -avz --ignore-existing -e "ssh -i ~/.ssh/landing_deploy_key -o StrictHostKeyChecking=no" \
+          # Обновляем mtime и для неизменившихся хэшей текущей версии: иначе
+          # очистка спустя 30 дней могла удалить активный CSS из Webvisor cache.
+          rsync -avz --ignore-times --no-times -e "ssh -i ~/.ssh/landing_deploy_key -o StrictHostKeyChecking=no" \
             apps/landing/.output/public/_nuxt/ \
             ${{ secrets.PROD_SSH_USER }}@${{ secrets.PROD_SSH_HOST }}:/var/www/glasno-landing/webvisor-assets/_nuxt/
           ssh -i ~/.ssh/landing_deploy_key -o StrictHostKeyChecking=no \
@@ -193,6 +195,22 @@ jobs:
           tags: ${{ env.MIGRATE_IMAGE_NAME }}
           cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/glasno:prod-buildcache
           cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/glasno:prod-buildcache,mode=max
+
+      - name: Sync application deployment configuration
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.PROD_SSH_KEY }}" > ~/.ssh/app_deploy_key
+          chmod 600 ~/.ssh/app_deploy_key
+          ssh-keyscan -H ${{ secrets.PROD_SSH_HOST }} >> ~/.ssh/known_hosts 2>/dev/null || true
+          ssh -i ~/.ssh/app_deploy_key -o StrictHostKeyChecking=no \
+            ${{ secrets.PROD_SSH_USER }}@${{ secrets.PROD_SSH_HOST }} \
+            'mkdir -p /opt/glasno/prod/webvisor'
+          scp -i ~/.ssh/app_deploy_key -o StrictHostKeyChecking=no \
+            deploy/docker-compose.prod.yml \
+            ${{ secrets.PROD_SSH_USER }}@${{ secrets.PROD_SSH_HOST }}:/opt/glasno/prod/docker-compose.yml
+          scp -i ~/.ssh/app_deploy_key -o StrictHostKeyChecking=no \
+            deploy/webvisor/nginx.conf \
+            ${{ secrets.PROD_SSH_USER }}@${{ secrets.PROD_SSH_HOST }}:/opt/glasno/prod/webvisor/nginx.conf
 
       - name: Deploy to PROD server over SSH
         uses: appleboy/ssh-action@v1.2.0
@@ -288,10 +306,50 @@ jobs:
               return 1
             }
 
+            # Первый rollout переносит ассеты уже работающего приложения в
+            # named volume до его пересоздания. Иначе CSS-хэши текущего релиза
+            # исчезнут ровно в момент включения защиты Webvisor.
+            seed_existing_webvisor_assets() {
+              local volume_name='glasno-prod_webvisor-assets'
+              local existing_web
+              local new_web_image
+              local staging_container
+
+              docker volume create "$volume_name" >/dev/null
+              existing_web=$(docker compose ps -q web | head -n 1)
+              if [ -z "$existing_web" ]; then
+                echo "No previous web container: Webvisor volume starts empty."
+                return 0
+              fi
+
+              new_web_image=$(grep -E '^APP_IMAGE=' .env | cut -d= -f2- | tr -d '"')
+              if [ -z "$new_web_image" ]; then
+                echo "APP_IMAGE is missing; cannot seed Webvisor assets" >&2
+                return 1
+              fi
+
+              staging_container=$(docker create \
+                --entrypoint sh \
+                -v "$volume_name:/target" \
+                "$new_web_image" \
+                -c 'exit 0')
+
+              if ! docker cp "$existing_web:/app/.output/public/_nuxt/." - \
+                | docker cp - "$staging_container:/target"; then
+                docker rm -f "$staging_container" >/dev/null || true
+                return 1
+              fi
+
+              docker rm "$staging_container" >/dev/null
+              echo "Webvisor assets copied from the previous web container."
+            }
+
             light_cleanup
 
             pull_with_retry web
             pull_with_retry migrate
+
+            seed_existing_webvisor_assets
 
             PREV_WEB_IMAGE=$(docker compose ps -q web | head -1 | xargs -r docker inspect --format='{{.Image}}' || true)
             echo "Previous web image digest: ${PREV_WEB_IMAGE:-<none>}"
@@ -324,6 +382,7 @@ jobs:
             fi
 
             if [ "${DEPLOY_OK}" -eq 1 ]; then
+              docker compose up -d --no-deps webvisor-static
               notify_tg "✅ *Deploy glasno [prod] success* (strategy: ${DEPLOY_STRATEGY:-recreate})"
             else
               notify_tg "❌ *Deploy glasno [prod] FAILED* (strategy: ${DEPLOY_STRATEGY:-recreate})"
