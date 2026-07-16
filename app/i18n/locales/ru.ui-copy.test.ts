@@ -47,24 +47,23 @@ describe('russian UI copy', () => {
     expect(goalTexts).toContain('10 вопросов');
   });
 
-  it('keeps the dashboard hero concise', () => {
-    expect(messages.dashboard.title).toBe('Тренировка к интервью');
+  it('keeps the dashboard supporting copy concise', () => {
     expect(messages.dashboard.subtitle.length).toBeLessThanOrEqual(70);
-    expect(messages.dashboard.title).not.toContain('Кабинет подготовки');
+    expect(messages.dashboard.launcherTitle).not.toContain('Кабинет подготовки');
   });
 
   it('explains STAR in the term tooltip with English expansion', () => {
     expect(messages.common.terms.star.description).toContain(
-      'ситуация (S — Situation)'
+      'Ситуация (S, Situation)'
     );
     expect(messages.common.terms.star.description).toContain(
-      'задача (T — Task)'
+      'задача (T, Task)'
     );
     expect(messages.common.terms.star.description).toContain(
-      'действие (A — Action)'
+      'действие (A, Action)'
     );
     expect(messages.common.terms.star.description).toContain(
-      'результат (R — Result)'
+      'результат (R, Result)'
     );
   });
 });

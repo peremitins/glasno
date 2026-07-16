@@ -12,7 +12,7 @@ describe('HintsScrollytelling', () => {
     const { hints } = useLandingContent();
 
     expect(hints.eyebrow).toBe('Подсказки во время интервью');
-    expect(hints.title).toBe('Следующий шаг — перед глазами.');
+    expect(hints.title).toBe('Подсказка в нужный момент.');
     expect(hints.modes.map(({ id }) => id)).toEqual([
       'candidate',
       'interviewer',

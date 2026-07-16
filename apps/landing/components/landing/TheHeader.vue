@@ -32,7 +32,7 @@
       <a
         class="hdr__brand"
         href="#top"
-        aria-label="Гласно, в начало"
+        aria-label="Гласно: в начало"
         @click.prevent="goTo('top')"
       >
         <span class="hdr__brand-mark" aria-hidden="true">
