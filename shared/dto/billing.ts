@@ -112,6 +112,15 @@ export const BillingPaymentStatusResponseDto = z.object({
   hasActivePaidAccess: z.boolean(),
   accessExpiresAt: z.string().nullable(),
   shouldContinuePolling: z.boolean(),
+  // Заполняется исключительно после серверной сверки YooKassa: клиенту не
+  // нужно и нельзя выводить conversion из ответа самого платёжного виджета.
+  conversion: z
+    .object({
+      planType: BillingPlanTypeDto,
+      amountRub: z.number().int().positive(),
+    })
+    .nullable()
+    .default(null),
   purchaseType: z.enum(['self', 'gift']).default('self'),
   gift: z
     .object({

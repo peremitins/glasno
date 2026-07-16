@@ -94,6 +94,7 @@
         :eyebrow="report.eyebrow"
         :title="report.title"
         :lead="report.lead"
+        align="center"
       />
 
       <article class="report-preview" data-reveal>

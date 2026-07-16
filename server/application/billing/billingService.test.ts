@@ -233,6 +233,10 @@ describe('BillingService payment reconciliation', () => {
       providerVerified: true,
       hasActivePaidAccess: true,
       shouldContinuePolling: false,
+      conversion: {
+        planType: 'pass',
+        amountRub: 1190,
+      },
     });
 
     expect(repository.fulfillPaidOrder).toHaveBeenCalledWith({
@@ -612,7 +616,10 @@ describe('BillingService payment reconciliation', () => {
     };
     const service = createService(repository, telegramAlerts);
 
-    await service.reconcileYooKassaCheckout({ userId: 'user_1', orderId: 'order_1' });
+    const paymentStatus = await service.reconcileYooKassaCheckout({
+      userId: 'user_1',
+      orderId: 'order_1',
+    });
 
     expect(telegramAlerts.notifyVoiceMinutesPurchased).toHaveBeenCalledTimes(1);
     expect(telegramAlerts.notifyVoiceMinutesPurchased).toHaveBeenCalledWith({
@@ -622,6 +629,10 @@ describe('BillingService payment reconciliation', () => {
       amountRub: 490,
     });
     expect(telegramAlerts.notifySubscriptionPurchased).not.toHaveBeenCalled();
+    expect(paymentStatus.conversion).toEqual({
+      planType: 'minute_pack',
+      amountRub: 490,
+    });
   });
 
   it('не дублирует Telegram-алерт при повторном опросе уже выполненного заказа', async () => {

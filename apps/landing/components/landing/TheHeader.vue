@@ -1,13 +1,16 @@
 <script setup lang="ts">
   import { onBeforeUnmount, onMounted, ref } from 'vue';
+  import { useYandexMetrika } from '#imports';
   import { ArrowRightIcon } from '@radix-icons/vue';
   import { useLandingContent } from '@/composables/useLandingContent';
   import { useLandingAppAuthUrl } from '@/composables/useLandingAppAuthUrl';
   import { useScrollTo } from '@/composables/useMotion';
+  import { YandexMetrikaGoal } from '../../../../shared/analytics/yandexMetrika';
 
   const { nav } = useLandingContent();
   const appAuthUrl = useLandingAppAuthUrl();
   const scrollTo = useScrollTo();
+  const { reachGoal } = useYandexMetrika();
 
   const scrolled = ref(false);
 
@@ -17,6 +20,10 @@
 
   function goTo(id: string) {
     scrollTo(`#${id}`, -80);
+  }
+
+  function trackAppOpen() {
+    reachGoal(YandexMetrikaGoal.landingAppOpen, {});
   }
 
   onMounted(() => {
@@ -58,7 +65,7 @@
         </button>
       </nav>
 
-      <a class="hdr__cta" :href="appAuthUrl">
+      <a class="hdr__cta" :href="appAuthUrl" @click="trackAppOpen">
         <span>Начать</span>
         <ArrowRightIcon aria-hidden="true" />
       </a>

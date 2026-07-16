@@ -1,16 +1,23 @@
 <script setup lang="ts">
   import { onBeforeUnmount, onMounted, ref } from 'vue';
   import { useNuxtApp } from 'nuxt/app';
+  import { useYandexMetrika } from '#imports';
   import { gsap } from 'gsap';
   import { ArrowRightIcon, PlayIcon } from '@radix-icons/vue';
   import { useLandingContent } from '@/composables/useLandingContent';
   import { useLandingAppAuthUrl } from '@/composables/useLandingAppAuthUrl';
   import { useScrollTo } from '@/composables/useMotion';
+  import { YandexMetrikaGoal } from '../../../../shared/analytics/yandexMetrika';
 
   const { hero } = useLandingContent();
   const appAuthUrl = useLandingAppAuthUrl();
   const scrollTo = useScrollTo();
   const nuxtApp = useNuxtApp();
+  const { reachGoal } = useYandexMetrika();
+
+  function trackAppOpen() {
+    reachGoal(YandexMetrikaGoal.landingAppOpen, {});
+  }
 
   const root = ref<HTMLElement | null>(null);
 
@@ -84,7 +91,11 @@
 
       <div class="hero__cta">
         <div class="hero__actions">
-          <a class="l-btn l-btn--primary l-btn--lg" :href="appAuthUrl">
+          <a
+            class="l-btn l-btn--primary l-btn--lg"
+            :href="appAuthUrl"
+            @click="trackAppOpen"
+          >
             <span>{{ hero.primaryCta }}</span>
             <ArrowRightIcon aria-hidden="true" />
           </a>

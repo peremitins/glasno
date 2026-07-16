@@ -2,6 +2,7 @@ import type {
   BillingCheckoutResponse,
   BillingPaymentHistoryResponse,
   BillingPaymentStatusResponse,
+  BillingPlanType,
   BillingPlansResponse,
   BillingStatusResponse,
   UserRole,
@@ -900,6 +901,13 @@ export class BillingService {
       providerVerified: true,
       shouldContinuePolling: isPendingPaymentStatus(verified.status),
       userId: order.userId,
+      conversion:
+        paymentOk && plan
+          ? {
+              planType: plan.type,
+              amountRub: order.amountRub,
+            }
+          : null,
     });
   }
 
@@ -940,6 +948,7 @@ export class BillingService {
     providerVerified: boolean;
     shouldContinuePolling: boolean;
     userId: string;
+    conversion?: { planType: BillingPlanType; amountRub: number } | null;
   }): Promise<BillingPaymentStatusResponse> {
     const [access, gift] = await Promise.all([
       this.deps.repository.findAccessByUserId(params.userId),
@@ -962,6 +971,7 @@ export class BillingService {
         ? access!.currentPeriodEnd.toISOString()
         : null,
       shouldContinuePolling: params.shouldContinuePolling,
+      conversion: params.conversion ?? null,
       purchaseType: gift ? 'gift' : 'self',
       gift: gift
         ? {
