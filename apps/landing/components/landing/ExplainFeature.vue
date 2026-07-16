@@ -30,12 +30,14 @@
             <div class="xpl-poster">
               <p class="xpl-poster__q">
                 Как вы считали<!--
-                --> <span class="xpl-word">
+                -->
+                <span class="xpl-word">
                   <button class="xpl-word__btn" type="button" tabindex="-1">
                     <MagicWandIcon aria-hidden="true" />
                     {{ explain.explainButton }}
                   </button>
-                  {{ explain.demoWord }}</span>?
+                  {{ explain.demoWord }}</span
+                >?
               </p>
 
               <div class="xpl-poster__panel">
@@ -74,7 +76,7 @@
     display: grid;
     grid-template-columns: minmax(0, 0.82fr) minmax(0, 1.18fr);
     gap: clamp(32px, 5vw, 72px);
-    align-items: center;
+    align-items: normal;
   }
 
   .xpl__copy,

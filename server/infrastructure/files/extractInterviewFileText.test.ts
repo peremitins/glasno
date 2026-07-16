@@ -1,7 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
+import PDFDocument from 'pdfkit';
 import { utils, write } from 'xlsx';
 import { extractInterviewFileText } from './extractInterviewFileText';
+
+function createPdfFixture(text: string): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    const document = new PDFDocument();
+
+    document.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+    document.on('error', reject);
+    document.on('end', () => resolve(Buffer.concat(chunks)));
+    document.text(text);
+    document.end();
+  });
+}
 
 describe('extractInterviewFileText', () => {
   it('использует ESM-сборку xlsx без runtime-зависимости от cpexcel.js', () => {
@@ -35,14 +49,12 @@ describe('extractInterviewFileText', () => {
 
   it('извлекает текст из PDF-файла', async () => {
     const text = await extractInterviewFileText({
-      data: readFileSync(
-        'apps/landing/public/reports/example-interview-report.pdf'
-      ),
+      data: await createPdfFixture('interview report'),
       fileName: 'resume.pdf',
       mimeType: 'application/pdf',
     });
 
-    expect(text).toContain('отчёт по интервью');
+    expect(text).toContain('interview report');
   });
   it('extracts readable text files without flattening all line breaks', async () => {
     const text = await extractInterviewFileText({

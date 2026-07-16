@@ -14,4 +14,13 @@ describe('LocalCameraPreview profile avatar fallback', () => {
     expect(source).toContain('@error="avatarFailed = true"');
     expect(source).toContain('v-else-if="!isActive"');
   });
+
+  it('fits an inactive profile photo across the participant tile and keeps the camera status visible', () => {
+    expect(source).toContain('class="placeholder placeholder--avatar"');
+    expect(source).toContain('class="avatar-photo"');
+    expect(source).toMatch(/\.avatar-photo \{[\s\S]*?width: 100%;[\s\S]*?height: 100%;[\s\S]*?object-fit: contain;/);
+    expect(source).toMatch(
+      /\.placeholder--avatar \.placeholder-text \{[\s\S]*?position: absolute;[\s\S]*?right: 12px;[\s\S]*?bottom: 12px;[\s\S]*?z-index: 1;/
+    );
+  });
 });

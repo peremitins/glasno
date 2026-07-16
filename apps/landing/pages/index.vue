@@ -133,7 +133,6 @@
       <ExplainFeature />
       <ReportSection />
       <PricingSection />
-      <TrustSection />
       <FaqSection />
       <FinalCta />
     </main>

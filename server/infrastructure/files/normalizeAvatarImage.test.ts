@@ -7,7 +7,7 @@ import {
 
 describe('normalizeAvatarImage', () => {
   it.each(['jpeg', 'png', 'webp'] as const)(
-    'принимает %s и сохраняет нормализованный WebP 512x512',
+    'принимает %s, сохраняет WebP и пропорции широкого изображения',
     async (format) => {
       const source = sharp({
         create: {
@@ -25,7 +25,7 @@ describe('normalizeAvatarImage', () => {
       expect(metadata).toMatchObject({
         format: 'webp',
         width: 512,
-        height: 512,
+        height: 256,
       });
     }
   );

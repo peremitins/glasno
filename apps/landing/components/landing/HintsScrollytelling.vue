@@ -2,7 +2,7 @@
   import { onBeforeUnmount, onMounted, ref } from 'vue';
   import { useNuxtApp } from 'nuxt/app';
   import { gsap } from 'gsap';
-  import { CheckIcon, LockClosedIcon } from '@radix-icons/vue';
+  import { CheckIcon, ReloadIcon } from '@radix-icons/vue';
   import { useLandingContent } from '@/composables/useLandingContent';
 
   const { hints } = useLandingContent();
@@ -16,34 +16,83 @@
     if (nuxtApp.$reducedMotion) return;
     mm = gsap.matchMedia();
 
-    mm.add('(min-width: 900px)', () => {
-      const ctx = gsap.context(() => {
-        const points = gsap.utils.toArray<HTMLElement>('.hint-item', root.value!);
-        const honesty = gsap.utils.toArray<HTMLElement>(
-          '.hint-demo__honesty',
-          root.value!
-        );
+    mm.add(
+      '(min-width: 900px) and (prefers-reduced-motion: no-preference)',
+      () => {
+        const ctx = gsap.context(() => {
+          const demos = gsap.utils.toArray<HTMLElement>(
+            '.hint-demo',
+            root.value!
+          );
+          const candidateDemo = demos[0];
+          const interviewerDemo = demos[1];
+          if (!candidateDemo || !interviewerDemo) return;
 
-        gsap.set([...points, ...honesty], { opacity: 0.2, y: 12 });
+          const candidateSections = gsap.utils.toArray<HTMLElement>(
+            '.hint-demo__section',
+            candidateDemo
+          );
+          const interviewerSections = gsap.utils.toArray<HTMLElement>(
+            '.hint-demo__section',
+            interviewerDemo
+          );
 
-        const tl = gsap.timeline({
-          scrollTrigger: {
-            // пиним всю сетку: левый заголовок и правая панель заморожены,
-            // пока по скроллу проявляются подсказки
-            trigger: inner.value,
-            start: 'top top+=80',
-            end: '+=150%',
-            pin: true,
-            scrub: 0.8,
-            invalidateOnRefresh: true,
-          },
-        });
-        points.forEach((p) => tl.to(p, { opacity: 1, y: 0, ease: 'power2.out' }));
-        tl.to(honesty, { opacity: 1, y: 0, ease: 'power2.out' }, '+=0.3');
-      }, root.value!);
+          gsap.set(candidateSections, { opacity: 0.24, y: 12 });
+          gsap.set(interviewerSections, { opacity: 0.24, y: 12 });
+          gsap.set(interviewerDemo, { opacity: 0, y: 24 });
 
-      return () => ctx.revert();
-    });
+          const timeline = gsap.timeline({
+            scrollTrigger: {
+              trigger: inner.value,
+              start: 'top top+=72',
+              end: '+=180%',
+              pin: true,
+              scrub: 0.8,
+              invalidateOnRefresh: true,
+              anticipatePin: 1,
+            },
+          });
+
+          candidateSections.forEach((section) => {
+            timeline.to(section, {
+              opacity: 1,
+              y: 0,
+              duration: 0.55,
+              ease: 'power2.out',
+            });
+          });
+
+          timeline
+            .to(candidateDemo, {
+              opacity: 0,
+              y: -24,
+              duration: 0.65,
+              ease: 'power2.inOut',
+            })
+            .to(
+              interviewerDemo,
+              {
+                opacity: 1,
+                y: 0,
+                duration: 0.65,
+                ease: 'power2.inOut',
+              },
+              '<'
+            );
+
+          interviewerSections.forEach((section) => {
+            timeline.to(section, {
+              opacity: 1,
+              y: 0,
+              duration: 0.55,
+              ease: 'power2.out',
+            });
+          });
+        }, root.value!);
+
+        return () => ctx.revert();
+      }
+    );
   });
 
   onBeforeUnmount(() => mm?.revert());
@@ -52,7 +101,6 @@
 <template>
   <section id="hints" ref="root" class="hints">
     <div ref="inner" class="hints__inner l-container">
-      <!-- Статичный заголовок: он внутри pinned-зоны, поэтому без reveal/split -->
       <div class="hints__head">
         <p class="hints__eyebrow">
           <span class="hints__dot" aria-hidden="true" />
@@ -63,33 +111,47 @@
       </div>
 
       <div class="hints__stage">
-        <div class="hint-demo">
-          <div class="hint-demo__q">
-            <span class="hint-demo__label">{{ hints.exampleLabel }}</span>
-            <p>{{ hints.exampleQuestion }}</p>
-          </div>
+        <div class="hints__demos">
+          <article
+            v-for="mode in hints.modes"
+            :key="mode.id"
+            class="hint-demo"
+            :class="`hint-demo--${mode.id}`"
+          >
+            <header class="hint-demo__head">
+              <span class="hint-demo__mode-dot" aria-hidden="true" />
+              <strong>{{ mode.label }}</strong>
+            </header>
 
-          <div class="hint-demo__panel">
-            <span class="hint-demo__label hint-demo__label--warm">
-              {{ hints.hintLabel }}
-            </span>
-            <ul class="hint-demo__list">
-              <li
-                v-for="(point, i) in hints.hintPoints"
-                :key="i"
-                class="hint-item"
+            <div class="hint-demo__context">
+              <span class="hint-demo__label">{{ mode.contextLabel }}</span>
+              <p>{{ mode.context }}</p>
+            </div>
+
+            <div class="hint-demo__sections">
+              <section
+                v-for="section in mode.sections"
+                :key="section.label"
+                class="hint-demo__section"
               >
-                <CheckIcon aria-hidden="true" />
-                <span>{{ point }}</span>
-              </li>
-            </ul>
-          </div>
-
-          <p class="hint-demo__honesty">
-            <LockClosedIcon aria-hidden="true" />
-            <span>{{ hints.honesty }}</span>
-          </p>
+                <span class="hint-demo__check" aria-hidden="true">
+                  <CheckIcon />
+                </span>
+                <div>
+                  <span class="hint-demo__label hint-demo__label--warm">
+                    {{ section.label }}
+                  </span>
+                  <p>{{ section.text }}</p>
+                </div>
+              </section>
+            </div>
+          </article>
         </div>
+
+        <p class="hints__note">
+          <ReloadIcon aria-hidden="true" />
+          <span>{{ hints.note }}</span>
+        </p>
       </div>
     </div>
   </section>
@@ -102,17 +164,18 @@
 
   .hints__inner {
     display: grid;
-    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+    grid-template-columns: minmax(0, 0.82fr) minmax(0, 1.18fr);
     gap: clamp(32px, 6vw, 88px);
-    align-items: center;
+    align-items: normal;
   }
 
   .hints__head {
     display: flex;
     flex-direction: column;
     gap: 18px;
-    max-width: 40ch;
+    max-width: 42ch;
   }
+
   .hints__eyebrow {
     display: inline-flex;
     align-items: center;
@@ -120,17 +183,20 @@
     font-size: var(--l-fs-sm);
     color: var(--l-text-mut);
   }
+
   .hints__dot {
     width: 7px;
     height: 7px;
     border-radius: 50%;
     background: var(--l-warm);
-    box-shadow: 0 0 0 4px oklch(0.77 0.155 58 / 0.16);
+    box-shadow: 0 0 14px color-mix(in oklch, var(--l-warm) 35%, transparent);
   }
+
   .hints__title {
     font-size: var(--l-fs-h2);
     font-weight: 600;
   }
+
   .hints__lead {
     font-size: var(--l-fs-lead);
     line-height: 1.6;
@@ -138,84 +204,120 @@
   }
 
   .hints__stage {
-    display: flex;
+    min-width: 0;
+  }
+
+  .hints__demos {
+    display: grid;
   }
 
   .hint-demo {
-    width: 100%;
+    grid-area: 1 / 1;
+    min-width: 0;
     display: flex;
     flex-direction: column;
     gap: 18px;
-    padding: clamp(22px, 3vw, 36px);
+    padding: clamp(22px, 3vw, 34px);
     border-radius: var(--l-r-xl);
     border: 1px solid var(--l-line);
     background: var(--l-bg-elevated);
     box-shadow: var(--l-shadow);
   }
 
-  .hint-demo__label {
-    display: inline-block;
-    font-size: var(--l-fs-sm);
-    color: var(--l-text-mut);
-    margin-bottom: 10px;
-  }
-  .hint-demo__label--warm {
-    color: var(--l-warm);
+  .hint-demo--candidate {
+    border-color: var(--l-line-warm);
   }
 
-  .hint-demo__q p {
+  .hint-demo__head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: var(--l-fs-sm);
+    color: var(--l-text-soft);
+  }
+
+  .hint-demo__mode-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--l-warm);
+  }
+
+  .hint-demo--interviewer .hint-demo__mode-dot {
+    background: var(--l-cool);
+  }
+
+  .hint-demo__context {
+    padding: 18px 20px;
+    border-radius: var(--l-r-lg);
+    border: 1px solid var(--l-line);
+    background: var(--l-bg);
+  }
+
+  .hint-demo__context p {
     font-size: var(--l-fs-h3);
     font-weight: 500;
     line-height: 1.35;
   }
 
-  .hint-demo__panel {
-    padding: 20px;
-    border-radius: var(--l-r-lg);
-    border: 1px solid var(--l-line-warm);
-    background: radial-gradient(
-        140% 100% at 100% 0%,
-        oklch(0.77 0.155 58 / 0.08),
-        transparent 60%
-      ),
-      oklch(1 0 0 / 0.02);
+  .hint-demo__label {
+    display: block;
+    margin-bottom: 7px;
+    font-size: var(--l-fs-sm);
+    color: var(--l-text-mut);
   }
 
-  .hint-demo__list {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
+  .hint-demo__label--warm {
+    color: var(--l-warm);
   }
-  .hint-item {
-    display: flex;
+
+  .hint-demo__sections {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .hint-demo__section {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
     gap: 12px;
-    align-items: flex-start;
-    font-size: var(--l-fs-body);
+    align-items: start;
+    padding: 14px 16px;
+    border-radius: var(--l-r);
+    border: 1px solid var(--l-line);
+    background: var(--l-surface);
+  }
+
+  .hint-demo__section p {
     color: var(--l-text-soft);
   }
-  .hint-item svg {
-    flex: 0 0 auto;
+
+  .hint-demo__check {
+    display: grid;
+    place-items: center;
     width: 20px;
     height: 20px;
     margin-top: 2px;
-    padding: 2px;
     border-radius: 50%;
     color: var(--l-warm-ink);
     background: var(--l-warm);
   }
 
-  .hint-demo__honesty {
+  .hint-demo__check svg {
+    width: 13px;
+    height: 13px;
+  }
+
+  .hints__note {
     display: flex;
     gap: 10px;
     align-items: flex-start;
+    margin-top: 16px;
     font-size: var(--l-fs-sm);
     color: var(--l-text-mut);
-    padding-top: 4px;
   }
-  .hint-demo__honesty svg {
+
+  .hints__note svg {
     flex: 0 0 auto;
     width: 16px;
     height: 16px;
@@ -223,11 +325,41 @@
     color: var(--l-cool);
   }
 
+  @media (min-width: 900px) and (prefers-reduced-motion: no-preference) {
+    .hint-demo--interviewer {
+      opacity: 0;
+    }
+  }
+
   @media (max-width: 899px) {
     .hints__inner {
       grid-template-columns: 1fr;
       gap: 40px;
       align-items: start;
+    }
+    .hints__demos {
+      grid-template-columns: 1fr;
+      gap: 18px;
+    }
+    .hint-demo {
+      grid-area: auto;
+    }
+    .hint-demo__sections {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  @media (min-width: 900px) and (prefers-reduced-motion: reduce) {
+    .hints__inner {
+      grid-template-columns: 1fr;
+      align-items: start;
+    }
+    .hints__demos {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+    }
+    .hint-demo {
+      grid-area: auto;
     }
   }
 </style>
