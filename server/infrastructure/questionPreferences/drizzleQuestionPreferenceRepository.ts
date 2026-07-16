@@ -106,7 +106,7 @@ export class DrizzleQuestionPreferenceRepository
         asc(schema.interviewQuestionPreferences.lastPracticedAt),
         desc(schema.interviewQuestionPreferences.updatedAt)
       )
-      .limit(500);
+      .limit(5000);
     return rows.map(mapRecord);
   }
 

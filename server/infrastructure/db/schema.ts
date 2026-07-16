@@ -183,20 +183,62 @@ export const interviewReports = pgTable('interview_reports', {
 });
 
 // База вопросов (своя, генерируется LLM + вычитка).
-export const questionBank = pgTable('question_bank', {
-  id: uuid('id').defaultRandom().primaryKey(),
-  slug: text('slug'),
-  domain: text('domain').notNull(), // сфера
-  role: text('role'),
-  type: text('type').notNull(), // hr | behavioral | professional | stress
-  difficulty: text('difficulty').default('middle').notNull(),
-  question: text('question').notNull(),
-  strongAnswer: text('strong_answer'),
-  commonMistakes: text('common_mistakes'),
-  isPublic: boolean('is_public').default(true).notNull(),
-  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
-});
+export const questionBank = pgTable(
+  'question_bank',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    corpusId: text('corpus_id'),
+    slug: text('slug'),
+    domain: text('domain').notNull(), // сфера
+    role: text('role'),
+    type: text('type').notNull(), // старый публичный контракт
+    difficulty: text('difficulty').default('middle').notNull(),
+    framework: text('framework').default('none').notNull(),
+    topic: text('topic'),
+    subtopic: text('subtopic'),
+    interviewType: text('interview_type').default('technical').notNull(),
+    seniority: text('seniority').default('middle').notNull(),
+    difficultyLevel: integer('difficulty_level').default(3).notNull(),
+    question: text('question').notNull(),
+    variants: jsonb('variants').notNull().default([]),
+    strongAnswer: text('strong_answer'),
+    answerFormat: text('answer_format'),
+    commonMistakes: text('common_mistakes'),
+    tags: jsonb('tags').notNull().default([]),
+    expectedConcepts: jsonb('expected_concepts').notNull().default([]),
+    status: text('status').default('review').notNull(),
+    technicalReview: text('technical_review').default('pending').notNull(),
+    editorialReview: text('editorial_review').default('pending').notNull(),
+    provenance: jsonb('provenance'),
+    isPublic: boolean('is_public').default(false).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('question_bank_corpus_id_uq').on(table.corpusId),
+    uniqueIndex('question_bank_slug_uq').on(table.slug),
+    index('question_bank_admin_filters_idx').on(
+      table.role,
+      table.framework,
+      table.seniority,
+      table.topic
+    ),
+    index('question_bank_review_idx').on(
+      table.technicalReview,
+      table.editorialReview,
+      table.status
+    ),
+    index('question_bank_selection_idx').on(
+      table.role,
+      table.seniority,
+      table.framework,
+      table.interviewType,
+      table.technicalReview,
+      table.editorialReview,
+      table.status
+    ),
+  ]
+);
 
 // Платёжные заказы YooKassa.
 export const paymentOrders = pgTable(

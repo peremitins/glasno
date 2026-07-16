@@ -190,6 +190,7 @@ export const InterviewPlanItemDto = z.object({
   priority: InterviewPlanItemPriorityDto,
   status: InterviewPlanItemStatusDto,
   hintPack: QuestionHintPackDto.nullable(),
+  canonicalQuestionId: z.string().nullable().optional(),
   preferenceId: z.string().nullable().optional(),
   semantic: z.lazy(() =>
     z

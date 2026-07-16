@@ -1,10 +1,11 @@
-import { asc, eq } from 'drizzle-orm';
+import { and, asc, eq, isNull } from 'drizzle-orm';
 import { getDb, schema } from '@/server/infrastructure/db/client';
 import { apiError } from '@/server/utils/errors';
 import type {
   CreateInterviewSessionRecordInput,
   CreateInterviewTurnRecordInput,
   InterviewRepository,
+  InterviewOwner,
   InterviewSessionRecord,
   InterviewTurnRecord,
 } from '@/server/interface/interviewRepository';
@@ -65,6 +66,38 @@ function normalizeMetadata(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object'
     ? (value as Record<string, unknown>)
     : null;
+}
+
+function ownerWhere(owner: InterviewOwner) {
+  if (owner.userId) return eq(schema.interviewSessions.userId, owner.userId);
+  return and(
+    isNull(schema.interviewSessions.userId),
+    eq(schema.interviewSessions.anonymousSessionId, owner.anonymousSessionId)
+  );
+}
+
+function extractCanonicalQuestionIds(metadata: unknown) {
+  if (!metadata || typeof metadata !== 'object') return [];
+  const plan = (metadata as { plan?: unknown }).plan;
+  if (!plan || typeof plan !== 'object') return [];
+  const items = (plan as { items?: unknown }).items;
+  if (!Array.isArray(items)) return [];
+
+  return items.flatMap((item) => {
+    if (!item || typeof item !== 'object') return [];
+    const canonicalQuestionId = (
+      item as { canonicalQuestionId?: unknown }
+    ).canonicalQuestionId;
+    const semantic = (item as { semantic?: unknown }).semantic;
+    const conceptKey =
+      semantic && typeof semantic === 'object'
+        ? (semantic as { conceptKey?: unknown }).conceptKey
+        : null;
+
+    return [canonicalQuestionId, conceptKey].filter(
+      (id): id is string => typeof id === 'string' && Boolean(id.trim())
+    );
+  });
 }
 
 function requireReturnedRow<T>(row: T | undefined, entity: string): T {
@@ -179,6 +212,19 @@ export class DrizzleInterviewRepository implements InterviewRepository {
       .where(eq(schema.interviewSessions.id, id))
       .returning();
     return row ? mapSession(row) : null;
+  }
+
+  async listCanonicalQuestionIdsForOwner(owner: InterviewOwner): Promise<string[]> {
+    const rows = await this.db
+      .select({ metadata: schema.interviewSessions.metadata })
+      .from(schema.interviewSessions)
+      .where(ownerWhere(owner))
+      .orderBy(
+        asc(schema.interviewSessions.createdAt),
+        asc(schema.interviewSessions.id)
+      );
+
+    return rows.flatMap((row) => extractCanonicalQuestionIds(row.metadata));
   }
 
   async listTurns(sessionId: string): Promise<InterviewTurnRecord[]> {

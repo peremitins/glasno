@@ -26,6 +26,7 @@ import {
   selectRepeatPreferences,
 } from '@/server/application/questionPreferences/scheduling';
 import type { InterviewTurnRecord } from '@/server/interface/interviewRepository';
+import type { CanonicalQuestionRecord } from '@/server/interface/canonicalQuestionRepository';
 import {
   defaultFaceForMode,
   isInterviewerFaceId,
@@ -55,6 +56,7 @@ export interface PlannedQuestion {
   source: InterviewQuestionSource;
   question: string;
   hintPack: QuestionHintPack;
+  canonicalQuestionId?: string | null;
   preferenceId?: string | null;
   semantic?: QuestionSemanticPassport | null;
 }
@@ -297,6 +299,7 @@ export function resolveNextPlannedQuestion(params: {
       hintPack:
         nextGeneratedItem.hintPack ??
         buildHintPack({ question: nextGeneratedItem.question }),
+      canonicalQuestionId: nextGeneratedItem.canonicalQuestionId ?? null,
       preferenceId: nextGeneratedItem.preferenceId ?? null,
       semantic: nextGeneratedItem.semantic ?? null,
     };
@@ -331,6 +334,59 @@ export function populateGeneratedPlanQuestions(
         role: context.role,
         vacancyTitle: context.vacancyTitle,
       }),
+    };
+  });
+  return { ...metadata, plan: { ...metadata.plan, items } };
+}
+
+export function populateCanonicalPlanQuestions(
+  metadata: InterviewSessionMetadata,
+  candidates: CanonicalQuestionRecord[]
+): InterviewSessionMetadata {
+  if (metadata.trainingMode !== 'candidate') return metadata;
+  const eligibleCount = metadata.plan.items.filter(
+    (item) => item.source === 'glasno' || item.source === 'repeat'
+  ).length;
+  if (eligibleCount < 2) return metadata;
+
+  const canonicalFamilyTarget = Math.min(
+    eligibleCount - 1,
+    Math.round(eligibleCount * 0.8)
+  );
+  const repeatCount = metadata.plan.items.filter(
+    (item) => item.source === 'repeat'
+  ).length;
+  const canonicalCount = Math.max(0, canonicalFamilyTarget - repeatCount);
+  let candidateIndex = 0;
+  const items = metadata.plan.items.map((item) => {
+    if (
+      item.source !== 'glasno' ||
+      item.question ||
+      candidateIndex >= canonicalCount
+    ) {
+      return item;
+    }
+    const candidate = candidates[candidateIndex];
+    if (!candidate) return item;
+    candidateIndex += 1;
+    return {
+      ...item,
+      question: candidate.question,
+      canonicalQuestionId: candidate.id,
+      semantic: {
+        conceptKey: candidate.corpusId,
+        conceptLabel: candidate.subtopic
+          ? `${candidate.topic}: ${candidate.subtopic}`
+          : candidate.topic,
+        topicTags: candidate.tags.slice(0, 5),
+        requiredContextTags:
+          candidate.framework === 'none' ? [] : [candidate.framework],
+        focus:
+          candidate.interviewType === 'behavioral'
+            ? ('behavioral' as const)
+            : ('professional' as const),
+      },
+      hintPack: buildHintPack({ question: candidate.question }),
     };
   });
   return { ...metadata, plan: { ...metadata.plan, items } };

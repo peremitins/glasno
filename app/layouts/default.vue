@@ -7,9 +7,9 @@
     HomeIcon,
     MagicWandIcon,
     MoonIcon,
-    MixerHorizontalIcon,
     PersonIcon,
     PlusCircledIcon,
+    QuestionMarkCircledIcon,
     Share1Icon,
     SunIcon,
   } from '@radix-icons/vue';
@@ -27,6 +27,7 @@
 
   const { t } = useI18n();
   const api = useAPI();
+  const auth = useAuthStore();
   const runtimeConfig = useRuntimeConfig();
   const slots = useSlots();
   const { theme, toggleTheme } = useDesignPreferences();
@@ -62,33 +63,36 @@
     },
   });
 
-  const nav = [
+  const baseNav = [
     { to: '/', key: 'dashboard', icon: HomeIcon },
     { to: '/interview/new', key: 'newInterview', icon: PlusCircledIcon },
     { to: '/history', key: 'history', icon: ClockIcon },
     {
-      to: '/question-settings',
-      key: 'questionSettings',
-      icon: MixerHorizontalIcon,
+      to: '/questions',
+      key: 'questionBank',
+      icon: QuestionMarkCircledIcon,
     },
     { to: '/pricing', key: 'pricing', icon: BarChartIcon },
   ];
+  const nav = computed(() => baseNav);
   // Нижняя навигация повторяет порядок десктопа: главная → новое интервью →
-  // история → вопросы → тарифы, профиль в самом конце. «Настройки вопросов»
-  // на мобильном сокращаем до «Вопросы», чтобы подпись не обрезалась.
-  const mobileNav = nav
-    .filter((item) =>
-      ['dashboard', 'newInterview', 'history', 'questionSettings', 'pricing'].includes(
-        item.key
+  // история → вопросы → тарифы, профиль в самом конце.
+  const mobileNav = computed(() =>
+    nav.value
+      .filter((item) =>
+        [
+          'dashboard',
+          'newInterview',
+          'history',
+          'questionBank',
+          'pricing',
+        ].includes(item.key)
       )
-    )
-    .map((item) => ({
-      ...item,
-      labelKey:
-        item.key === 'questionSettings'
-          ? 'nav.questionSettingsShort'
-          : `nav.${item.key}`,
-    }));
+      .map((item) => ({
+        ...item,
+        labelKey: `nav.${item.key}`,
+      }))
+  );
 
   async function shareService() {
     if (sharePending.value) return;
@@ -142,7 +146,7 @@
               width="44"
               height="44"
               aria-hidden="true"
-            />
+            >
           </span>
           <span class="brand-text">{{ t('app.name') }}</span>
         </NuxtLink>
@@ -289,6 +293,7 @@
 
     <nav
       class="bottom-nav glass-frame glass-frame--soft"
+      :class="{ 'bottom-nav--admin': auth.user?.role === 'admin' }"
       aria-label="Мобильная навигация"
     >
       <NuxtLink
@@ -823,6 +828,10 @@
       padding: 8px;
     }
 
+    .bottom-nav--admin {
+      grid-template-columns: repeat(7, minmax(0, 1fr));
+    }
+
     .bottom-item {
       display: grid;
       place-items: center;
@@ -911,6 +920,10 @@
       left: 10px;
       grid-template-columns: repeat(6, minmax(0, 1fr));
       padding: 6px;
+    }
+
+    .bottom-nav--admin {
+      grid-template-columns: repeat(7, minmax(0, 1fr));
     }
 
     .bottom-item {

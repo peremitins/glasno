@@ -317,17 +317,17 @@
   }> = [
     {
       value: 'junior',
-      label: 'interview.level.junior',
+      label: 'interview.levelUniversal.junior',
       description: 'interview.levelHint.junior',
     },
     {
       value: 'middle',
-      label: 'interview.level.middle',
+      label: 'interview.levelUniversal.middle',
       description: 'interview.levelHint.middle',
     },
     {
       value: 'senior',
-      label: 'interview.level.senior',
+      label: 'interview.levelUniversal.senior',
       description: 'interview.levelHint.senior',
     },
   ];
@@ -3463,6 +3463,12 @@
 
     .toggle-option__control {
       justify-content: flex-start;
+    }
+  }
+
+  @media (max-width: 360px) {
+    .training-mode-option__help {
+      display: none;
     }
   }
 </style>

@@ -6,6 +6,7 @@ import { DrizzleInterviewRepository } from '@/server/infrastructure/interview/dr
 import { OpenAiInterviewEngine } from '@/server/infrastructure/llm/openaiInterviewEngine';
 import { recordAiUsageSafe } from '@/server/application/aiUsage/serviceFactory';
 import { DrizzleQuestionPreferenceRepository } from '@/server/infrastructure/questionPreferences/drizzleQuestionPreferenceRepository';
+import { DrizzleCanonicalQuestionRepository } from '@/server/infrastructure/questionBank/drizzleCanonicalQuestionRepository';
 
 export function createInterviewService(event: H3Event): InterviewService {
   const config = useRuntimeConfig(event);
@@ -14,6 +15,7 @@ export function createInterviewService(event: H3Event): InterviewService {
   return new InterviewService({
     repository: new DrizzleInterviewRepository(),
     questionPreferenceRepository: new DrizzleQuestionPreferenceRepository(),
+    canonicalQuestionRepository: new DrizzleCanonicalQuestionRepository(),
     hhClient: new HhHttpClient(config.hhApiBaseUrl as string, {
       accessToken: config.hhAccessToken as string,
       clientId: config.hhClientId as string,

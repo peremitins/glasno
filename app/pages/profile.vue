@@ -523,7 +523,9 @@
                   :placeholder="t('profile.identity.namePlaceholder')"
                   :disabled="isProfileActionPending"
                 />
-                <div class="profile-inline-actions profile-inline-actions--icon">
+                <div
+                  class="profile-inline-actions profile-inline-actions--icon"
+                >
                   <button
                     class="profile-icon-action profile-icon-action--primary button-loader-host"
                     type="submit"
@@ -627,7 +629,6 @@
           <div class="profile-card__title">
             <p class="panel-label">{{ t('profile.preferences.kicker') }}</p>
             <h3>{{ t('profile.preferences.fontTitle') }}</h3>
-            <p class="muted">{{ t('profile.preferences.fontHint') }}</p>
           </div>
         </div>
 

@@ -203,6 +203,11 @@ describe('interview session hints panel', () => {
     expect(source).not.toContain('realtimeAdapter.value = null');
   });
 
+  it('shows the selected question mode next to the current-question badge', () => {
+    expect(source).toContain('question-preference-badge');
+    expect(source).toContain('currentTurn.preference?.status');
+  });
+
   it('keeps the interviewer-training chat empty until the user asks a question', () => {
     expect(source).toContain('if (!isInterviewerTraining.value)');
     expect(source).toMatch(

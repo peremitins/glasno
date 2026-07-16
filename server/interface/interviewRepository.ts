@@ -79,6 +79,11 @@ export interface CreateInterviewTurnRecordInput {
   } | null;
 }
 
+export interface InterviewOwner {
+  anonymousSessionId: string;
+  userId?: string | null;
+}
+
 export interface InterviewRepository {
   createSession(
     input: CreateInterviewSessionRecordInput
@@ -101,6 +106,7 @@ export interface InterviewRepository {
       metadata: Record<string, unknown>;
     }
   ): Promise<InterviewSessionRecord | null>;
+  listCanonicalQuestionIdsForOwner(owner: InterviewOwner): Promise<string[]>;
   listTurns(sessionId: string): Promise<InterviewTurnRecord[]>;
   findTurnById(
     sessionId: string,

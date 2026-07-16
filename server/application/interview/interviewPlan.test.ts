@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
+import type { QuestionPreferenceRecord } from '@/server/interface/questionPreferenceRepository';
 import {
   buildHintPack,
   buildInterviewPlanMetadata,
   getSessionGoalConfig,
   injectRepeatPreferences,
+  populateCanonicalPlanQuestions,
   populateGeneratedPlanQuestions,
   resolveNextPlannedQuestion,
 } from './interviewPlan';
@@ -201,7 +203,7 @@ describe('interviewPlan', () => {
     expect(hintPack.strongDirection).toContain('сложных переговорах');
   });
 
-  it('injects repeats only into free AI slots and keeps the one-third quota', () => {
+  it('injects all matching repeats that fit and keeps one contextual AI slot', () => {
     const metadata = buildInterviewPlanMetadata({
       input: {
         source: { type: 'profession', role: 'Frontend-разработчик' },
@@ -243,13 +245,63 @@ describe('interviewPlan', () => {
         lastPracticedAt: null,
         createdAt: new Date('2026-07-03T00:00:00.000Z'),
       },
-    ] as any);
+    ] as QuestionPreferenceRecord[]);
 
     expect(updated.plan.items.filter((item) => item.source === 'user')).toHaveLength(1);
-    expect(updated.plan.items.filter((item) => item.source === 'repeat')).toHaveLength(2);
+    expect(updated.plan.items.filter((item) => item.source === 'repeat')).toHaveLength(3);
+    expect(updated.plan.items.filter((item) => item.source === 'glasno')).toHaveLength(2);
     expect(updated.plan.items.find((item) => item.source === 'repeat')).toMatchObject({
       preferenceId: 'pref_1',
       question: 'Как браузер строит DOM и CSSOM?',
     });
+  });
+
+  it('fills about eighty percent of bank-eligible slots and keeps one contextual slot', () => {
+    const metadata = buildInterviewPlanMetadata({
+      input: {
+        source: { type: 'profession', role: 'Frontend-разработчик' },
+        level: 'middle',
+        sessionGoal: 'standard',
+        questionSourceMode: 'glasno',
+        responseMode: 'text',
+        hintMode: 'off',
+        language: 'ru',
+        interviewerMode: 'neutral',
+        interviewerAvatarId: 'neutral-pro',
+      },
+      role: 'Frontend-разработчик',
+    });
+    const candidates = Array.from({ length: 6 }, (_, index) => ({
+      id: `bank_${index}`,
+      corpusId: `frontend_concept_${index}`,
+      roleKey: 'it-frontend',
+      roleLabel: 'Frontend-разработчик',
+      framework: 'none' as const,
+      seniority: 'middle' as const,
+      interviewType: 'technical' as const,
+      topic: 'javascript',
+      subtopic: null,
+      question: `Канонический вопрос ${index + 1}?`,
+      tags: ['javascript'],
+      expectedConcepts: [`концепт ${index + 1}`],
+    }));
+
+    const updated = populateCanonicalPlanQuestions(metadata, candidates);
+    const filled = updated.plan.items.filter((item) => item.question);
+    const contextual = updated.plan.items.filter((item) => !item.question);
+
+    expect(filled).toHaveLength(5);
+    expect(contextual).toHaveLength(1);
+    expect(filled[0]?.semantic).toMatchObject({
+      conceptKey: 'frontend_concept_0',
+      requiredContextTags: [],
+    });
+    expect(filled.map((item) => item.canonicalQuestionId)).toEqual([
+      'bank_0',
+      'bank_1',
+      'bank_2',
+      'bank_3',
+      'bank_4',
+    ]);
   });
 });
