@@ -1,18 +1,29 @@
 <script setup lang="ts">
-  import { onBeforeUnmount, onMounted, ref } from 'vue';
+  import { onBeforeUnmount, onMounted, ref, type Component } from 'vue';
   import { useNuxtApp } from 'nuxt/app';
   import { gsap } from 'gsap';
   import {
     BarChartIcon,
     ChatBubbleIcon,
-    FilePlusIcon,
+    FileTextIcon,
+    MixerHorizontalIcon,
+    PersonIcon,
   } from '@radix-icons/vue';
-  import { useLandingContent } from '@/composables/useLandingContent';
+  import {
+    useLandingContent,
+    type Step,
+  } from '@/composables/useLandingContent';
 
   const { stepsHead, steps } = useLandingContent();
   const nuxtApp = useNuxtApp();
 
-  const icons = [FilePlusIcon, ChatBubbleIcon, BarChartIcon];
+  const iconById = {
+    role: PersonIcon,
+    context: FileTextIcon,
+    settings: MixerHorizontalIcon,
+    interview: ChatBubbleIcon,
+    report: BarChartIcon,
+  } satisfies Record<Step['icon'], Component>;
 
   const root = ref<HTMLElement | null>(null);
   const viewport = ref<HTMLElement | null>(null);
@@ -24,29 +35,35 @@
     if (nuxtApp.$reducedMotion) return;
     mm = gsap.matchMedia();
 
-    mm.add('(min-width: 900px)', () => {
-      const trackEl = track.value;
-      const vpEl = viewport.value;
-      if (!trackEl || !vpEl) return;
+    mm.add(
+      '(min-width: 900px) and (prefers-reduced-motion: no-preference)',
+      () => {
+        const trackEl = track.value;
+        const vpEl = viewport.value;
+        if (!trackEl || !vpEl) return;
 
-      const distance = () => trackEl.scrollWidth - vpEl.clientWidth;
+        const distance = () =>
+          Math.max(0, trackEl.scrollWidth - vpEl.clientWidth);
+        const scrollDistance = () =>
+          Math.max(distance() * 1.2, window.innerHeight);
 
-      const tween = gsap.to(trackEl, {
-        x: () => -distance(),
-        ease: 'none',
-        scrollTrigger: {
-          trigger: vpEl,
-          start: 'top top',
-          end: () => `+=${distance()}`,
-          pin: true,
-          scrub: 1,
-          invalidateOnRefresh: true,
-          anticipatePin: 1,
-        },
-      });
+        const tween = gsap.to(trackEl, {
+          x: () => -distance(),
+          ease: 'none',
+          scrollTrigger: {
+            trigger: vpEl,
+            start: 'top top',
+            end: () => `+=${scrollDistance()}`,
+            pin: true,
+            scrub: 1,
+            invalidateOnRefresh: true,
+            anticipatePin: 1,
+          },
+        });
 
-      return () => tween.kill();
-    });
+        return () => tween.kill();
+      }
+    );
   });
 
   onBeforeUnmount(() => mm?.revert());
@@ -54,22 +71,25 @@
 
 <template>
   <section id="how" ref="root" class="hiw">
-    <div class="hiw__head l-container">
-      <SectionHeading :eyebrow="stepsHead.eyebrow" :title="stepsHead.title" />
-    </div>
-
     <div ref="viewport" class="hiw__viewport">
+      <div class="hiw__head l-container">
+        <SectionHeading
+          :eyebrow="stepsHead.eyebrow"
+          :title="stepsHead.title"
+        />
+      </div>
+
       <div ref="track" class="hiw__track">
         <article
           v-for="(step, i) in steps"
           :key="step.index"
           class="hiw__panel"
-          :class="{ 'hiw__panel--accent': i === 1 }"
+          :class="{ 'hiw__panel--accent': i === 0 }"
           data-reveal
         >
           <span class="hiw__num" aria-hidden="true">{{ step.index }}</span>
           <span class="hiw__icon">
-            <component :is="icons[i]" aria-hidden="true" />
+            <component :is="iconById[step.icon]" aria-hidden="true" />
           </span>
           <h3 class="hiw__title">{{ step.title }}</h3>
           <p class="hiw__text">{{ step.text }}</p>
@@ -81,22 +101,22 @@
 
 <style scoped>
   .hiw {
-    padding-block: var(--l-section-y);
-  }
-
-  .hiw__head {
-    margin-bottom: clamp(36px, 5vw, 64px);
+    position: relative;
   }
 
   .hiw__viewport {
+    grid-template-columns: minmax(0, 1fr);
     overflow: hidden;
   }
+
   @media (min-width: 900px) {
-    /* pinned-область на весь экран, панели по центру вертикали */
     .hiw__viewport {
-      min-height: 100vh;
-      display: flex;
-      align-items: center;
+      min-height: 100svh;
+      display: grid;
+      grid-template-rows: auto auto;
+      align-content: center;
+      gap: clamp(32px, 5vh, 56px);
+      padding-block: clamp(76px, 9vh, 108px);
     }
   }
 
@@ -110,8 +130,8 @@
   .hiw__panel {
     position: relative;
     flex: 0 0 auto;
-    width: clamp(280px, 78vw, 560px);
-    min-height: clamp(340px, 52vh, 460px);
+    width: clamp(320px, 31vw, 500px);
+    min-height: clamp(340px, 42vh, 420px);
     display: flex;
     flex-direction: column;
     padding: clamp(26px, 3vw, 44px);
@@ -175,6 +195,12 @@
 
   /* Мобайл: обычный вертикальный стек, без горизонтального pin */
   @media (max-width: 899px) {
+    .hiw {
+      padding-block: var(--l-section-y);
+    }
+    .hiw__head {
+      margin-bottom: 36px;
+    }
     .hiw__track {
       flex-direction: column;
     }
@@ -184,6 +210,30 @@
     }
     .hiw__num {
       font-size: 6rem;
+    }
+  }
+
+  @media (min-width: 900px) and (prefers-reduced-motion: reduce) {
+    .hiw {
+      padding-block: var(--l-section-y);
+    }
+    .hiw__viewport {
+      min-height: 0;
+      display: block;
+      overflow: visible;
+      padding-block: 0;
+    }
+    .hiw__head {
+      margin-bottom: clamp(36px, 5vw, 64px);
+    }
+    .hiw__track {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      will-change: auto;
+    }
+    .hiw__panel {
+      width: auto;
+      min-height: 340px;
     }
   }
 </style>
