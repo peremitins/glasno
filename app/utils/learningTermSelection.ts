@@ -63,9 +63,11 @@ export function clampLearningTermFloatingPosition(params: {
   viewport: ViewportSize;
   offset?: number;
   margin?: number;
+  placement?: 'above' | 'below';
 }) {
   const offset = params.offset ?? 8;
   const margin = params.margin ?? 8;
+  const placement = params.placement ?? 'above';
   const { anchorRect, floatingSize, viewport } = params;
   const maxLeft = Math.max(margin, viewport.width - floatingSize.width - margin);
   const centeredLeft =
@@ -73,8 +75,17 @@ export function clampLearningTermFloatingPosition(params: {
   const left = clamp(centeredLeft, margin, maxLeft);
 
   const topAbove = anchorRect.top - floatingSize.height - offset;
+  const topBelow = anchorRect.bottom + offset;
+  const belowFits =
+    topBelow + floatingSize.height <= viewport.height - margin;
   const preferredTop =
-    topAbove >= margin ? topAbove : anchorRect.bottom + offset;
+    placement === 'below'
+      ? belowFits || topAbove < margin
+        ? topBelow
+        : topAbove
+      : topAbove >= margin
+        ? topAbove
+        : topBelow;
   const maxTop = Math.max(margin, viewport.height - floatingSize.height - margin);
   const top = clamp(preferredTop, margin, maxTop);
 

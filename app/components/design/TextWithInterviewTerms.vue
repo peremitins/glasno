@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Cross2Icon, MagicWandIcon } from '@radix-icons/vue';
-import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import InterviewTerm from './InterviewTerm.vue';
 import {
   learningTermContextKey,
@@ -54,6 +54,13 @@ const manualExplanationLoading = ref(false);
 const manualExplanationError = ref('');
 
 let explainVersion = 0;
+let selectionChangeTimer: number | null = null;
+
+// На тач-устройствах выделение делают долгим тапом и маркерами — событий
+// mouseup/touchend в нужный момент нет, ловим selectionchange с дебаунсом.
+const isCoarsePointer =
+  typeof window !== 'undefined' &&
+  window.matchMedia('(pointer: coarse)').matches;
 
 const segments = computed(() => splitTextByInterviewTerms(props.text));
 const displaySegments = computed(() =>
@@ -89,6 +96,17 @@ function handleManualSelectionRequest(event: Event) {
   if (isManualSelectionUiTarget(event.target)) return;
 
   window.setTimeout(readManualSelection, 0);
+}
+
+function handleSelectionChange() {
+  if (!props.manualSelection || manualSelectionMode.value === 'popover') return;
+  if (selectionChangeTimer !== null) {
+    window.clearTimeout(selectionChangeTimer);
+  }
+  selectionChangeTimer = window.setTimeout(() => {
+    selectionChangeTimer = null;
+    readManualSelection();
+  }, 300);
 }
 
 function readManualSelection() {
@@ -131,6 +149,7 @@ function readManualSelection() {
 
 async function explainManualSelection() {
   if (!manualSelectedText.value || !manualSelectionRect.value) return;
+  if (manualSelectionMode.value === 'popover') return;
 
   manualSelectionMode.value = 'popover';
   manualPopoverPosition.value = positionFromSelection(manualSelectionRect.value, {
@@ -224,6 +243,8 @@ function positionFromSelection(
   rect: DOMRectReadOnly,
   floatingSize: { width: number; height: number }
 ): FloatingPosition {
+  // На мобильных системное меню выделения рисуется над текстом — уходим вниз
+  // с запасом под нижний маркер выделения.
   return clampLearningTermFloatingPosition({
     anchorRect: rect,
     floatingSize,
@@ -231,8 +252,9 @@ function positionFromSelection(
       width: window.innerWidth,
       height: window.innerHeight,
     },
-    offset: 8,
+    offset: isCoarsePointer ? 20 : 8,
     margin: 8,
+    placement: isCoarsePointer ? 'below' : 'above',
   });
 }
 
@@ -290,7 +312,17 @@ watch(activeTermKey, (key) => {
   }
 });
 
+onMounted(() => {
+  if (props.manualSelection && isCoarsePointer) {
+    document.addEventListener('selectionchange', handleSelectionChange);
+  }
+});
+
 onBeforeUnmount(() => {
+  if (selectionChangeTimer !== null) {
+    window.clearTimeout(selectionChangeTimer);
+  }
+  document.removeEventListener('selectionchange', handleSelectionChange);
   removeManualSelectionListeners();
 });
 </script>
@@ -324,7 +356,9 @@ onBeforeUnmount(() => {
         class="manual-selection-action"
         type="button"
         :style="manualActionStyle"
+        @pointerdown.prevent.stop
         @mousedown.prevent.stop
+        @touchend.prevent.stop="explainManualSelection"
         @click.stop="explainManualSelection"
       >
         <MagicWandIcon aria-hidden="true" />
