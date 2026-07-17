@@ -1,6 +1,14 @@
 import { fileURLToPath } from 'node:url';
 import tailwindcss from '@tailwindcss/vite';
 
+const landingSiteUrl = (
+  process.env.NUXT_PUBLIC_LANDING_SITE_URL || 'https://glasno.app'
+).replace(/\/$/, '');
+const socialTitle = 'Гласно — тренажёр собеседований';
+const socialDescription =
+  'Репетиция собеседования голосом: вопросы по вакансии, подсказки во время ответа и подробный разбор.';
+const socialImageUrl = `${landingSiteUrl}/og-cover.jpg`;
+
 // Конфиг по образцу Mentala, но без Capacitor/мобильного слоя.
 // SPA-режим (ssr:false) на старте; при необходимости SEO для базы вопросов
 // включим SSR/гибрид-рендеринг точечно на нужных маршрутах.
@@ -52,6 +60,27 @@ export default defineNuxtConfig({
         // маршруте. Публичный контент (например, банк вопросов) при желании
         // открывается точечно — через useHead на нужной странице.
         { name: 'robots', content: 'noindex, nofollow' },
+        // Боты мессенджеров не запускают JavaScript. Поэтому карточка должна
+        // быть в статической SPA-оболочке, которую получают и /, и /pricing.
+        // og:url намеренно нет: иначе любой маршрут считался бы главной.
+        { name: 'description', content: socialDescription },
+        { property: 'og:title', content: socialTitle },
+        { property: 'og:description', content: socialDescription },
+        { property: 'og:type', content: 'website' },
+        { property: 'og:site_name', content: 'Гласно' },
+        { property: 'og:locale', content: 'ru_RU' },
+        { property: 'og:image', content: socialImageUrl },
+        { property: 'og:image:width', content: '1420' },
+        { property: 'og:image:height', content: '797' },
+        { property: 'og:image:type', content: 'image/jpeg' },
+        {
+          property: 'og:image:alt',
+          content: 'Гласно: тренажёр собеседований голосом',
+        },
+        { name: 'twitter:card', content: 'summary_large_image' },
+        { name: 'twitter:title', content: socialTitle },
+        { name: 'twitter:description', content: socialDescription },
+        { name: 'twitter:image', content: socialImageUrl },
         { name: 'application-name', content: 'Гласно' },
         { name: 'apple-mobile-web-app-title', content: 'Гласно' },
         { name: 'apple-mobile-web-app-capable', content: 'yes' },
@@ -169,8 +198,7 @@ export default defineNuxtConfig({
       appName: 'Гласно',
       apiBase: '/api',
       appUrl: process.env.NUXT_PUBLIC_APP_URL || 'http://localhost:3000',
-      landingUrl:
-        process.env.NUXT_PUBLIC_LANDING_SITE_URL || 'https://glasno.app',
+      landingUrl: landingSiteUrl,
       speechDefaultEngine:
         process.env.NUXT_PUBLIC_SPEECH_DEFAULT_ENGINE || 'webspeech',
       featureTtsEnabled: process.env.NUXT_FEATURE_TTS_ENABLED === 'true',
