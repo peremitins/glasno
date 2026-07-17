@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   buildRealtimeCancelEvents,
+  createRealtimeStartGuard,
   shouldDeferRealtimeIdleStop,
   shouldPhysicallyMuteRealtimeMicrophone,
   withRealtimeSessionInstructions,
@@ -10,6 +11,19 @@ import {
 const source = readFileSync('app/composables/useRealtimeVoiceSession.ts', 'utf8');
 
 describe('useRealtimeVoiceSession helpers', () => {
+  it('invalidates an in-flight realtime start after shutdown', () => {
+    const guard = createRealtimeStartGuard();
+    const firstStart = guard.begin();
+
+    expect(guard.isCurrent(firstStart)).toBe(true);
+    guard.invalidate();
+    expect(guard.isCurrent(firstStart)).toBe(false);
+
+    const nextStart = guard.begin();
+    expect(guard.isCurrent(nextStart)).toBe(true);
+    expect(guard.isCurrent(firstStart)).toBe(false);
+  });
+
   it('mutes outgoing microphone chunks during assistant output in Firefox', () => {
     expect(
       shouldPhysicallyMuteRealtimeMicrophone(
@@ -96,6 +110,28 @@ describe('useRealtimeVoiceSession helpers', () => {
     expect(source).toContain("window.addEventListener('pagehide'");
     expect(source).not.toContain('visibilitychange');
     expect(source).not.toContain('visibilityState');
+  });
+
+  it('restores the browser audio session on every realtime shutdown path', () => {
+    expect(source).toContain('activateRealtimeAudioSession()');
+    expect(source).toContain('releaseRealtimeAudioSession');
+    expect(source).toContain('resetRealtimeAudioSession();');
+    expect(source.match(/resetRealtimeAudioSession\(\);/g)?.length).toBeGreaterThanOrEqual(
+      3
+    );
+    expect(source).toContain('const startToken = realtimeStartGuard.begin()');
+    expect(
+      source.match(/realtimeStartGuard\.isCurrent\(startToken\)/g)?.length
+    ).toBeGreaterThanOrEqual(4);
+    expect(source).toContain('nextClient.stop();');
+
+    const stopFunction = source.slice(source.indexOf('async function stop('));
+    expect(stopFunction.indexOf('client.value?.stop();')).toBeLessThan(
+      stopFunction.indexOf('resetRealtimeAudioSession();')
+    );
+    expect(stopFunction.indexOf('resetRealtimeAudioSession();')).toBeLessThan(
+      stopFunction.indexOf('await endServerSession(reason)')
+    );
   });
 
   it('keeps the full session role contract in response-level overrides', () => {

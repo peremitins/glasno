@@ -37,6 +37,11 @@ export interface RealtimeVoiceClientOptions {
   exchangeSdp?: (offerSdp: string) => Promise<string>;
 }
 
+export interface RealtimePlaybackAudioRoute {
+  readonly ready: Promise<boolean>;
+  stop(): void;
+}
+
 export async function startRealtimeWebrtcClient(
   session: RealtimeSessionResponse,
   options: RealtimeVoiceClientOptions = {}
@@ -60,6 +65,8 @@ export async function startRealtimeWebrtcClient(
   let inputAudioSource: MediaStreamAudioSourceNode | null = null;
   let inputAnalyser: AnalyserNode | null = null;
   let lastInputActivityAtMs = 0;
+  let playbackAudioRoute: RealtimePlaybackAudioRoute | null = null;
+  let playbackAudioRouteRequestId = 0;
 
   // Элемент воспроизведения голоса ассистента. Важно: «отвязанный»
   // (не добавленный в DOM) <audio> с autoplay браузеры часто глушат,
@@ -73,16 +80,50 @@ export async function startRealtimeWebrtcClient(
   remoteAudio.style.display = 'none';
   document.body.appendChild(remoteAudio);
 
-  const playRemoteAudio = () => {
-    const promise = remoteAudio.play();
-    if (promise && typeof promise.catch === 'function') {
-      promise
-        .catch((error) => {
-          // Автовоспроизведение могли заблокировать. Сессию не рвём (это
-          // оборвало бы и распознавание) — показываем пользователю инструкцию.
-          console.warn('Realtime remote audio play() blocked', error);
-          options.onPlaybackBlocked?.(error);
-        });
+  const playRemoteAudio = async (stream: MediaStream) => {
+    try {
+      await remoteAudio.play();
+    } catch (error) {
+      // Автовоспроизведение могли заблокировать. Сессию не рвём (это
+      // оборвало бы и распознавание) — показываем пользователю инструкцию.
+      console.warn('Realtime remote audio play() blocked', error);
+      options.onPlaybackBlocked?.(error);
+      return;
+    }
+
+    if (stopped || !shouldUseRealtimePlaybackAudioRoute()) return;
+
+    const AudioContextCtor =
+      window.AudioContext ||
+      (window as RealtimeVoiceWindow).webkitAudioContext ||
+      null;
+    if (!AudioContextCtor) return;
+
+    const requestId = ++playbackAudioRouteRequestId;
+    playbackAudioRoute?.stop();
+    playbackAudioRoute = null;
+
+    const nextRoute = createRealtimePlaybackAudioRoute({
+      stream,
+      remoteAudio,
+      AudioContextCtor,
+    });
+    if (!nextRoute) return;
+
+    // Регистрируем route до resume(): stop() должен уметь немедленно закрыть
+    // даже зависший pending AudioContext.
+    playbackAudioRoute = nextRoute;
+    const routeReady = await nextRoute.ready;
+    if (
+      stopped ||
+      !routeReady ||
+      requestId !== playbackAudioRouteRequestId
+    ) {
+      nextRoute?.stop();
+      if (playbackAudioRoute === nextRoute) {
+        playbackAudioRoute = null;
+      }
+      return;
     }
   };
 
@@ -99,8 +140,9 @@ export async function startRealtimeWebrtcClient(
 
   peerConnection.ontrack = (event) => {
     const [stream] = event.streams;
-    remoteAudio.srcObject = stream ?? new MediaStream([event.track]);
-    playRemoteAudio();
+    const remoteStream = stream ?? new MediaStream([event.track]);
+    remoteAudio.srcObject = remoteStream;
+    void playRemoteAudio(remoteStream);
   };
 
   peerConnection.onconnectionstatechange = () => {
@@ -153,6 +195,7 @@ export async function startRealtimeWebrtcClient(
 
   function stop() {
     stopped = true;
+    playbackAudioRouteRequestId += 1;
     stopInputActivityMonitor();
     try {
       dataChannel.close();
@@ -165,6 +208,8 @@ export async function startRealtimeWebrtcClient(
     for (const track of mediaStream.getTracks()) {
       track.stop();
     }
+    playbackAudioRoute?.stop();
+    playbackAudioRoute = null;
     remoteAudio.pause();
     remoteAudio.srcObject = null;
     remoteAudio.remove();
@@ -253,6 +298,138 @@ export async function startRealtimeWebrtcClient(
     }
     lastInputActivityAtMs = 0;
   }
+}
+
+/**
+ * На Android при одновременно открытом микрофоне Chrome/Samsung Internet
+ * могут показывать громкость звонка, хотя удалённый WebRTC-поток фактически
+ * звучит как Media. Явный playback-контекст делает слышимый output полноценной
+ * media-сессией, поэтому аппаратные клавиши управляют тем же потоком.
+ */
+export function shouldUseRealtimePlaybackAudioRoute(
+  userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : ''
+): boolean {
+  return /Android/i.test(userAgent);
+}
+
+/**
+ * Создаёт Android-web маршрут remote stream -> Web Audio destination.
+ * HTMLAudioElement остаётся muted-«заводилкой» WebRTC-пайплайна: на части
+ * Chromium-устройств один createMediaStreamSource(remoteStream) может молчать.
+ * Физический sink намеренно не выбираем — динамик, проводную или Bluetooth-
+ * гарнитуру продолжает переключать ОС.
+ */
+export function createRealtimePlaybackAudioRoute(input: {
+  stream: MediaStream;
+  remoteAudio: HTMLAudioElement;
+  AudioContextCtor: typeof AudioContext;
+}): RealtimePlaybackAudioRoute | null {
+  let audioContext: AudioContext | null = null;
+  let source: MediaStreamAudioSourceNode | null = null;
+
+  try {
+    audioContext = new input.AudioContextCtor({ latencyHint: 'playback' });
+    source = audioContext.createMediaStreamSource(input.stream);
+    source.connect(audioContext.destination);
+  } catch (error) {
+    try {
+      source?.disconnect();
+    } catch {
+      // Узел мог не успеть подключиться.
+    }
+    if (audioContext) {
+      void audioContext.close().catch(() => {});
+    }
+    input.remoteAudio.muted = false;
+    console.warn(
+      '[RealtimeWebrtcClient] Playback audio route unavailable, using direct WebRTC audio',
+      error
+    );
+    return null;
+  }
+
+  let stopped = false;
+  let directAudioMutedByRoute = false;
+
+  const syncDirectAudioFallback = () => {
+    if (stopped || !audioContext) return;
+    const routeIsRunning = audioContext.state === 'running';
+    // При suspended/interrupted/closed сразу возвращаем прямой WebRTC-output.
+    // Если браузер сам восстановит контекст, снова убираем дублирование.
+    input.remoteAudio.muted = routeIsRunning;
+    directAudioMutedByRoute = routeIsRunning;
+  };
+
+  const handleAudioContextStateChange = () => {
+    syncDirectAudioFallback();
+    if (
+      !stopped &&
+      audioContext &&
+      audioContext.state !== 'running' &&
+      audioContext.state !== 'closed'
+    ) {
+      // После возврата в Telegram/браузер пытаемся вернуть playback-route.
+      // Пока resume запрещён или ждёт audio focus, прямой output уже размьючен.
+      void audioContext.resume().catch(() => {});
+    }
+  };
+
+  audioContext.addEventListener('statechange', handleAudioContextStateChange);
+
+  function stopRoute() {
+    if (stopped) return;
+    stopped = true;
+    audioContext?.removeEventListener(
+      'statechange',
+      handleAudioContextStateChange
+    );
+    if (directAudioMutedByRoute) {
+      input.remoteAudio.muted = false;
+      directAudioMutedByRoute = false;
+    }
+    try {
+      source?.disconnect();
+    } catch {
+      // Узел мог быть уже отключён браузером при смене аудиоустройства.
+    }
+    source = null;
+    if (audioContext) {
+      try {
+        void audioContext.close().catch(() => {});
+      } catch {
+        // Контекст мог закрыться одновременно с pagehide.
+      }
+      audioContext = null;
+    }
+  }
+
+  const ready = (async () => {
+    try {
+      if (audioContext?.state !== 'running') {
+        await audioContext?.resume();
+      }
+      if (stopped) return false;
+      if (audioContext?.state !== 'running') {
+        throw new Error(`AudioContext state is ${audioContext?.state}`);
+      }
+
+      // Прямой элемент уже запущен и продолжает «толкать» remote stream, но
+      // слышимый звук теперь идёт только через playback-контекст.
+      syncDirectAudioFallback();
+      return true;
+    } catch (error) {
+      if (!stopped) {
+        console.warn(
+          '[RealtimeWebrtcClient] Playback audio route did not start, using direct WebRTC audio',
+          error
+        );
+        stopRoute();
+      }
+      return false;
+    }
+  })();
+
+  return { ready, stop: stopRoute };
 }
 
 export function buildRealtimeAudioConstraints(): MediaStreamConstraints {
