@@ -1,20 +1,25 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Файл ведётся вручную: страниц три, новые появляются редко. Даты в lastmod
+  должны совпадать с реальными правками — выдуманные значения поисковик
+  замечает и перестаёт доверять полю. Меняете страницу — поправьте дату.
+-->
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
     <loc>https://glasno.app/</loc>
-    <lastmod>2026-07-07</lastmod>
+    <lastmod>2026-07-17</lastmod>
     <changefreq>weekly</changefreq>
     <priority>1.0</priority>
   </url>
   <url>
     <loc>https://glasno.app/legal/privacy-policy-ru.html</loc>
-    <lastmod>2026-07-05</lastmod>
+    <lastmod>2026-07-10</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.3</priority>
   </url>
   <url>
     <loc>https://glasno.app/legal/terms-of-service-ru.html</loc>
-    <lastmod>2026-07-05</lastmod>
+    <lastmod>2026-07-11</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.3</priority>
   </url>

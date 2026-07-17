@@ -130,10 +130,6 @@ const config = {
         process.env.NUXT_PUBLIC_APP_AUTH_URL || 'https://my.glasno.app/auth',
       landingSiteUrl:
         process.env.NUXT_PUBLIC_LANDING_SITE_URL || 'https://glasno.app',
-      // Коды подтверждения прав в Search Console / Яндекс.Вебмастер (env).
-      yandexVerification: process.env.NUXT_PUBLIC_YANDEX_VERIFICATION || '',
-      googleSiteVerification:
-        process.env.NUXT_PUBLIC_GOOGLE_SITE_VERIFICATION || '',
     },
   },
   vite: {

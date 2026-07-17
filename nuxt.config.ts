@@ -46,6 +46,12 @@ export default defineNuxtConfig({
       title: 'Гласно — тренажёр собеседований',
       viewport: 'width=device-width, initial-scale=1, viewport-fit=cover',
       meta: [
+        // my.glasno.app — интерфейс за логином: показывать в выдаче нечего,
+        // а /pricing ещё и конкурировал бы с тарифами на glasno.app за один
+        // запрос. Тег живёт в SPA-оболочке, то есть отдаётся на любом
+        // маршруте. Публичный контент (например, банк вопросов) при желании
+        // открывается точечно — через useHead на нужной странице.
+        { name: 'robots', content: 'noindex, nofollow' },
         { name: 'application-name', content: 'Гласно' },
         { name: 'apple-mobile-web-app-title', content: 'Гласно' },
         { name: 'apple-mobile-web-app-capable', content: 'yes' },
