@@ -298,7 +298,9 @@
 
     <nav
       class="bottom-nav glass-frame glass-frame--soft"
-      :class="{ 'bottom-nav--admin': auth.user?.role === 'admin' }"
+      :style="{
+        '--bottom-nav-columns': String(mobileNav.length + 1),
+      }"
       aria-label="Мобильная навигация"
     >
       <NuxtLink
@@ -829,12 +831,8 @@
       left: 14px;
       z-index: 20;
       display: grid;
-      grid-template-columns: repeat(6, minmax(0, 1fr));
+      grid-template-columns: repeat(var(--bottom-nav-columns), minmax(0, 1fr));
       padding: 8px;
-    }
-
-    .bottom-nav--admin {
-      grid-template-columns: repeat(7, minmax(0, 1fr));
     }
 
     .bottom-item {
@@ -923,12 +921,7 @@
     .bottom-nav {
       right: 10px;
       left: 10px;
-      grid-template-columns: repeat(6, minmax(0, 1fr));
       padding: 6px;
-    }
-
-    .bottom-nav--admin {
-      grid-template-columns: repeat(7, minmax(0, 1fr));
     }
 
     .bottom-item {
