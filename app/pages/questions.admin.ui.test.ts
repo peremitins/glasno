@@ -4,14 +4,23 @@ import { describe, expect, it } from 'vitest';
 const read = (path: string) => readFileSync(path, 'utf8');
 
 describe('question bank UI', () => {
-  it('uses one question-bank page for users and admins', () => {
+  it('limits the question bank to administrators', () => {
     const page = read('app/pages/questions.vue');
     const layout = read('app/layouts/default.vue');
+    const catalogApi = read('server/api/question-bank/catalog.get.ts');
+    const listApi = read('server/api/question-bank/index.get.ts');
+    const itemApi = read('server/api/question-bank/[slug].get.ts');
 
     expect(existsSync('app/pages/question-settings.vue')).toBe(false);
-    expect(page).not.toContain("middleware: 'admin'");
+    expect(page).toContain("middleware: 'admin'");
     expect(page).not.toContain("redirect: '/'");
     expect(layout).toContain("to: '/questions'");
+    expect(layout).toContain("const isAdmin = computed(() => auth.user?.role === 'admin')");
+    expect(layout).toContain('const nav = computed(() =>');
+    expect(layout).toContain("item.key !== 'questionBank' || isAdmin.value");
+    expect(catalogApi).toContain("requireRole(session?.role, 'admin')");
+    expect(listApi).toContain("requireRole(event.context.session?.role, 'admin')");
+    expect(itemApi).toContain("requireRole(event.context.session?.role, 'admin')");
     expect(layout).not.toContain("to: '/question-settings'");
   });
 

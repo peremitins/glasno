@@ -74,7 +74,10 @@
     },
     { to: '/pricing', key: 'pricing', icon: BarChartIcon },
   ];
-  const nav = computed(() => baseNav);
+  const isAdmin = computed(() => auth.user?.role === 'admin');
+  const nav = computed(() =>
+    baseNav.filter((item) => item.key !== 'questionBank' || isAdmin.value)
+  );
   // Нижняя навигация повторяет порядок десктопа: главная → новое интервью →
   // история → вопросы → тарифы, профиль в самом конце.
   const mobileNav = computed(() =>
