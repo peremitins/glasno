@@ -6,6 +6,7 @@ import {
   computeRealtimeInputVolume,
   createRealtimePlaybackAudioRoute,
   shouldNotifyRealtimeInputActivity,
+  shouldUseRealtimeInputActivityAnalyser,
   waitForRealtimeIceGatheringComplete,
 } from './realtimeWebrtcClient';
 
@@ -136,6 +137,28 @@ describe('realtimeWebrtcClient helpers', () => {
 
     pendingResume.finish?.();
     expect(await route?.ready).toBe(false);
+  });
+
+  it('disables the Web Audio input analyser on iOS to avoid playback artifacts', () => {
+    const iphoneSafari =
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 Version/17.5 Mobile/15E148 Safari/604.1';
+    const iphoneChrome =
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 CriOS/126.0.6478.54 Mobile/15E148 Safari/604.1';
+    const ipadosMasquerade =
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Version/17.5 Safari/605.1.15';
+    const androidChrome =
+      'Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 Chrome/126.0 Mobile Safari/537.36';
+    const macChrome =
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/126.0.0.0 Safari/537.36';
+
+    expect(shouldUseRealtimeInputActivityAnalyser(iphoneSafari, 5)).toBe(false);
+    expect(shouldUseRealtimeInputActivityAnalyser(iphoneChrome, 5)).toBe(false);
+    // iPadOS Safari маскируется под macOS — ловим по maxTouchPoints.
+    expect(shouldUseRealtimeInputActivityAnalyser(ipadosMasquerade, 5)).toBe(
+      false
+    );
+    expect(shouldUseRealtimeInputActivityAnalyser(androidChrome, 0)).toBe(true);
+    expect(shouldUseRealtimeInputActivityAnalyser(macChrome, 0)).toBe(true);
   });
 
   it('requests browser audio processing for realtime microphone capture', () => {

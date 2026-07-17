@@ -189,6 +189,14 @@ export function useRealtimeVoiceCallFeedback(params: {
       clearInterval(connectingToneTimer);
       connectingToneTimer = null;
     }
+    suspendAudioContextIfIdle();
+  }
+
+  // Во время realtime-звонка контекст обязан быть suspended: на iOS запущенный
+  // «лишний» AudioContext параллельно с WebRTC-выводом даёт треск и прерывания
+  // голоса ассистента (WebKit пересэмплирует вывод под живой контекст).
+  function suspendAudioContextIfIdle() {
+    if (connectingToneActive) return;
     if (audioContext && audioContext.state === 'running') {
       void audioContext.suspend().catch(() => {});
     }
@@ -219,6 +227,8 @@ export function useRealtimeVoiceCallFeedback(params: {
         } catch {
           // узлы могли быть уже освобождены
         }
+        // Сигнал доигран — контекст больше не нужен до следующего звонка.
+        suspendAudioContextIfIdle();
       };
       source.addEventListener('ended', dispose, { once: true });
       source.start(startAt);
@@ -246,7 +256,10 @@ export function useRealtimeVoiceCallFeedback(params: {
     if (await playReadyCueWithAudioBuffer()) return;
     if (await playReadyCueWithHtmlAudio()) return;
     const context = await ensureAudioContext();
-    if (context) playConnectingPulse(context);
+    if (!context) return;
+    playConnectingPulse(context);
+    // Пульс-фолбэк длится ~0.6с; после него контекст тоже возвращаем в suspended.
+    setTimeout(suspendAudioContextIfIdle, 900);
   }
 
   function vibrate(pattern: number | number[]) {

@@ -21,6 +21,15 @@
   function close() {
     emit('update:open', false);
   }
+
+  // В WebKit (Safari и все браузеры на iOS) изменённое разрешение применяется
+  // только после перезагрузки страницы, а в Safari отказ вообще непостоянный —
+  // после reload браузер снова покажет системный запрос. Поэтому основное
+  // действие модалки — обновить страницу.
+  function reloadPage() {
+    if (typeof window === 'undefined') return;
+    window.location.reload();
+  }
 </script>
 
 <template>
@@ -64,7 +73,14 @@
         <!-- <p class="permission-note">{{ guide.note }}</p> -->
 
         <footer class="permission-actions">
-          <button type="button" @click="close">Понятно</button>
+          <button
+            class="permission-action--secondary"
+            type="button"
+            @click="close"
+          >
+            Понятно
+          </button>
+          <button type="button" @click="reloadPage">Обновить страницу</button>
         </footer>
       </section>
     </div>
@@ -199,6 +215,7 @@
   .permission-actions {
     display: flex;
     justify-content: flex-end;
+    gap: 10px;
     margin-top: 18px;
   }
 
@@ -217,5 +234,18 @@
 
   .permission-actions button:hover {
     background: var(--button-bg-hover);
+  }
+
+  .permission-actions .permission-action--secondary {
+    border: 1px solid var(--glass-border);
+    background: var(--surface-soft);
+    color: var(--text-secondary);
+    box-shadow: none;
+  }
+
+  .permission-actions .permission-action--secondary:hover {
+    border-color: var(--glass-border-strong);
+    background: var(--surface-soft);
+    color: var(--text-primary);
   }
 </style>

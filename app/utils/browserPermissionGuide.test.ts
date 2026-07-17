@@ -52,6 +52,55 @@ describe('browserPermissionGuide', () => {
     expect(guide.steps.join(' ')).not.toContain('Settings for This Website');
   });
 
+  it('detects Chrome on iOS (CriOS) as chrome + ios', () => {
+    const env = detectBrowserPermissionEnvironment({
+      userAgent:
+        'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/126.0.6478.54 Mobile/15E148 Safari/604.1',
+      platform: 'iPhone',
+      maxTouchPoints: 5,
+    });
+
+    expect(env.browser).toBe('chrome');
+    expect(env.device).toBe('ios');
+  });
+
+  it('sends iOS Chrome users to the iOS app settings toggles', () => {
+    const guide = buildBrowserPermissionGuide('microphone', {
+      browser: 'chrome',
+      device: 'ios',
+    });
+
+    const steps = guide.steps.join(' ');
+    expect(steps).toContain('Настройки iPhone');
+    expect(steps).toContain('Chrome');
+    expect(steps).toContain('Микрофон');
+    expect(steps).not.toContain('Site settings');
+  });
+
+  it('offers reload-first recovery for iOS Safari microphone', () => {
+    const guide = buildBrowserPermissionGuide('microphone', {
+      browser: 'safari',
+      device: 'ios',
+    });
+
+    expect(guide.steps[0]).toContain('Обновить страницу');
+    const steps = guide.steps.join(' ');
+    expect(steps).toContain('Настройки веб-сайта');
+    expect(steps).toContain('Настройки iPhone');
+  });
+
+  it('gives Android Chrome its own site-permissions steps', () => {
+    const guide = buildBrowserPermissionGuide('camera', {
+      browser: 'chrome',
+      device: 'android',
+    });
+
+    const steps = guide.steps.join(' ');
+    expect(steps).toContain('Разрешения');
+    expect(steps).toContain('Настройки сайтов');
+    expect(steps).toContain('Камера');
+  });
+
   it('uses Safari website settings for desktop Safari microphone instructions', () => {
     const guide = buildBrowserPermissionGuide('microphone', {
       browser: 'safari',
