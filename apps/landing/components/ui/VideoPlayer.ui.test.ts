@@ -13,7 +13,14 @@ describe('VideoPlayer', () => {
     expect(source).toContain('videoEl.value?.pause()');
     expect(source).toMatch(/\bloop\b/);
     expect(source).toMatch(/\bplaysinline\b/);
-    expect(source).toContain('preload="none"');
+    expect(source).toContain(':preload="preload"');
+  });
+
+  it('preloads ahead of the visible viewport so playback starts instantly on scroll', () => {
+    expect(source).toContain("ref<'none' | 'auto'>('none')");
+    expect(source).toContain("rootMargin: '1500px 0px'");
+    expect(source).toContain("preload.value = 'auto'");
+    expect(source).toContain('videoEl.value?.load()');
   });
 
   it('offers only the sound toggle, not playback controls', () => {

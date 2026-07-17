@@ -26,8 +26,9 @@ export const BillingPlansResponseDto = z.object({
 
 export const BillingSessionGoalAccessDto = z.enum(['quick', 'standard', 'deep']);
 
-// Привязанная карта (презентация; PAN хранит YooKassa).
+// Сохранённый способ оплаты. PAN не хранится и не передаётся приложению.
 export const BillingPaymentMethodDto = z.object({
+  methodType: z.string().nullable(),
   title: z.string().nullable(),
   cardBrand: z.string().nullable(),
   cardLast4: z.string().nullable(),

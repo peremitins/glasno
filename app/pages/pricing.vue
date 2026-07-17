@@ -153,12 +153,20 @@
   const paymentMethodLabel = computed(() => {
     const method = billingInfo.value?.paymentMethod;
     if (!method) return '';
+    if (method.methodType === 'sbp') {
+      return t('pricing.paymentMethodSbp');
+    }
     if (method.cardLast4) {
       const brand = method.cardBrand || t('pricing.card');
       return `${brand} •••• ${method.cardLast4}`;
     }
-    return method.title || t('pricing.card');
+    return method.title || t('pricing.paymentMethodLinked');
   });
+  const paymentMethodActionLabel = computed(() =>
+    billingInfo.value?.paymentMethod
+      ? t('pricing.replacePaymentMethod')
+      : t('pricing.bindCard')
+  );
   const showMinutes = computed(
     () =>
       Boolean(status.value) &&
@@ -568,7 +576,7 @@
             :disabled="cardActionPending"
             @click="bindCard"
           >
-            {{ t('pricing.bindCard') }}
+            {{ paymentMethodActionLabel }}
           </button>
           <button
             v-if="billingInfo.autoRenew"

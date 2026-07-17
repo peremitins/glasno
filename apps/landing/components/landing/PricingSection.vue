@@ -65,22 +65,6 @@
           </ul>
         </article>
       </div>
-
-      <p class="pricing__note" data-reveal>{{ pricing.plansNote }}</p>
-
-      <div class="packs" data-reveal>
-        <div class="packs__head">
-          <strong>{{ pricing.packsLabel }}</strong>
-          <span>{{ pricing.packsNote }}</span>
-        </div>
-        <div class="packs__list">
-          <div v-for="pack in pricing.packs" :key="pack.label" class="pack">
-            <span class="pack__label">{{ pack.label }}</span>
-            <span class="pack__price l-tnum">{{ pack.price }}</span>
-            <span v-if="pack.badge" class="pack__badge">{{ pack.badge }}</span>
-          </div>
-        </div>
-      </div>
     </div>
   </section>
 </template>
@@ -221,56 +205,6 @@
     color: var(--l-warm);
   }
 
-  /* Пакеты минут */
-  .packs {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: 20px;
-    padding: clamp(15px, 2.2vw, 26px);
-    border-radius: var(--l-r-lg);
-    border: 1px dashed var(--l-line-hi);
-  }
-  .packs__head {
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-  }
-  .packs__head strong {
-    font-weight: 600;
-  }
-  .packs__head span {
-    font-size: var(--l-fs-sm);
-    color: var(--l-text-mut);
-  }
-  .packs__list {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px;
-  }
-  .pack {
-    display: inline-flex;
-    align-items: center;
-    gap: 9px;
-    padding: 9px 15px;
-    border-radius: var(--l-r-pill);
-    border: 1px solid var(--l-line);
-    background: var(--l-bg-elevated);
-  }
-  .pack__label {
-    font-size: var(--l-fs-sm);
-    color: var(--l-text-soft);
-  }
-  .pack__price {
-    font-weight: 600;
-    font-size: var(--l-fs-sm);
-  }
-  .pack__badge {
-    font-size: var(--l-fs-label);
-    color: var(--l-warm);
-  }
-
   @media (max-width: 899px) {
     .pricing__grid {
       grid-template-columns: 1fr;
@@ -281,10 +215,6 @@
     .plan__name,
     .plan__desc {
       min-height: 0;
-    }
-    .packs {
-      flex-direction: column;
-      align-items: flex-start;
     }
   }
 </style>

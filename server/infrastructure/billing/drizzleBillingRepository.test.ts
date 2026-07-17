@@ -29,6 +29,14 @@ const PASS_30D = {
   priceRub: 1190,
 };
 
+const PASS_180D = {
+  id: 'pass_180d',
+  type: 'pass' as const,
+  durationDays: 180,
+  realtimeVoiceMinutes: 180,
+  priceRub: 4990,
+};
+
 describe('DrizzleBillingRepository (модель доступа v2)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -205,7 +213,13 @@ describe('DrizzleBillingRepository (модель доступа v2)', () => {
 
   it('does not silently disable renewal when repeat purchase unchecks the box', async () => {
     const harness = createDbHarness({
-      access: { currentPeriodEnd: ACTIVE_END, autoRenew: true },
+      access: {
+        currentPeriodEnd: ACTIVE_END,
+        autoRenew: true,
+        planId: 'pass_7d',
+        renewalPlanId: 'pass_7d',
+        renewalAmountRub: 449,
+      },
       activeCard: true,
     });
     database.getDb.mockReturnValue(harness.db);
@@ -222,7 +236,12 @@ describe('DrizzleBillingRepository (модель доступа v2)', () => {
 
     expect(harness.updates).toContainEqual({
       table: schema.userSubscriptions,
-      values: expect.objectContaining({ autoRenew: true }),
+      values: expect.objectContaining({
+        planId: 'pass_30d',
+        autoRenew: true,
+        renewalPlanId: 'pass_7d',
+        renewalAmountRub: 449,
+      }),
     });
   });
 
@@ -312,8 +331,8 @@ describe('DrizzleBillingRepository (модель доступа v2)', () => {
         planId: 'pass_30d',
         autoRenew: false,
         nextChargeAt: null,
-        // Условия продления зафиксированы — получатель может включить
-        // автопродление сам по цене подарка.
+        // Условия возможного продления хранятся, но само продление остаётся
+        // выключенным до отдельного действия получателя.
         renewalPlanId: 'pass_30d',
         renewalAmountRub: 1190,
       }),
@@ -327,27 +346,75 @@ describe('DrizzleBillingRepository (модель доступа v2)', () => {
       }),
     });
   });
+
+  it('extends access with a gift without changing the active renewal agreement', async () => {
+    const harness = createDbHarness({
+      gift: true,
+      giftPlanId: 'pass_180d',
+      activeCard: true,
+      access: {
+        currentPeriodEnd: ACTIVE_END,
+        autoRenew: true,
+        planId: 'pass_7d',
+        renewalPlanId: 'pass_7d',
+        renewalAmountRub: 449,
+      },
+    });
+    database.getDb.mockReturnValue(harness.db);
+    const repository = new DrizzleBillingRepository();
+
+    await repository.claimReadyGiftsByEmail({
+      recipientEmail: 'friend@example.com',
+      beneficiaryUserId: 'recipient_1',
+      plans: [PASS_180D],
+      now: NOW,
+    });
+
+    const subscriptionUpdate = harness.updates.find(
+      (entry) => entry.table === schema.userSubscriptions
+    );
+    expect(subscriptionUpdate?.values).toEqual({
+      currentPeriodEnd: new Date('2027-01-16T10:00:00.000Z'),
+      nextChargeAt: new Date('2027-01-16T10:00:00.000Z'),
+      renewalNoticeSentAt: null,
+      updatedAt: NOW,
+    });
+    expect(harness.inserts).not.toContainEqual(
+      expect.objectContaining({ table: schema.userPaymentMethods })
+    );
+    expect(harness.updates).not.toContainEqual(
+      expect.objectContaining({ table: schema.userPaymentMethods })
+    );
+    expect(harness.selectedTables).not.toContain(schema.userPaymentMethods);
+  });
 });
 
 function createDbHarness(params?: {
-  access?: { currentPeriodEnd: Date; autoRenew: boolean };
+  access?: {
+    currentPeriodEnd: Date;
+    autoRenew: boolean;
+    planId?: string;
+    renewalPlanId?: string;
+    renewalAmountRub?: number;
+  };
   activeCard?: boolean;
   savedCardWithPayment?: boolean;
   gift?: boolean;
+  giftPlanId?: string;
   orderFulfilled?: boolean;
 }) {
   const orderRow = {
     id: 'order_1',
     userId: params?.gift ? 'purchaser_1' : 'user_1',
-    planId: 'pass_30d',
+    planId: params?.giftPlanId ?? 'pass_30d',
     providerPaymentId: params?.gift ? 'payment_gift' : 'payment_1',
     fulfilledAt: params?.orderFulfilled ? NOW : null,
   };
   const accessRow = params?.access
     ? {
         id: 'access_existing',
-        userId: 'user_1',
-        planId: 'pass_30d',
+        userId: params.gift ? 'recipient_1' : 'user_1',
+        planId: params.access.planId ?? 'pass_30d',
         status: 'active',
         provider: 'yookassa',
         providerPaymentId: 'payment_first',
@@ -359,8 +426,8 @@ function createDbHarness(params?: {
         lastChargeAttemptAt: null,
         lastChargeError: null,
         chargeAttempts: 0,
-        renewalPlanId: 'pass_30d',
-        renewalAmountRub: 1190,
+        renewalPlanId: params.access.renewalPlanId ?? 'pass_30d',
+        renewalAmountRub: params.access.renewalAmountRub ?? 1190,
         renewalNoticeSentAt: null,
         createdAt: new Date('2026-06-01T10:00:00.000Z'),
         updatedAt: new Date('2026-06-01T10:00:00.000Z'),
@@ -372,7 +439,7 @@ function createDbHarness(params?: {
     purchaserUserId: 'purchaser_1',
     recipientEmail: 'friend@example.com',
     senderName: 'Николай',
-    planId: 'pass_30d',
+    planId: params?.giftPlanId ?? 'pass_30d',
     status: 'ready',
     paidAt: NOW,
     claimExpiresAt: new Date('2027-01-01T10:00:00.000Z'),

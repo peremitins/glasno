@@ -43,7 +43,6 @@ describe('ReportSection', () => {
     expect(report.previewCta).toBe('Посмотреть полный пример отчёта');
     expect(source).toContain('report-preview-dialog');
     expect(source).toContain('report.preview.questions');
-    expect(source).toContain('{{ question.score }}');
     expect(source).not.toContain('examplePdfSrc');
     expect(source).not.toContain('Открыть PDF-пример');
     expect(

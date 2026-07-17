@@ -302,6 +302,7 @@ function buildBillingInfo(params: {
     lastChargeError: view.access?.lastChargeError ?? null,
     paymentMethod: activePaymentMethod
       ? {
+          methodType: activePaymentMethod.methodType,
           title: activePaymentMethod.title,
           cardBrand: activePaymentMethod.cardBrand,
           cardLast4: activePaymentMethod.cardLast4,

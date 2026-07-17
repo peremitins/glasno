@@ -287,7 +287,10 @@ describe('BillingAccessService', () => {
         nextChargeAt: FUTURE.toISOString(),
         nextChargeAmountRub: 999,
         lastChargeError: 'Списание отклонено (canceled)',
-        paymentMethod: { cardLast4: '4242' },
+        paymentMethod: {
+          methodType: 'bank_card',
+          cardLast4: '4242',
+        },
       },
     });
   });
