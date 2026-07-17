@@ -1,9 +1,31 @@
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
+import {
+  startPermissionRegrantWatch,
+  type PermissionRegrantWatchHandle,
+} from '@/app/utils/permissionRegrantWatch';
 
 export type MicPermissionState = 'granted' | 'denied' | 'prompt' | null;
 
 const showMicDeniedModal = ref(false);
 const WEB_MIC_DENIED_STORAGE_KEY = 'glasno.mic.web.denied';
+
+// Пока открыта модалка с инструкцией, следим за состоянием разрешения: как
+// только пользователь включил микрофон в настройках и вернулся — закрываем
+// модалку сами, чтобы её оверлей не съедал первый клик по кнопке голоса.
+let micRegrantWatch: PermissionRegrantWatchHandle | null = null;
+watch(showMicDeniedModal, (open) => {
+  if (typeof window === 'undefined') return;
+  micRegrantWatch?.stop();
+  micRegrantWatch = null;
+  if (!open) return;
+  micRegrantWatch = startPermissionRegrantWatch({
+    permissionName: 'microphone',
+    onRegrant: () => {
+      setWebDeniedFlag(false);
+      showMicDeniedModal.value = false;
+    },
+  });
+});
 
 function normalizePermissionState(value: unknown): MicPermissionState {
   return value === 'granted' || value === 'denied' || value === 'prompt'
