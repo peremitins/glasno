@@ -134,33 +134,6 @@
           </section>
         </div>
 
-        <section class="report-preview__questions">
-          <div class="question-list__head">
-            <div>
-              <span class="preview-panel__label">Разбор по вопросам</span>
-              <h4>Что получилось и что тренировать дальше</h4>
-            </div>
-            <span class="question-list__count">{{ report.preview.questions.length }} вопроса</span>
-          </div>
-          <article
-            v-for="(question, index) in report.preview.questions"
-            :key="question.question"
-            class="preview-question"
-            :class="{ 'preview-question--featured': index === 0 }"
-          >
-            <span class="preview-question__number">0{{ index + 1 }}</span>
-            <div>
-              <h5>{{ question.question }}</h5>
-              <p>{{ question.answer }}</p>
-              <div v-if="index === 0" class="preview-question__detail">
-                <p><strong>Что получилось:</strong> {{ question.whatWorked }}</p>
-                <p><strong>Что усилить:</strong> {{ question.whatWeak }}</p>
-              </div>
-            </div>
-            <span class="preview-question__average">{{ question.score }}</span>
-          </article>
-        </section>
-
         <button type="button" class="report-preview__cta" @click="openPreview">
           {{ report.previewCta }}
           <span aria-hidden="true">↗</span>
@@ -241,7 +214,7 @@
   .report { padding-block: var(--l-section-y); }
   .report__inner { display: flex; flex-direction: column; gap: clamp(36px, 5vw, 60px); }
   .report-preview { overflow: hidden; border: 1px solid var(--l-line-hi); border-radius: var(--l-r-xl); background: var(--l-bg-elevated); box-shadow: var(--l-shadow); }
-  .report-preview__topbar, .report-preview__overview, .report-preview__questions, .report-preview__summary { padding-inline: clamp(22px, 4vw, 48px); }
+  .report-preview__topbar, .report-preview__overview, .report-preview__summary { padding-inline: clamp(22px, 4vw, 48px); }
   .report-preview__topbar { display: flex; justify-content: space-between; gap: 24px; align-items: center; padding-block: clamp(22px, 3vw, 32px); border-bottom: 1px solid var(--l-line); }
   .report-preview__kicker, .preview-panel__label { display: block; color: var(--l-warm); font-size: var(--l-fs-label); letter-spacing: .08em; text-transform: uppercase; }
   .report-preview__topbar h3 { margin-top: 7px; font-size: var(--l-fs-h3); }
@@ -260,20 +233,11 @@
   li { display: grid; grid-template-columns: 22px 1fr; gap: 9px; color: var(--l-text-soft); font-size: var(--l-fs-sm); }
   li + li { margin-top: 13px; }
   li > span { color: var(--l-warm); font-weight: 600; }
-  .report-preview__questions { padding-block: clamp(24px, 4vw, 44px); }
   .question-list__head { display: flex; justify-content: space-between; gap: 16px; align-items: end; margin-bottom: 18px; }
-  .question-list__head h3, .question-list__head h4 { margin-top: 6px; font-size: var(--l-fs-h3); }
+  .question-list__head h3 { margin-top: 6px; font-size: var(--l-fs-h3); }
   .question-list__count { color: var(--l-text-mut); font-size: var(--l-fs-sm); white-space: nowrap; }
-  .preview-question { display: grid; grid-template-columns: 34px 1fr auto; gap: 14px; padding: 16px; border: 1px solid var(--l-line); border-radius: var(--l-r); background: var(--l-bg-deep); }
-  .preview-question + .preview-question { margin-top: 10px; }
-  .preview-question--featured { border-color: var(--l-line-warm); }
   .preview-question__number { color: var(--l-warm); font-size: var(--l-fs-sm); }
-  .preview-question h5, .dialog-question h4 { font-size: 1rem; line-height: 1.4; }
-  .preview-question p { margin-top: 5px; color: var(--l-text-mut); font-size: var(--l-fs-sm); line-height: 1.55; }
-  .preview-question__detail { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
-  .preview-question__detail p { color: var(--l-text-soft); }
-  .preview-question__detail strong { display: block; color: var(--l-text); }
-  .preview-question__average { align-self: start; padding: 3px 8px; border-radius: var(--l-r-pill); background: oklch(.82 .135 63 / .12); color: var(--l-warm); font-size: var(--l-fs-sm); }
+  .dialog-question h4 { font-size: 1rem; line-height: 1.4; }
   .report-preview__cta { display: flex; width: 100%; justify-content: center; align-items: center; gap: 10px; padding: 19px; border: 0; border-top: 1px solid var(--l-line); background: oklch(.82 .135 63 / .1); color: var(--l-warm); font-weight: 600; transition: background var(--l-dur-1) var(--l-ease); }
   .report-preview__cta:hover { background: oklch(.82 .135 63 / .17); }
   .report-preview__cta span { font-size: 1.2em; }
@@ -304,5 +268,5 @@
   .dialog-question__model { border: 1px solid oklch(.85 .095 200 / .25); background: oklch(.85 .095 200 / .07) !important; }
   .dialog-question__practice strong { color: var(--l-text); }
   .report-preview-dialog__footer { border-top: 1px solid var(--l-line); }
-  @media (max-width: 680px) { .report-preview__overview, .dialog-overview, .dialog-hero, .preview-question__detail, .dialog-question__insights { grid-template-columns: 1fr; } .preview-question { grid-template-columns: 28px 1fr; } .preview-question__average { display: none; } .dialog-hero > div:first-child strong { font-size: 2.4rem; } .report-preview-dialog { width: calc(100vw - 32px); height: calc(100vh - 32px); } }
+  @media (max-width: 680px) { .report-preview__overview, .dialog-overview, .dialog-hero, .dialog-question__insights { grid-template-columns: 1fr; } .dialog-hero > div:first-child strong { font-size: 2.4rem; } .report-preview-dialog { width: calc(100vw - 32px); height: calc(100vh - 32px); } }
 </style>

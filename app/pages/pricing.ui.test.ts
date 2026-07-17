@@ -169,6 +169,14 @@ describe('YooKassa widget presentation', () => {
 });
 
 describe('pricing subscription management and gift checkout', () => {
+  it('labels the saved payment method by its real type', () => {
+    expect(source).toContain("method.methodType === 'sbp'");
+    expect(source).toContain("t('pricing.paymentMethodSbp')");
+    expect(source).toContain("t('pricing.paymentMethodLinked')");
+    expect(source).toContain('paymentMethodActionLabel');
+    expect(source).toContain("t('pricing.replacePaymentMethod')");
+  });
+
   it('opens a focused checkout modal with a persistent gift mode and recipient email', () => {
     expect(source).toContain('selectedPlanId');
     expect(source).toContain('giftMode');

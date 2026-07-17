@@ -50,6 +50,14 @@ interface GrantAccessPaymentMethod {
   cardExpiryYear?: string | null;
 }
 
+type GrantAccessSource =
+  | {
+      kind: 'purchase';
+      autoRenew: boolean;
+      paymentMethod: GrantAccessPaymentMethod | null;
+    }
+  | { kind: 'gift' };
+
 function ownerWhere(owner: BillingOwner) {
   if (owner.userId) {
     return eq(schema.interviewSessions.userId, owner.userId);
@@ -468,8 +476,7 @@ export class DrizzleBillingRepository implements BillingRepository {
           beneficiaryUserId: params.beneficiaryUserId,
           providerPaymentId: order.providerPaymentId,
           plan,
-          autoRenew: false,
-          paymentMethod: null,
+          source: { kind: 'gift' },
           now,
         });
         if (!granted) continue;
@@ -750,8 +757,11 @@ export class DrizzleBillingRepository implements BillingRepository {
         beneficiaryUserId: orderRow.userId,
         providerPaymentId: params.providerPaymentId,
         plan: params.plan,
-        autoRenew: params.autoRenew,
-        paymentMethod: params.paymentMethod ?? null,
+        source: {
+          kind: 'purchase',
+          autoRenew: params.autoRenew,
+          paymentMethod: params.paymentMethod ?? null,
+        },
         now,
       });
       if (!granted) {
@@ -1174,8 +1184,7 @@ async function grantPaidAccess(
     beneficiaryUserId: string;
     providerPaymentId: string;
     plan: FulfillPlanInput;
-    autoRenew: boolean;
-    paymentMethod: GrantAccessPaymentMethod | null;
+    source: GrantAccessSource;
     now: Date;
   }
 ): Promise<boolean> {
@@ -1213,7 +1222,8 @@ async function grantPaidAccess(
     return true;
   }
 
-  const savedCard = params.paymentMethod;
+  const savedPaymentMethod =
+    params.source.kind === 'purchase' ? params.source.paymentMethod : null;
   const [existing] = await tx
     .select()
     .from(schema.userSubscriptions)
@@ -1221,79 +1231,111 @@ async function grantPaidAccess(
     .for('update')
     .limit(1);
 
-  // Автопродление реально включается, только если есть чем списывать:
-  // карта пришла с этим платежом или уже была привязана (оплата СБП и т.п.
-  // без сохранённого метода оставляет покупку разовой).
-  let hasChargeableMethod = Boolean(savedCard);
-  if (!hasChargeableMethod) {
-    const [method] = await tx
-      .select({ id: schema.userPaymentMethods.id })
-      .from(schema.userPaymentMethods)
-      .where(
-        and(
-          eq(schema.userPaymentMethods.userId, beneficiaryUserId),
-          eq(schema.userPaymentMethods.status, 'active')
-        )
-      )
-      .limit(1);
-    hasChargeableMethod = Boolean(method);
-  }
-
   const existingActive = Boolean(
     existing &&
       existing.status === 'active' &&
       existing.currentPeriodEnd > now
   );
-  // Повторная покупка со снятой галочкой не выключает уже включённое
-  // автопродление — выключение только явным действием пользователя.
-  const autoRenewOn =
-    (params.autoRenew && hasChargeableMethod) ||
-    (existingActive && Boolean(existing!.autoRenew));
   const periodStart = existingActive ? existing!.currentPeriodEnd : now;
   const periodEnd = addDaysTo(periodStart, plan.durationDays);
 
   let accessId: string;
-  if (existing) {
+  if (existingActive && params.source.kind === 'gift') {
+    // Подарок — изолированное продление доступа. Он сдвигает дату
+    // следующего списания вместе с концом доступа, но не меняет ни одного
+    // условия ранее подтверждённого пользователем платёжного соглашения.
     await tx
       .update(schema.userSubscriptions)
       .set({
-        planId: plan.id,
-        status: 'active',
-        provider: 'yookassa',
-        providerPaymentId,
         currentPeriodEnd: periodEnd,
-        autoRenew: autoRenewOn,
-        nextChargeAt: autoRenewOn ? periodEnd : null,
-        lastChargeError: null,
-        chargeAttempts: 0,
-        renewalPlanId: plan.id,
-        renewalAmountRub: plan.priceRub,
+        nextChargeAt: existing!.autoRenew ? periodEnd : null,
         renewalNoticeSentAt: null,
         updatedAt: now,
       })
-      .where(eq(schema.userSubscriptions.id, existing.id));
-    accessId = existing.id;
+      .where(eq(schema.userSubscriptions.id, existing!.id));
+    accessId = existing!.id;
   } else {
-    const [inserted] = await tx
-      .insert(schema.userSubscriptions)
-      .values({
-        userId: beneficiaryUserId,
-        planId: plan.id,
-        status: 'active',
-        provider: 'yookassa',
-        providerPaymentId,
-        currentPeriodEnd: periodEnd,
-        autoRenew: autoRenewOn,
-        nextChargeAt: autoRenewOn ? periodEnd : null,
-        renewalPlanId: plan.id,
-        renewalAmountRub: plan.priceRub,
-      })
-      .onConflictDoNothing({
-        target: schema.userSubscriptions.providerPaymentId,
-      })
-      .returning();
-    if (!inserted) return false;
-    accessId = inserted.id;
+    // Автопродление может включить только собственная покупка получателя.
+    // Подарочный платёж принципиально не читает и не меняет его способ
+    // оплаты или настройки будущих списаний.
+    let hasChargeableMethod = Boolean(savedPaymentMethod);
+    if (params.source.kind === 'purchase' && !hasChargeableMethod) {
+      const [method] = await tx
+        .select({ id: schema.userPaymentMethods.id })
+        .from(schema.userPaymentMethods)
+        .where(
+          and(
+            eq(schema.userPaymentMethods.userId, beneficiaryUserId),
+            eq(schema.userPaymentMethods.status, 'active')
+          )
+        )
+        .limit(1);
+      hasChargeableMethod = Boolean(method);
+    }
+    // Повторная покупка со снятой галочкой не выключает уже включённое
+    // автопродление — выключение только явным действием пользователя.
+    const autoRenewOn =
+      params.source.kind === 'purchase' &&
+      ((params.source.autoRenew && hasChargeableMethod) ||
+        (existingActive && Boolean(existing!.autoRenew)));
+    const renewalAgreementConfirmed =
+      params.source.kind === 'purchase' &&
+      params.source.autoRenew &&
+      hasChargeableMethod;
+    // Новые тариф и сумма автосписания требуют отдельного явного согласия.
+    // Разовая покупка может продлить доступ, но сохраняет ранее включённое
+    // автопродление ровно на прежних условиях.
+    const renewalPlanId =
+      existingActive && existing!.autoRenew && !renewalAgreementConfirmed
+        ? existing!.renewalPlanId
+        : plan.id;
+    const renewalAmountRub =
+      existingActive && existing!.autoRenew && !renewalAgreementConfirmed
+        ? existing!.renewalAmountRub
+        : plan.priceRub;
+
+    if (existing) {
+      await tx
+        .update(schema.userSubscriptions)
+        .set({
+          planId: plan.id,
+          status: 'active',
+          provider: 'yookassa',
+          providerPaymentId,
+          currentPeriodEnd: periodEnd,
+          autoRenew: autoRenewOn,
+          nextChargeAt: autoRenewOn ? periodEnd : null,
+          lastChargeError: null,
+          chargeAttempts: 0,
+          renewalPlanId,
+          renewalAmountRub,
+          renewalNoticeSentAt: null,
+          updatedAt: now,
+        })
+        .where(eq(schema.userSubscriptions.id, existing.id));
+      accessId = existing.id;
+    } else {
+      const [inserted] = await tx
+        .insert(schema.userSubscriptions)
+        .values({
+          userId: beneficiaryUserId,
+          planId: plan.id,
+          status: 'active',
+          provider: 'yookassa',
+          providerPaymentId,
+          currentPeriodEnd: periodEnd,
+          autoRenew: autoRenewOn,
+          nextChargeAt: autoRenewOn ? periodEnd : null,
+          renewalPlanId,
+          renewalAmountRub,
+        })
+        .onConflictDoNothing({
+          target: schema.userSubscriptions.providerPaymentId,
+        })
+        .returning();
+      if (!inserted) return false;
+      accessId = inserted.id;
+    }
   }
 
   // Все живые минуты доезжают до нового конца доступа.
@@ -1308,33 +1350,33 @@ async function grantPaidAccess(
       )
     );
 
-  if (savedCard) {
+  if (savedPaymentMethod) {
     await tx
       .insert(schema.userPaymentMethods)
       .values({
         userId: beneficiaryUserId,
         provider: 'yookassa',
-        providerPaymentMethodId: savedCard.providerPaymentMethodId,
+        providerPaymentMethodId: savedPaymentMethod.providerPaymentMethodId,
         status: 'active',
-        methodType: savedCard.methodType ?? null,
-        title: savedCard.title ?? null,
-        cardBrand: savedCard.cardBrand ?? null,
-        cardLast4: savedCard.cardLast4 ?? null,
-        cardExpiryMonth: savedCard.cardExpiryMonth ?? null,
-        cardExpiryYear: savedCard.cardExpiryYear ?? null,
+        methodType: savedPaymentMethod.methodType ?? null,
+        title: savedPaymentMethod.title ?? null,
+        cardBrand: savedPaymentMethod.cardBrand ?? null,
+        cardLast4: savedPaymentMethod.cardLast4 ?? null,
+        cardExpiryMonth: savedPaymentMethod.cardExpiryMonth ?? null,
+        cardExpiryYear: savedPaymentMethod.cardExpiryYear ?? null,
         updatedAt: now,
       })
       .onConflictDoUpdate({
         target: schema.userPaymentMethods.userId,
         set: {
-          providerPaymentMethodId: savedCard.providerPaymentMethodId,
+          providerPaymentMethodId: savedPaymentMethod.providerPaymentMethodId,
           status: 'active',
-          methodType: savedCard.methodType ?? null,
-          title: savedCard.title ?? null,
-          cardBrand: savedCard.cardBrand ?? null,
-          cardLast4: savedCard.cardLast4 ?? null,
-          cardExpiryMonth: savedCard.cardExpiryMonth ?? null,
-          cardExpiryYear: savedCard.cardExpiryYear ?? null,
+          methodType: savedPaymentMethod.methodType ?? null,
+          title: savedPaymentMethod.title ?? null,
+          cardBrand: savedPaymentMethod.cardBrand ?? null,
+          cardLast4: savedPaymentMethod.cardLast4 ?? null,
+          cardExpiryMonth: savedPaymentMethod.cardExpiryMonth ?? null,
+          cardExpiryYear: savedPaymentMethod.cardExpiryYear ?? null,
           updatedAt: now,
         },
       });

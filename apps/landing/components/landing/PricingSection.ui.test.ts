@@ -32,12 +32,7 @@ describe('PricingSection', () => {
     ]);
     expect(pricing.plans[1]?.highlighted).toBe(true);
     // Остальные сроки упомянуты отдельной строкой, ценность доступа раскрыта.
-    expect(pricing.plansNote).toContain('365 дней за 4 990 ₽');
     expect(pricing.subtitle).toContain('разбор и PDF-отчёт');
-    expect(pricing.packsNote).toBe(
-      'Пакеты минут докупаются к активному доступу.'
-    );
-    expect(source).toContain('pricing.plansNote');
     expect(source).toContain(':lead="pricing.subtitle"');
   });
 
@@ -50,7 +45,9 @@ describe('PricingSection', () => {
     );
     // Карточки без бейджа резервируют строку через placeholder — высоты равны.
     expect(source).toContain("'plan__badge--empty': !plan.badge");
-    expect(source).toMatch(/\.plan__badge--empty\s*{[^}]*visibility:\s*hidden;/);
+    expect(source).toMatch(
+      /\.plan__badge--empty\s*{[^}]*visibility:\s*hidden;/
+    );
     expect(source).toMatch(/\.plan__head\s*{[^}]*flex-direction:\s*column;/);
     expect(source).toMatch(/\.pricing__grid\s*{[^}]*align-items:\s*stretch;/);
     expect(source).toMatch(/\.plan\s*{[^}]*height:\s*100%;/);

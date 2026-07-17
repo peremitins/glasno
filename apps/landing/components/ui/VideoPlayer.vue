@@ -1,5 +1,5 @@
 <script setup lang="ts">
-  import { onBeforeUnmount, onMounted, ref } from 'vue';
+  import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
   import { SpeakerLoudIcon, SpeakerOffIcon } from '@radix-icons/vue';
 
   const props = withDefaults(
@@ -31,9 +31,22 @@
   const videoEl = ref<HTMLVideoElement | null>(null);
   const started = ref(false);
   const muted = ref(true);
+  // 'none' до приближения к секции — не тратим трафик на видео, до которых
+  // пользователь может не долистать. 'auto' запускает буферизацию заранее,
+  // чтобы к моменту реального появления в кадре видео уже было готово играть.
+  const preload = ref<'none' | 'auto'>('none');
 
   const hasVideo = Boolean(props.src);
-  let observer: IntersectionObserver | null = null;
+  let playObserver: IntersectionObserver | null = null;
+  let preloadObserver: IntersectionObserver | null = null;
+
+  function startPreload() {
+    if (preload.value === 'auto') return;
+    preload.value = 'auto';
+    // Смена атрибута preload на уже отрендеренном <video> не подхватывается
+    // сама по себе — явно перезапускаем выбор ресурса через load().
+    void nextTick(() => videoEl.value?.load());
+  }
 
   async function playWhenVisible() {
     const video = videoEl.value;
@@ -64,9 +77,24 @@
       return;
     }
 
-    observer = new IntersectionObserver(
+    // Ранний триггер: начинаем буферизацию задолго до появления в кадре
+    // (запас на случай медленного мобильного интернета).
+    preloadObserver = new IntersectionObserver(
       ([entry]) => {
         if (entry?.isIntersecting) {
+          startPreload();
+          preloadObserver?.disconnect();
+          preloadObserver = null;
+        }
+      },
+      { rootMargin: '1500px 0px' }
+    );
+    preloadObserver.observe(stageEl.value);
+
+    playObserver = new IntersectionObserver(
+      ([entry]) => {
+        if (entry?.isIntersecting) {
+          startPreload();
           void playWhenVisible();
         } else {
           pauseWhenHidden();
@@ -74,11 +102,12 @@
       },
       { threshold: 0.35 }
     );
-    observer.observe(stageEl.value);
+    playObserver.observe(stageEl.value);
   });
 
   onBeforeUnmount(() => {
-    observer?.disconnect();
+    preloadObserver?.disconnect();
+    playObserver?.disconnect();
     pauseWhenHidden();
   });
 </script>
@@ -100,7 +129,7 @@
         :muted="muted"
         loop
         playsinline
-        preload="none"
+        :preload="preload"
       >
         <source :src="src">
       </video>

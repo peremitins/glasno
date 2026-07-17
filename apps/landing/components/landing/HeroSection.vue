@@ -38,6 +38,7 @@
       gsap
         .timeline({ defaults: { ease: 'power3.out' } })
         .from('.hero__eyebrow', { opacity: 0, y: 18, duration: 0.6 }, 0.1)
+        .from('.hero__audience', { opacity: 0, y: 18, duration: 0.6 }, 0.18)
         .from('.hero__lead', { opacity: 0, y: 20, duration: 0.7 }, 0.35)
         .from(
           '.hero__actions > *, .hero__note',
@@ -84,6 +85,8 @@
         <span class="hero__eyebrow-dot" aria-hidden="true" />
         {{ hero.eyebrow }}
       </p>
+
+      <p class="hero__audience">{{ hero.audienceBadge }}</p>
 
       <RevealHeading :text="hero.title" tag="h1" class="hero__title" />
 
@@ -182,7 +185,7 @@
     background: oklch(1 0 0 / 0.03);
     font-size: var(--l-fs-sm);
     color: var(--l-text-soft);
-    margin-bottom: 28px;
+    margin-bottom: 10px;
   }
   .hero__eyebrow-dot {
     width: 7px;
@@ -190,6 +193,17 @@
     border-radius: 50%;
     background: var(--l-warm);
     box-shadow: 0 0 10px 1px oklch(0.77 0.155 58 / 0.7);
+  }
+
+  .hero__audience {
+    display: inline-flex;
+    align-items: center;
+    padding: 5px 12px;
+    border-radius: var(--l-r-pill);
+    border: 1px solid var(--l-line);
+    font-size: var(--l-fs-label);
+    color: var(--l-text-mut);
+    margin-bottom: 28px;
   }
 
   .hero__title {
