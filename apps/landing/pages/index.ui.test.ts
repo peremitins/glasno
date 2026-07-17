@@ -15,6 +15,37 @@ describe('landing page structure', () => {
   });
 });
 
+describe('landing head order', () => {
+  // Превью-бот Telegram читает только начало документа. Nuxt инлайнит ~30 КБ
+  // стилей, и без явного приоритета og-теги уезжают за 33-й килобайт — бот их
+  // не видит, и ссылка репостится без карточки. Поломка беззвучная: сайт
+  // работает, тесты зелёные, а превью просто нет.
+  it('поднимает SEO-теги выше инлайн-стилей отрицательным tagPriority', () => {
+    expect(source).toMatch(/tagPriority:\s*-\d+/);
+  });
+
+  const build = 'apps/landing/.output/public/index.html';
+
+  it.skipIf(!existsSync(build))(
+    'в собранном HTML og:image попадает в первые 8 КБ, а charset остаётся в первых 1024',
+    () => {
+      const html = readFileSync(build, 'utf8');
+
+      const og = html.indexOf('og:image');
+      expect(og, 'og:image не найден в сборке').toBeGreaterThan(-1);
+      expect(og, 'og:image за пределами того, что читает Telegram').toBeLessThan(
+        8192
+      );
+
+      // Обратная сторона: слишком агрессивный приоритет выбивает <meta charset>
+      // за 1024 байта, после которых браузер не обязан его искать.
+      const charset = html.indexOf('charset');
+      expect(charset, 'charset не найден').toBeGreaterThan(-1);
+      expect(charset, 'charset вытеснен за 1024 байта').toBeLessThan(1024);
+    }
+  );
+});
+
 describe('landing og image', () => {
   // og:image, указывающий в никуда, — молчаливый баг: ссылка репостится без
   // превью, а в самом лендинге ничего не ломается. Ровно так на проде и жил
@@ -27,9 +58,19 @@ describe('landing og image', () => {
     expect(existsSync(path), `${path} не найден`).toBe(true);
   });
 
-  it('имеет канонический размер 1200×630', async () => {
+  it('объявляет фактический размер изображения', async () => {
     const { width, height } = await sharp(path).metadata();
-    expect({ width, height }).toEqual({ width: 1200, height: 630 });
+    const declaredWidth = Number(
+      source.match(/'og:image:width', content: '(\d+)'/)?.[1]
+    );
+    const declaredHeight = Number(
+      source.match(/'og:image:height', content: '(\d+)'/)?.[1]
+    );
+
+    expect({ width, height }).toEqual({
+      width: declaredWidth,
+      height: declaredHeight,
+    });
   });
 
   it('весит меньше 300 КБ — иначе WhatsApp не покажет превью', () => {
