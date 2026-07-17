@@ -44,12 +44,6 @@ export interface PricingPlan {
   highlighted?: boolean;
 }
 
-export interface MinutePack {
-  label: string;
-  price: string;
-  badge?: string;
-}
-
 export interface Faq {
   q: string;
   a: string;
@@ -65,6 +59,7 @@ export function useLandingContent() {
 
   const hero = {
     eyebrow: 'Тренажёр собеседований',
+    audienceBadge: 'Для кандидатов и работодателей',
     title: 'Проговорите ответы до настоящего собеседования.',
     lead: 'Добавьте вакансию, пройдите интервью голосом и получите разбор: что в ответах уже работает и что стоит доработать до встречи с работодателем.',
     primaryCta: 'Попробовать бесплатно',
@@ -322,15 +317,6 @@ export function useLandingContent() {
         cta: 'Выбрать',
       },
     ] as PricingPlan[],
-    plansNote:
-      'Есть также 15 дней за 899 ₽, 180 дней за 3 490 ₽ и 365 дней за 4 990 ₽. Все сроки доступны в приложении.',
-    packsLabel: 'Дополнительные минуты голоса',
-    packsNote: 'Пакеты минут докупаются к активному доступу.',
-    packs: [
-      { label: '+30 минут', price: '490 ₽' },
-      { label: '+60 минут', price: '890 ₽', badge: 'Популярный' },
-      { label: '+120 минут', price: '1590 ₽', badge: 'Выгодно' },
-    ] as MinutePack[],
   };
 
   const faq: Faq[] = [

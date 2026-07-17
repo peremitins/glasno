@@ -18,17 +18,17 @@
     )
   );
   const canonicalUrl = computed(() => `${siteUrl.value}/`);
-  const ogImage = computed(() => `${siteUrl.value}/og-cover.png`);
+  // Карточка ссылки во всех мессенджерах и соцсетях: файл лежит в
+  // public/og-cover.jpg, ровно 1200×630. JPEG, а не PNG, намеренно — тот же
+  // кадр в PNG весит ~576 КБ, а WhatsApp не рисует превью тяжелее ~300 КБ.
+  // Меняете картинку — держите те же размер и вес, иначе превью тихо отвалится
+  // на части платформ.
+  const ogImage = computed(() => `${siteUrl.value}/og-cover.jpg`);
 
+  // Длина под сниппет: description укладывается в ~130 символов, чтобы Яндекс
+  // и Google показывали его целиком, а не обрезали на середине фразы.
   const description =
-    'Проговорите ответы до собеседования: интервью по вашей вакансии, подсказки во время ответа и разбор, который поможет подготовиться к встрече с работодателем.';
-
-  const yandexVerification = String(
-    runtimeConfig.public.yandexVerification || ''
-  );
-  const googleVerification = String(
-    runtimeConfig.public.googleSiteVerification || ''
-  );
+    'Репетиция собеседования голосом: вопросы по вашей вакансии, подсказки во время ответа и подробный разбор. Первое интервью бесплатно.';
 
   const priceValue = (raw: string) =>
     Number(String(raw).replace(/[^\d]/g, '')) || 0;
@@ -62,7 +62,9 @@
       offers: {
         '@type': 'AggregateOffer',
         priceCurrency: 'RUB',
-        lowPrice: 0,
+        // Границы берём из тех же тарифов, что видит пользователь: разметка,
+        // обещающая цену ниже реальной, — повод для санкций за rich-сниппет.
+        lowPrice: Math.min(...pricing.plans.map((p) => priceValue(p.price))),
         highPrice: Math.max(...pricing.plans.map((p) => priceValue(p.price))),
         offerCount: pricing.plans.length,
       },
@@ -79,7 +81,9 @@
   ]);
 
   useHead(() => ({
-    title: 'Гласно: тренажёр собеседований голосом',
+    // Запрос впереди, бренд в конце: «Гласно» пока не ищут по имени, а
+    // «тренажёр собеседований» — ищут. ~58 символов: влезает в выдачу целиком.
+    title: 'Тренажёр собеседований: репетиция интервью голосом — Гласно',
     link: [{ rel: 'canonical', href: canonicalUrl.value }],
     meta: [
       { name: 'description', content: description },
@@ -89,13 +93,12 @@
           'index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1',
       },
       { name: 'format-detection', content: 'telephone=no' },
-      ...(yandexVerification
-        ? [{ name: 'yandex-verification', content: yandexVerification }]
-        : []),
-      ...(googleVerification
-        ? [{ name: 'google-site-verification', content: googleVerification }]
-        : []),
-      { property: 'og:title', content: 'Гласно: репетиция собеседования голосом' },
+      // Права на сайт подтверждены вне разметки: Яндекс — файлом
+      // /yandex_3919a99c8052b4c2.html в public (удалять нельзя, проверяется
+      // повторно), Google — DNS-записью домена. Мета-теги не нужны.
+      // В ленте и мессенджере карточку читают глазами, а не парсят по ключам,
+      // поэтому здесь бренд впереди и формулировка живее, чем в <title>.
+      { property: 'og:title', content: 'Гласно — репетиция собеседования голосом' },
       { property: 'og:description', content: description },
       { property: 'og:type', content: 'website' },
       { property: 'og:url', content: canonicalUrl.value },
@@ -104,13 +107,13 @@
       { property: 'og:image', content: ogImage.value },
       { property: 'og:image:width', content: '1200' },
       { property: 'og:image:height', content: '630' },
-      { property: 'og:image:type', content: 'image/png' },
+      { property: 'og:image:type', content: 'image/jpeg' },
       {
         property: 'og:image:alt',
         content: 'Гласно: тренажёр собеседований голосом',
       },
       { name: 'twitter:card', content: 'summary_large_image' },
-      { name: 'twitter:title', content: 'Гласно: тренажёр собеседований' },
+      { name: 'twitter:title', content: 'Гласно — репетиция собеседования голосом' },
       { name: 'twitter:description', content: description },
       { name: 'twitter:image', content: ogImage.value },
     ],
@@ -137,6 +140,7 @@
       <FinalCta />
     </main>
     <TheFooter />
-    <CookieConsentBanner />
+    <!-- Cookie-баннер временно отключён: сейчас ни на что не влияет технически (аналитика не гейтится согласием), решили не показывать до доработки. См. обсуждение 2026-07-17. -->
+    <!-- <CookieConsentBanner /> -->
   </div>
 </template>
