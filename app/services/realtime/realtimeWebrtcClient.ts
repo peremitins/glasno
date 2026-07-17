@@ -8,6 +8,7 @@ type RealtimeVoiceWindow = Window &
 const INPUT_ACTIVITY_VOLUME_THRESHOLD = 4;
 const INPUT_ACTIVITY_CHECK_INTERVAL_MS = 750;
 const INPUT_ACTIVITY_THROTTLE_MS = 1_500;
+const INPUT_KEEPALIVE_FALLBACK_INTERVAL_MS = 15_000;
 const ICE_GATHERING_TIMEOUT_MS = 3_000;
 
 export interface RealtimeWebrtcClient {
@@ -231,6 +232,20 @@ export async function startRealtimeWebrtcClient(
 
   function startInputActivityMonitor() {
     if (!options.onKeepAlive || typeof window === 'undefined') return;
+
+    // iOS (любой браузер — WebKit): параллельный AudioContext с анализатором
+    // микрофона во время WebRTC-звонка даёт треск и прерывания вывода
+    // (WebKit resampling: bugs.webkit.org 154538/218762/241680). Там keep-alive
+    // шлём по обычному таймеру, вообще без Web Audio.
+    if (!shouldUseRealtimeInputActivityAnalyser()) {
+      stopInputActivityMonitor();
+      inputActivityInterval = window.setInterval(() => {
+        if (stopped) return;
+        options.onKeepAlive?.();
+      }, INPUT_KEEPALIVE_FALLBACK_INTERVAL_MS);
+      return;
+    }
+
     const AudioContextCtor =
       window.AudioContext ||
       (window as RealtimeVoiceWindow).webkitAudioContext ||
@@ -298,6 +313,25 @@ export async function startRealtimeWebrtcClient(
     }
     lastInputActivityAtMs = 0;
   }
+}
+
+/**
+ * Определяет, можно ли держать Web Audio-анализатор микрофона параллельно с
+ * WebRTC-воспроизведением. На iOS/iPadOS (все браузеры там — WebKit) лишний
+ * запущенный AudioContext во время звонка вызывает артефакты вывода: треск и
+ * периодические прерывания голоса ассистента. iPadOS маскируется под macOS,
+ * поэтому дополнительно смотрим на maxTouchPoints.
+ */
+export function shouldUseRealtimeInputActivityAnalyser(
+  userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : '',
+  maxTouchPoints = typeof navigator !== 'undefined'
+    ? navigator.maxTouchPoints ?? 0
+    : 0
+): boolean {
+  const isIos =
+    /iP(hone|ad|od)/.test(userAgent) ||
+    (/Macintosh/.test(userAgent) && maxTouchPoints > 1);
+  return !isIos;
 }
 
 /**

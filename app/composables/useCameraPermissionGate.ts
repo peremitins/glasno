@@ -1,9 +1,31 @@
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
+import {
+  startPermissionRegrantWatch,
+  type PermissionRegrantWatchHandle,
+} from '@/app/utils/permissionRegrantWatch';
 
 export type CameraPermissionState = 'granted' | 'denied' | 'prompt' | null;
 
 const showCameraDeniedModal = ref(false);
 const WEB_CAMERA_DENIED_STORAGE_KEY = 'glasno.camera.web.denied';
+
+// Пока открыта модалка с инструкцией, следим за состоянием разрешения: как
+// только пользователь включил камеру в настройках и вернулся — закрываем
+// модалку сами, чтобы её оверлей не съедал первый клик по кнопке камеры.
+let cameraRegrantWatch: PermissionRegrantWatchHandle | null = null;
+watch(showCameraDeniedModal, (open) => {
+  if (typeof window === 'undefined') return;
+  cameraRegrantWatch?.stop();
+  cameraRegrantWatch = null;
+  if (!open) return;
+  cameraRegrantWatch = startPermissionRegrantWatch({
+    permissionName: 'camera',
+    onRegrant: () => {
+      setWebDeniedFlag(false);
+      showCameraDeniedModal.value = false;
+    },
+  });
+});
 
 function normalizePermissionState(value: unknown): CameraPermissionState {
   return value === 'granted' || value === 'denied' || value === 'prompt'
