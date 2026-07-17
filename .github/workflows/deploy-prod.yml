@@ -142,7 +142,15 @@ jobs:
           RELEASE_ID=${{ github.run_id }}-${{ github.run_attempt }}
           ssh -i ~/.ssh/landing_deploy_key -o StrictHostKeyChecking=no \
             ${{ secrets.PROD_SSH_USER }}@${{ secrets.PROD_SSH_HOST }} "mkdir -p /var/www/glasno-landing/releases /var/www/glasno-landing/webvisor-assets/_nuxt; if [ -d /var/www/glasno-landing/current/_nuxt ]; then cp -an /var/www/glasno-landing/current/_nuxt/. /var/www/glasno-landing/webvisor-assets/_nuxt/; fi"
-          rsync -avz -e "ssh -i ~/.ssh/landing_deploy_key -o StrictHostKeyChecking=no" \
+          # --inplace обязателен: в compose этот конфиг примонтирован в контейнер
+          # как ФАЙЛ (./landing/nginx.conf:/etc/nginx/conf.d/default.conf), а
+          # такой bind-mount привязан к inode. Обычный rsync пишет во временный
+          # файл и переименовывает его, то есть создаёт новый inode — контейнер
+          # остаётся на старом, и `nginx -s reload` ниже молча перечитывает
+          # прежний конфиг. Правки конфига при этом не доезжают до прода, хотя
+          # деплой зелёный. Со статикой этого не происходит: она смонтирована
+          # директорией.
+          rsync -avz --inplace -e "ssh -i ~/.ssh/landing_deploy_key -o StrictHostKeyChecking=no" \
             deploy/landing/nginx.conf \
             ${{ secrets.PROD_SSH_USER }}@${{ secrets.PROD_SSH_HOST }}:/opt/glasno/prod/landing/nginx.conf
           rsync -avz --delete -e "ssh -i ~/.ssh/landing_deploy_key -o StrictHostKeyChecking=no" \
