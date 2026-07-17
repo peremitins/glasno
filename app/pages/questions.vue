@@ -28,6 +28,8 @@
     QuestionPreferenceStatus,
   } from '@/shared/dto';
 
+  definePageMeta({ middleware: 'admin' });
+
   const auth = useAuthStore();
   const api = useAPI();
   const isAdmin = computed(() => auth.user?.role === 'admin');
