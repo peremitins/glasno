@@ -76,4 +76,38 @@ describe('learning term manual selection helpers', () => {
       })
     ).toEqual({ left: 8, top: 33 });
   });
+
+  it('places controls below the selection when placement is below (mobile)', () => {
+    const anchorRect = {
+      left: 40,
+      top: 100,
+      right: 120,
+      bottom: 120,
+      width: 80,
+      height: 20,
+    };
+
+    expect(
+      clampLearningTermFloatingPosition({
+        anchorRect,
+        floatingSize: { width: 140, height: 36 },
+        viewport: { width: 400, height: 600 },
+        offset: 20,
+        margin: 8,
+        placement: 'below',
+      })
+    ).toEqual({ left: 10, top: 140 });
+
+    // Если снизу не помещается — поднимаем над выделением.
+    expect(
+      clampLearningTermFloatingPosition({
+        anchorRect,
+        floatingSize: { width: 140, height: 36 },
+        viewport: { width: 400, height: 150 },
+        offset: 20,
+        margin: 8,
+        placement: 'below',
+      })
+    ).toEqual({ left: 10, top: 44 });
+  });
 });
