@@ -1,7 +1,44 @@
 import { describe, expect, it } from 'vitest';
+import * as realtimeTransportModule from './realtimeTransport';
 import { shouldUseRealtimeWebsocketTransport } from './realtimeTransport';
 
 describe('realtimeTransport', () => {
+  it('keeps the browser audio session in play-and-record until realtime stops', () => {
+    const activateAudioSession = (
+      realtimeTransportModule as typeof realtimeTransportModule & {
+        activateRealtimeAudioSession?: (target: unknown) => () => void;
+      }
+    ).activateRealtimeAudioSession;
+    const audioSession = { type: 'auto' };
+
+    expect(activateAudioSession).toBeTypeOf('function');
+    if (!activateAudioSession) return;
+
+    const restore = activateAudioSession({ audioSession });
+    expect(audioSession.type).toBe('play-and-record');
+
+    restore();
+    expect(audioSession.type).toBe('auto');
+  });
+
+  it('does not overwrite an audio-session change made by another feature', () => {
+    const activateAudioSession = (
+      realtimeTransportModule as typeof realtimeTransportModule & {
+        activateRealtimeAudioSession?: (target: unknown) => () => void;
+      }
+    ).activateRealtimeAudioSession;
+    const audioSession = { type: 'playback' };
+
+    expect(activateAudioSession).toBeTypeOf('function');
+    if (!activateAudioSession) return;
+
+    const restore = activateAudioSession({ audioSession });
+    audioSession.type = 'transient';
+    restore();
+
+    expect(audioSession.type).toBe('transient');
+  });
+
   it('uses WebSocket transport in Firefox to avoid Realtime WebRTC media drops', () => {
     expect(
       shouldUseRealtimeWebsocketTransport(
