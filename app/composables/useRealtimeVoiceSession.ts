@@ -6,6 +6,7 @@ import type {
 } from '@/shared/dto';
 import { CSRF_COOKIE_NAME } from '@/shared/constants';
 import {
+  activateRealtimeAudioSession,
   shouldUseRealtimeWebsocketTransport,
   startRealtimeVoiceClient,
   type RealtimeVoiceClient,
@@ -30,6 +31,7 @@ export function useRealtimeVoiceSession(options: {
   const micPermissionGate = useMicPermissionGate();
   const audioPermissionGate = useAudioPermissionGate();
   const realtimeVoiceUi = useRealtimeVoiceUiStore();
+  const realtimeStartGuard = createRealtimeStartGuard();
   const client = ref<RealtimeVoiceClient | null>(null);
   const realtimeSession = ref<RealtimeSessionResponse | null>(null);
   const assistantMicrophoneMuteResponseIds = new Set<string>();
@@ -38,6 +40,8 @@ export function useRealtimeVoiceSession(options: {
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
   let hardLimitTimer: ReturnType<typeof setTimeout> | null = null;
   let lastActivitySentAt = 0;
+  let releaseRealtimeAudioSession: (() => void) | null = null;
+  let interruptedStartReason: RealtimeSessionEndReason = 'user_stop';
   // Пользователь сейчас говорит: сегмент речи открыт (пришёл
   // input_audio_buffer.speech_started, но ещё не speech_stopped). Пока он
   // открыт, сессию нельзя закрывать по тишине — сколько бы человек ни говорил.
@@ -55,9 +59,14 @@ export function useRealtimeVoiceSession(options: {
 
   async function start() {
     if (client.value || isBusy.value) return;
+    const startToken = realtimeStartGuard.begin();
     const priorPermissionState = await micPermissionGate.getPermissionState();
+    if (!realtimeStartGuard.isCurrent(startToken)) return;
     if (!(await micPermissionGate.ensureCanStartCapture())) return;
+    if (!realtimeStartGuard.isCurrent(startToken)) return;
 
+    resetRealtimeAudioSession();
+    releaseRealtimeAudioSession = activateRealtimeAudioSession();
     realtimeVoiceUi.setStatus('connecting');
     try {
       const transport = shouldUseRealtimeWebsocketTransport()
@@ -70,9 +79,13 @@ export function useRealtimeVoiceSession(options: {
           body: { sessionId: options.sessionId, transport },
         }
       );
+      if (!realtimeStartGuard.isCurrent(startToken)) {
+        sendEndServerSessionBeacon(session, interruptedStartReason);
+        return;
+      }
       realtimeSession.value = session;
       scheduleSessionTimers(session);
-      client.value = await startRealtimeVoiceClient(session, {
+      const nextClient = await startRealtimeVoiceClient(session, {
         async exchangeSdp(offerSdp) {
           const result = await api<RealtimeSessionSdpResponse>(
             '/api/realtime/session/sdp',
@@ -113,11 +126,18 @@ export function useRealtimeVoiceSession(options: {
           });
         },
       });
+      if (!realtimeStartGuard.isCurrent(startToken)) {
+        nextClient.stop();
+        return;
+      }
+      client.value = nextClient;
       realtimeVoiceUi.setStatus('connected');
     } catch (error) {
+      if (!realtimeStartGuard.isCurrent(startToken)) return;
       const handled = await micPermissionGate.handleStartFailure(error, {
         priorPermissionState,
       });
+      if (!realtimeStartGuard.isCurrent(startToken)) return;
       realtimeVoiceUi.setError(
         handled
           ? 'Микрофон недоступен. Проверьте разрешение в браузере.'
@@ -125,6 +145,7 @@ export function useRealtimeVoiceSession(options: {
       );
       client.value?.stop();
       client.value = null;
+      resetRealtimeAudioSession();
       resetAssistantMicrophoneMute();
       clearSessionTimers();
       await endServerSession('network_error').catch(() => {});
@@ -132,9 +153,11 @@ export function useRealtimeVoiceSession(options: {
   }
 
   async function stop(reason: RealtimeSessionEndReason = 'user_stop') {
+    invalidateRealtimeStart(reason);
     if (
       !client.value &&
       !realtimeSession.value &&
+      !releaseRealtimeAudioSession &&
       realtimeVoiceUi.status === 'idle'
     ) {
       return;
@@ -143,6 +166,10 @@ export function useRealtimeVoiceSession(options: {
     try {
       resetAssistantMicrophoneMute();
       client.value?.stop();
+      // После остановки mic tracks сразу возвращаем Safari audio session.
+      // Сетевой запрос завершения может зависнуть и не должен держать iOS в
+      // play-and-record дольше живого разговора.
+      resetRealtimeAudioSession();
       clearSessionTimers();
       await endServerSession(reason).catch((error) => {
         console.warn(
@@ -152,6 +179,7 @@ export function useRealtimeVoiceSession(options: {
       });
     } finally {
       client.value = null;
+      resetRealtimeAudioSession();
       realtimeVoiceUi.reset();
     }
   }
@@ -387,8 +415,16 @@ export function useRealtimeVoiceSession(options: {
 
   function endServerSessionWithBeacon(reason: RealtimeSessionEndReason) {
     const session = realtimeSession.value;
-    if (!session || typeof window === 'undefined') return;
+    if (!session) return;
     realtimeSession.value = null;
+    sendEndServerSessionBeacon(session, reason);
+  }
+
+  function sendEndServerSessionBeacon(
+    session: RealtimeSessionResponse,
+    reason: RealtimeSessionEndReason
+  ) {
+    if (typeof window === 'undefined') return;
     const body = JSON.stringify({
       realtimeSessionId: session.realtimeSessionId,
       reason,
@@ -406,10 +442,18 @@ export function useRealtimeVoiceSession(options: {
   }
 
   function stopBeforePageLeave(reason: RealtimeSessionEndReason) {
-    if (!client.value && !realtimeSession.value) return;
+    invalidateRealtimeStart(reason);
+    if (
+      !client.value &&
+      !realtimeSession.value &&
+      !releaseRealtimeAudioSession
+    ) {
+      return;
+    }
     resetAssistantMicrophoneMute();
     client.value?.stop();
     client.value = null;
+    resetRealtimeAudioSession();
     clearSessionTimers();
     endServerSessionWithBeacon(reason);
     realtimeVoiceUi.reset();
@@ -417,6 +461,16 @@ export function useRealtimeVoiceSession(options: {
 
   function handlePageHide() {
     stopBeforePageLeave('page_leave');
+  }
+
+  function resetRealtimeAudioSession() {
+    releaseRealtimeAudioSession?.();
+    releaseRealtimeAudioSession = null;
+  }
+
+  function invalidateRealtimeStart(reason: RealtimeSessionEndReason) {
+    interruptedStartReason = reason;
+    realtimeStartGuard.invalidate();
   }
 
   onMounted(() => {
@@ -444,6 +498,23 @@ export function useRealtimeVoiceSession(options: {
     toggle,
     sendEvent,
     cancelActiveResponses,
+  };
+}
+
+export function createRealtimeStartGuard() {
+  let generation = 0;
+
+  return {
+    begin(): number {
+      generation += 1;
+      return generation;
+    },
+    invalidate(): void {
+      generation += 1;
+    },
+    isCurrent(token: number): boolean {
+      return token === generation;
+    },
   };
 }
 

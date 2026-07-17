@@ -1,8 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
+import * as realtimeWebrtcClientModule from './realtimeWebrtcClient';
 import {
   buildRealtimeAudioConstraints,
   computeRealtimeInputVolume,
+  createRealtimePlaybackAudioRoute,
   shouldNotifyRealtimeInputActivity,
   waitForRealtimeIceGatheringComplete,
 } from './realtimeWebrtcClient';
@@ -10,6 +12,132 @@ import {
 const source = readFileSync('app/services/realtime/realtimeWebrtcClient.ts', 'utf8');
 
 describe('realtimeWebrtcClient helpers', () => {
+  it('routes Android remote audio through a playback Web Audio context', () => {
+    const shouldUsePlaybackRoute = (
+      realtimeWebrtcClientModule as typeof realtimeWebrtcClientModule & {
+        shouldUseRealtimePlaybackAudioRoute?: (userAgent: string) => boolean;
+      }
+    ).shouldUseRealtimePlaybackAudioRoute;
+
+    expect(shouldUsePlaybackRoute).toBeTypeOf('function');
+    if (!shouldUsePlaybackRoute) return;
+
+    expect(
+      shouldUsePlaybackRoute(
+        'Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 Chrome/126.0 Mobile Safari/537.36'
+      )
+    ).toBe(true);
+    expect(
+      shouldUsePlaybackRoute(
+        'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 Version/17.5 Mobile/15E148 Safari/604.1'
+      )
+    ).toBe(false);
+
+  });
+
+  it('keeps the WebRTC element as a muted kick and restores it on teardown', async () => {
+    const stateChange = { listener: null as (() => void) | null };
+    const destination = {} as AudioDestinationNode;
+    const sourceNode = {
+      connect: vi.fn(),
+      disconnect: vi.fn(),
+    };
+    const context: {
+      state: AudioContextState;
+      destination: AudioDestinationNode;
+      createMediaStreamSource: ReturnType<typeof vi.fn>;
+      resume: ReturnType<typeof vi.fn>;
+      close: ReturnType<typeof vi.fn>;
+      addEventListener: ReturnType<typeof vi.fn>;
+      removeEventListener: ReturnType<typeof vi.fn>;
+    } = {
+      state: 'suspended',
+      destination,
+      createMediaStreamSource: vi.fn(() => sourceNode),
+      resume: vi.fn(async () => {
+        context.state = 'running';
+      }),
+      close: vi.fn(async () => {}),
+      addEventListener: vi.fn((_type: string, listener: () => void) => {
+        stateChange.listener = listener;
+      }),
+      removeEventListener: vi.fn(),
+    };
+    const AudioContextCtor = vi.fn(function createAudioContext() {
+      return context;
+    });
+    const remoteAudio = { muted: false };
+    const stream = {} as MediaStream;
+
+    const route = createRealtimePlaybackAudioRoute({
+      stream,
+      remoteAudio: remoteAudio as HTMLAudioElement,
+      AudioContextCtor: AudioContextCtor as unknown as typeof AudioContext,
+    });
+    expect(route).not.toBeNull();
+    expect(await route?.ready).toBe(true);
+
+    expect(AudioContextCtor).toHaveBeenCalledWith({ latencyHint: 'playback' });
+    expect(context.createMediaStreamSource).toHaveBeenCalledWith(stream);
+    expect(sourceNode.connect).toHaveBeenCalledWith(destination);
+    expect(context.resume).toHaveBeenCalledOnce();
+    expect(remoteAudio.muted).toBe(true);
+
+    context.state = 'suspended';
+    stateChange.listener?.();
+    expect(remoteAudio.muted).toBe(false);
+
+    context.state = 'running';
+    stateChange.listener?.();
+    expect(remoteAudio.muted).toBe(true);
+
+    route?.stop();
+    expect(remoteAudio.muted).toBe(false);
+    expect(sourceNode.disconnect).toHaveBeenCalledOnce();
+    expect(context.close).toHaveBeenCalledOnce();
+    expect(context.removeEventListener).toHaveBeenCalledWith(
+      'statechange',
+      stateChange.listener
+    );
+  });
+
+  it('can tear down a playback route while AudioContext.resume is pending', async () => {
+    const pendingResume = { finish: null as (() => void) | null };
+    const sourceNode = { connect: vi.fn(), disconnect: vi.fn() };
+    const context = {
+      state: 'suspended' as AudioContextState,
+      destination: {} as AudioDestinationNode,
+      createMediaStreamSource: vi.fn(() => sourceNode),
+      resume: vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            pendingResume.finish = resolve;
+          })
+      ),
+      close: vi.fn(async () => {}),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    };
+    const AudioContextCtor = vi.fn(function createAudioContext() {
+      return context;
+    });
+    const remoteAudio = { muted: false };
+
+    const route = createRealtimePlaybackAudioRoute({
+      stream: {} as MediaStream,
+      remoteAudio: remoteAudio as HTMLAudioElement,
+      AudioContextCtor: AudioContextCtor as unknown as typeof AudioContext,
+    });
+    route?.stop();
+
+    expect(context.close).toHaveBeenCalledOnce();
+    expect(sourceNode.disconnect).toHaveBeenCalledOnce();
+    expect(remoteAudio.muted).toBe(false);
+
+    pendingResume.finish?.();
+    expect(await route?.ready).toBe(false);
+  });
+
   it('requests browser audio processing for realtime microphone capture', () => {
     expect(buildRealtimeAudioConstraints()).toMatchObject({
       audio: {
