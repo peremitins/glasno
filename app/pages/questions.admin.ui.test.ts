@@ -18,6 +18,11 @@ describe('question bank UI', () => {
     expect(layout).toContain("const isAdmin = computed(() => auth.user?.role === 'admin')");
     expect(layout).toContain('const nav = computed(() =>');
     expect(layout).toContain("item.key !== 'questionBank' || isAdmin.value");
+    expect(layout).toContain("'--bottom-nav-columns': String(mobileNav.length + 1)");
+    expect(layout).toContain(
+      'grid-template-columns: repeat(var(--bottom-nav-columns), minmax(0, 1fr))'
+    );
+    expect(layout).not.toContain('bottom-nav--admin');
     expect(catalogApi).toContain("requireRole(session?.role, 'admin')");
     expect(listApi).toContain("requireRole(event.context.session?.role, 'admin')");
     expect(itemApi).toContain("requireRole(event.context.session?.role, 'admin')");
