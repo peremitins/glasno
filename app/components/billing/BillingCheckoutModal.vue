@@ -21,6 +21,8 @@
     // показываем форму; как только приходят — переключаемся на виджет.
     confirmationToken?: string;
     returnUrl?: string;
+    // Заказ текущего чекаута — для репорта «окно оплаты не открылось».
+    orderId?: string;
   }>();
 
   const emit = defineEmits<{
@@ -36,12 +38,28 @@
   }>();
 
   const { t } = useI18n();
+  const api = useAPI();
   const emailInput = ref<HTMLInputElement | null>(null);
   const {
     state: widgetState,
     mount: mountWidget,
     destroy: destroyWidget,
   } = useYookassaWidget();
+
+  // Телеметрия: сбой открытия окна оплаты (обычно VPN) виден только в
+  // браузере — сообщаем на сервер для Telegram-алерта. Один раз на заказ,
+  // повторные клики «Повторить» не спамят.
+  const reportedIssueOrderId = ref('');
+  watch(widgetState, (state) => {
+    if (state !== 'failed' || !props.confirmationToken) return;
+    const orderId = props.orderId ?? '';
+    if (reportedIssueOrderId.value === orderId) return;
+    reportedIssueOrderId.value = orderId;
+    void api('/api/billing/checkout-issue', {
+      method: 'POST',
+      body: orderId ? { orderId } : {},
+    }).catch(() => {});
+  });
 
   const showWidget = computed(() => Boolean(props.confirmationToken));
 

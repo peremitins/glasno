@@ -303,11 +303,47 @@ export class BillingService {
       if (recipientEmail) {
         await this.deps.repository.cancelGiftOrder({ orderId: order.id });
       }
+      // E_UPSTREAM отдаётся клиенту как «обработанная» ошибка и не попадает
+      // в общий алерт unhandled-исключений — шлём платёжный алерт явно.
+      await this.notifyPaymentIssueTelegram({
+        stage: 'checkout_create_failed',
+        userId: params.userId,
+        orderId: order.id,
+        planId: plan.id,
+        message: err instanceof Error ? err.message : String(err),
+      });
       if (err && typeof err === 'object' && 'data' in err) {
         throw apiError('E_UPSTREAM', 'YooKassa отклонила создание платежа');
       }
       throw err;
     }
+  }
+
+  // Клиент сообщает, что окно оплаты не открылось (скрипт платёжного
+  // виджета не загрузился — типовая причина: VPN у пользователя). Сервер
+  // об этом сам не узнает: checkout завершился успешно, а сбой произошёл
+  // в браузере.
+  async reportCheckoutIssue(params: {
+    userId: string | null | undefined;
+    orderId?: string | null;
+  }): Promise<void> {
+    if (!params.userId) {
+      throw apiError('E_AUTH', 'Требуется вход в профиль');
+    }
+    const order = params.orderId
+      ? await this.deps.repository.findPaymentOrderById(params.orderId)
+      : null;
+    // Чужой заказ не раскрываем, но алерт всё равно шлём — сбой виджета
+    // случается и до создания заказа.
+    const ownOrder = order && order.userId === params.userId ? order : null;
+    await this.notifyPaymentIssueTelegram({
+      stage: 'widget_load_failed',
+      userId: params.userId,
+      orderId: ownOrder?.id ?? null,
+      planId: ownOrder?.planId ?? null,
+      message:
+        'Скрипт платёжного виджета не загрузился в браузере (вероятно, VPN)',
+    });
   }
 
   async handleYooKassaWebhook(payload: unknown): Promise<void> {
@@ -774,6 +810,13 @@ export class BillingService {
         accessId: claimed.id,
         err,
       });
+      await this.notifyPaymentIssueTelegram({
+        stage: 'auto_renewal_failed',
+        userId,
+        orderId: order.id,
+        planId: plan.id,
+        message: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 
@@ -915,6 +958,39 @@ export class BillingService {
             }
           : null,
     });
+  }
+
+  // Алерт о проблеме на платёжном пути. Никогда не бросает: сбой алерта не
+  // должен ломать (и тем более маскировать) исходную ошибку оплаты.
+  private async notifyPaymentIssueTelegram(params: {
+    stage: 'widget_load_failed' | 'checkout_create_failed' | 'auto_renewal_failed';
+    userId: string;
+    orderId?: string | null;
+    planId?: string | null;
+    message?: string | null;
+  }): Promise<void> {
+    if (!this.deps.telegramAlerts) return;
+    try {
+      const email = await this.deps.repository.findUserEmail(params.userId);
+      await this.deps.telegramAlerts.notifyPaymentIssue({
+        stage: params.stage,
+        user: {
+          id: params.userId,
+          email,
+          telegramId: null,
+          telegramUsername: null,
+          displayName: null,
+        },
+        orderId: params.orderId,
+        planId: params.planId,
+        message: params.message,
+      });
+    } catch (err) {
+      console.error('[billing] payment issue alert failed', {
+        stage: params.stage,
+        err,
+      });
+    }
   }
 
   private async notifyBillingPurchaseTelegram(

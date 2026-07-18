@@ -112,6 +112,16 @@ export const BillingCheckoutResponseDto = z.object({
   returnUrl: z.string().url(),
 });
 
+// Клиентский сигнал «окно оплаты не открылось» (скрипт виджета не загрузился
+// в браузере — типовая причина: VPN). Серверу иначе об этом не узнать.
+export const BillingCheckoutIssueRequestDto = z.object({
+  orderId: z.string().min(1).max(64).optional(),
+});
+
+export const BillingCheckoutIssueResponseDto = z.object({
+  ok: z.literal(true),
+});
+
 export const BillingPaymentStatusResponseDto = z.object({
   provider: z.literal('yookassa'),
   orderId: z.string().nullable(),

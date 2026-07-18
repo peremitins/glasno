@@ -2,10 +2,12 @@ import type { TelegramAlertsPort } from '@/server/interface/telegramAlerts';
 import { logger } from '@/server/utils/logger';
 import {
   formatCriticalErrorAlert,
+  formatPaymentIssueAlert,
   formatSubscriptionPurchasedAlert,
   formatUserDeletedAlert,
   formatUserRegisteredAlert,
   formatVoiceMinutesPurchasedAlert,
+  type PaymentIssueStage,
   type TelegramAlertUserInfo,
 } from './telegramAlerts.formatter';
 
@@ -38,6 +40,16 @@ export class TelegramAlertsService {
     amountRub: number;
   }): Promise<void> {
     await this.safeSend(formatVoiceMinutesPurchasedAlert(params));
+  }
+
+  async notifyPaymentIssue(params: {
+    stage: PaymentIssueStage;
+    user?: TelegramAlertUserInfo | null;
+    orderId?: string | null;
+    planId?: string | null;
+    message?: string | null;
+  }): Promise<void> {
+    await this.safeSend(formatPaymentIssueAlert(params));
   }
 
   async notifyCriticalError(params: {
