@@ -188,6 +188,7 @@ function createService(
   telegramAlerts?: {
     notifySubscriptionPurchased: ReturnType<typeof vi.fn>;
     notifyVoiceMinutesPurchased: ReturnType<typeof vi.fn>;
+    notifyPaymentIssue?: ReturnType<typeof vi.fn>;
   }
 ) {
   return new BillingService({
@@ -825,6 +826,72 @@ describe('BillingService checkout guards', () => {
       expect.objectContaining({
         returnUrl:
           'https://glasno.test/interview/sess-uuid-1?payment=return&orderId=order_1',
+      })
+    );
+  });
+
+  it('sends a payment issue alert when YooKassa rejects payment creation', async () => {
+    const repository = createRepository();
+    repository.createPaymentOrder.mockResolvedValue(
+      createOrder({ planId: 'realtime_pack_60', amountRub: 890 })
+    );
+    mockedCreateYooKassaPayment.mockRejectedValue({
+      data: { description: 'Internal error' },
+    });
+    const telegramAlerts = {
+      notifySubscriptionPurchased: vi.fn().mockResolvedValue(undefined),
+      notifyVoiceMinutesPurchased: vi.fn().mockResolvedValue(undefined),
+      notifyPaymentIssue: vi.fn().mockResolvedValue(undefined),
+    };
+    const service = createService(repository, telegramAlerts);
+
+    await expect(
+      service.createCheckout({ userId: 'user_1', planId: 'realtime_pack_60' })
+    ).rejects.toMatchObject({ data: { code: 'E_UPSTREAM' } });
+
+    expect(telegramAlerts.notifyPaymentIssue).toHaveBeenCalledTimes(1);
+    expect(telegramAlerts.notifyPaymentIssue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stage: 'checkout_create_failed',
+        orderId: 'order_1',
+        planId: 'realtime_pack_60',
+        user: expect.objectContaining({ id: 'user_1' }),
+      })
+    );
+  });
+
+  it('sends a widget failure alert reported by the client, hiding foreign orders', async () => {
+    const repository = createRepository();
+    repository.findPaymentOrderById.mockResolvedValue(
+      createOrder({ planId: 'realtime_pack_30', amountRub: 490 })
+    );
+    const telegramAlerts = {
+      notifySubscriptionPurchased: vi.fn().mockResolvedValue(undefined),
+      notifyVoiceMinutesPurchased: vi.fn().mockResolvedValue(undefined),
+      notifyPaymentIssue: vi.fn().mockResolvedValue(undefined),
+    };
+    const service = createService(repository, telegramAlerts);
+
+    await service.reportCheckoutIssue({ userId: 'user_1', orderId: 'order_1' });
+    expect(telegramAlerts.notifyPaymentIssue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stage: 'widget_load_failed',
+        orderId: 'order_1',
+        planId: 'realtime_pack_30',
+      })
+    );
+
+    // Чужой заказ: алерт уходит, но без деталей заказа.
+    await service.reportCheckoutIssue({
+      userId: 'user_2',
+      orderId: 'order_1',
+    });
+    expect(telegramAlerts.notifyPaymentIssue).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        stage: 'widget_load_failed',
+        orderId: null,
+        planId: null,
+        user: expect.objectContaining({ id: 'user_2' }),
       })
     );
   });

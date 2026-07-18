@@ -32,7 +32,7 @@ const messages = JSON.parse(
     minutePacksSubtitle: string;
     packsNeedPlan: string;
   };
-  paywall: { minutesDescription: string };
+  paywall: { minutesDescription: string; widgetError: string };
 };
 
 describe('pricing page loading state', () => {
@@ -195,6 +195,17 @@ describe('YooKassa widget presentation', () => {
     expect(paywallModalSource).toContain("t('paywall.widgetRetry')");
     expect(checkoutModalSource).not.toContain("onError: () => emit('back')");
     expect(checkoutModalSource).toContain("t('paywall.widgetRetry')");
+  });
+
+  it('reports widget load failures to the server for a Telegram alert', () => {
+    // Сервер сам не узнает о клиентском сбое (checkout завершился 200) —
+    // обе модалки шлют сигнал, по одному разу на заказ.
+    expect(paywallModalSource).toContain("'/api/billing/checkout-issue'");
+    expect(paywallModalSource).toContain('reportedIssueOrderId');
+    expect(checkoutModalSource).toContain("'/api/billing/checkout-issue'");
+    expect(checkoutModalSource).toContain('reportedIssueOrderId');
+    // Текст ошибки прямо называет типовую причину — VPN.
+    expect(messages.paywall.widgetError).toContain('VPN');
   });
 
   it('sends the interview return path so minute-pack payments come back to the session', () => {
