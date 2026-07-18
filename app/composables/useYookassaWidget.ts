@@ -57,6 +57,10 @@ declare global {
 // открытиях чекаута.
 let scriptPromise: Promise<YooKassaWidgetConstructor> | null = null;
 
+// Без таймаута зависший CDN YooKassa держит mount() в подвешенном состоянии
+// минуты (браузерный сетевой таймаут) — пользователь видит пустой экран.
+const SCRIPT_LOAD_TIMEOUT_MS = 10_000;
+
 function loadWidgetScript(): Promise<YooKassaWidgetConstructor> {
   if (window.YooMoneyCheckoutWidget) {
     return Promise.resolve(window.YooMoneyCheckoutWidget);
@@ -65,29 +69,48 @@ function loadWidgetScript(): Promise<YooKassaWidgetConstructor> {
 
   scriptPromise = new Promise<YooKassaWidgetConstructor>((resolve, reject) => {
     const script = document.createElement('script');
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+    // Сбрасываем промис и убираем тег, чтобы «Повторить» вставил свежий
+    // <script>, а не ждал уже зависший.
+    const fail = (message: string) => {
+      if (timeoutId) clearTimeout(timeoutId);
+      scriptPromise = null;
+      script.remove();
+      reject(new Error(message));
+    };
+
     script.src = WIDGET_SRC;
     script.async = true;
     script.onload = () => {
+      if (timeoutId) clearTimeout(timeoutId);
       if (window.YooMoneyCheckoutWidget) {
         resolve(window.YooMoneyCheckoutWidget);
       } else {
-        reject(new Error('YooMoneyCheckoutWidget недоступен после загрузки'));
+        fail('YooMoneyCheckoutWidget недоступен после загрузки');
       }
     };
     script.onerror = () => {
-      // Сбрасываем промис, чтобы следующая попытка перезагрузила скрипт.
-      scriptPromise = null;
-      reject(new Error('Не удалось загрузить виджет YooKassa'));
+      fail('Не удалось загрузить виджет YooKassa');
     };
+    timeoutId = setTimeout(() => {
+      fail('Виджет YooKassa не загрузился за отведённое время');
+    }, SCRIPT_LOAD_TIMEOUT_MS);
     document.head.appendChild(script);
   });
 
   return scriptPromise;
 }
 
+export type YookassaWidgetState = 'idle' | 'loading' | 'open' | 'failed';
+
 export function useYookassaWidget() {
-  const loading = ref(false);
-  const failed = ref(false);
+  // Конечный автомат вместо пары loading/failed: модалки-потребители
+  // показывают собственный оверлей (лоадер/ошибку/выбор тарифа), пока
+  // state !== 'open', и прячут его, только когда окно YooKassa реально
+  // открыто. Так UI и body scroll-lock не могут разъехаться с фактом
+  // видимости оплаты.
+  const state = ref<YookassaWidgetState>('idle');
   let instance: YooKassaWidgetInstance | null = null;
 
   async function mount(params: {
@@ -99,8 +122,7 @@ export function useYookassaWidget() {
     onError?: () => void;
   }): Promise<void> {
     destroy();
-    loading.value = true;
-    failed.value = false;
+    state.value = 'loading';
     try {
       const Widget = await loadWidgetScript();
       instance = new Widget({
@@ -111,7 +133,10 @@ export function useYookassaWidget() {
           colors: getYooKassaWidgetColors(),
         },
         error_callback: () => {
-          failed.value = true;
+          // Убираем полуживую модалку YooKassa, чтобы под нашим оверлеем
+          // с ошибкой не осталось её остатков.
+          destroy();
+          state.value = 'failed';
           params.onError?.();
         },
       });
@@ -121,6 +146,9 @@ export function useYookassaWidget() {
           params.onModalClose?.();
         });
         await instance.render();
+        // error_callback мог уничтожить инстанс, пока render() ждал —
+        // тогда состояние уже 'failed' и перетирать его нельзя.
+        if (instance) state.value = 'open';
         return;
       }
       // render() принимает строковый id контейнера (не HTMLElement) —
@@ -134,11 +162,10 @@ export function useYookassaWidget() {
           .slice(2)}`;
       }
       await instance.render(params.container.id);
+      if (instance) state.value = 'open';
     } catch {
-      failed.value = true;
+      state.value = 'failed';
       params.onError?.();
-    } finally {
-      loading.value = false;
     }
   }
 
@@ -147,7 +174,8 @@ export function useYookassaWidget() {
       instance.destroy();
       instance = null;
     }
+    state.value = 'idle';
   }
 
-  return { loading, failed, mount, destroy };
+  return { state, mount, destroy };
 }

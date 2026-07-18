@@ -302,7 +302,13 @@
     </p>
   </section>
 
-  <PaywallModal v-model:open="paywallOpen" :mode="paywallMode" />
+  <!-- После оплаты пакета минут возвращаем пользователя в это же интервью,
+       а не на /pricing. -->
+  <PaywallModal
+    v-model:open="paywallOpen"
+    :mode="paywallMode"
+    :return-path="`/interview/${sessionId}`"
+  />
 </template>
 
 <style scoped>

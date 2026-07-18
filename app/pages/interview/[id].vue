@@ -6,10 +6,12 @@
     onBeforeUpdate,
     onBeforeUnmount,
     onMounted,
+    provide,
     ref,
     watch,
   } from 'vue';
   import { useI18n } from 'vue-i18n';
+  import { toast } from 'vue-sonner';
   import { nanoid } from 'nanoid';
   import type {
     InterviewDialogueRole,
@@ -48,6 +50,7 @@
   import InterviewExplainSelectionOnboardingModal from '@/app/components/onboarding/InterviewExplainSelectionOnboardingModal.vue';
   import QuestionPreferenceDropdown from '@/app/components/interview/QuestionPreferenceDropdown.vue';
   import { useInterviewExplainSelectionOnboarding } from '@/app/composables/useInterviewExplainSelectionOnboarding';
+  import { FullscreenEscapeKey } from '@/app/composables/fullscreenEscape';
   import {
     RealtimeInterviewChatAdapter,
     REALTIME_QUESTION_ANNOUNCEMENT_KIND,
@@ -88,6 +91,7 @@
 
   const { t } = useI18n();
   const route = useRoute();
+  const router = useRouter();
   const api = useAPI();
   const auth = useAuthStore();
   const runtimeConfig = useRuntimeConfig();
@@ -104,6 +108,25 @@
     closeInterviewExplainSelectionOnboarding,
     completeInterviewExplainSelectionOnboarding,
   } = useInterviewExplainSelectionOnboarding();
+
+  // Возврат с оплаты YooKassa (?payment=return&orderId=...): пакет минут
+  // покупается из пейволла прямо в интервью, и виджет возвращает сюда же.
+  // billing.refresh() обновляет общий useState-кэш — панель realtime voice
+  // разблокируется без перезагрузки.
+  const billing = useBillingStatus();
+  const paymentReturn = usePaymentReturn({ refresh: () => billing.refresh() });
+
+  async function handlePaymentReturn() {
+    await paymentReturn.reconcile();
+    if (paymentReturn.message.value) {
+      toast(paymentReturn.message.value);
+    }
+    // Чистим query, чтобы обновление страницы не запускало сверку повторно.
+    const query = { ...route.query };
+    delete query.payment;
+    delete query.orderId;
+    void router.replace({ query });
+  }
 
   const answer = ref('');
   const errorMessage = ref('');
@@ -1366,6 +1389,14 @@
 
   // --- Режим видеозвонка: полный экран, камера, скрываемые панели ---
   const isFullscreen = ref(false);
+  // Модалки оплаты (PaywallModal) просят свернуть псевдо-fullscreen перед
+  // открытием окна YooKassa: его оверлей инжектится в body с неизвестным
+  // z-index и может оказаться под call--fs.
+  provide(FullscreenEscapeKey, {
+    exit: () => {
+      isFullscreen.value = false;
+    },
+  });
   const cameraEnabled = ref(false); // по умолчанию камера выключена, как в Zoom
   const cameraLive = ref(false);
   const chatOpen = ref(true); // боковой чат
@@ -1531,6 +1562,9 @@
   onMounted(() => {
     window.addEventListener('keydown', onKeydown);
     startReportGenerationOnce();
+    if (paymentReturn.returnVisible.value) {
+      void handlePaymentReturn();
+    }
     // При входе сразу показываем последние сообщения.
     void nextTick(() => scrollChatToBottom('auto'));
   });

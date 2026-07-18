@@ -47,15 +47,18 @@ describe('Yandex Metrika business goals', () => {
     expect(read('app/components/billing/PaywallModal.vue')).toContain(
       'YandexMetrikaGoal.checkoutCreated'
     );
-    expect(pricing).toContain('trackPaidMetrikaGoal');
     expect(read('shared/dto/billing.ts')).toContain('conversion: z');
 
-    const reconciliation = pricing.slice(
-      pricing.indexOf('async function reconcileReturnedPayment'),
-      pricing.indexOf('onMounted(() =>')
+    // Сверка возврата с оплаты вынесена в общий composable (используется
+    // и на /pricing, и на странице интервью) — цель paid трекается там.
+    expect(pricing).toContain('usePaymentReturn');
+    expect(read('app/pages/interview/[id].vue')).toContain('usePaymentReturn');
+    const paymentReturn = read('app/composables/usePaymentReturn.ts');
+    const reconciliation = paymentReturn.slice(
+      paymentReturn.indexOf('async function reconcile')
     );
     expect(reconciliation.indexOf('trackPaidMetrikaGoal')).toBeLessThan(
-      reconciliation.indexOf('await refreshStatus()')
+      reconciliation.indexOf('await options?.refresh?.()')
     );
   });
 });

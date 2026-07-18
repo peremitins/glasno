@@ -141,6 +141,10 @@ export default defineNuxtConfig({
           href: '/apple-touch-icon.png',
         },
         { rel: 'manifest', href: '/site.webmanifest' },
+        // Виджет оплаты YooKassa грузится лениво по клику в чекауте —
+        // тёплое соединение снижает риск таймаута загрузки скрипта.
+        { rel: 'preconnect', href: 'https://yookassa.ru' },
+        { rel: 'dns-prefetch', href: 'https://yookassa.ru' },
         { rel: 'preconnect', href: 'https://fonts.googleapis.com' },
         {
           rel: 'preconnect',

@@ -36,14 +36,24 @@
   }>();
 
   const { t } = useI18n();
-  useBodyScrollLock(() => props.open);
   const emailInput = ref<HTMLInputElement | null>(null);
   const {
+    state: widgetState,
     mount: mountWidget,
     destroy: destroyWidget,
   } = useYookassaWidget();
 
   const showWidget = computed(() => Boolean(props.confirmationToken));
+
+  // Оболочка чекаута видна всегда, кроме момента, когда окно YooKassa
+  // реально открыто: на время загрузки показываем статус, при сбое — ошибку
+  // с «Повторить». Scroll-lock привязан к той же видимости, чтобы не
+  // «залипнуть» на невидимой модалке.
+  const shellVisible = computed(
+    () => props.open && Boolean(props.plan) && widgetState.value !== 'open'
+  );
+
+  useBodyScrollLock(shellVisible);
   const giftAllowed = computed(() => props.plan?.type === 'pass');
   const displayGift = computed(() => props.gift && giftAllowed.value);
   // Автопродление показываем только для пропуска себе: пакеты минут —
@@ -112,8 +122,10 @@
     }
   );
 
-  // Как только пришёл токен, скрываем нашу оболочку и открываем нативное
-  // всплывающее окно YooKassa. Закрытие окна возвращает пользователя к форме.
+  // Как только пришёл токен, открываем нативное всплывающее окно YooKassa
+  // (оболочка на это время показывает лоадер/ошибку). Закрытие окна
+  // возвращает пользователя к форме. Ошибка загрузки НЕ уводит к форме —
+  // токен остаётся для кнопки «Повторить».
   watch(
     () => [props.open, props.confirmationToken] as const,
     async ([open, token]) => {
@@ -121,15 +133,25 @@
         destroyWidget();
         return;
       }
-      await mountWidget({
-        confirmationToken: token,
-        returnUrl: props.returnUrl,
-        modal: true,
-        onModalClose: () => emit('back'),
-        onError: () => emit('back'),
-      });
+      await openWidget();
     }
   );
+
+  async function openWidget() {
+    if (!props.confirmationToken || !props.returnUrl) return;
+    await mountWidget({
+      confirmationToken: props.confirmationToken,
+      returnUrl: props.returnUrl,
+      modal: true,
+      onModalClose: () => emit('back'),
+    });
+  }
+
+  // Повторная попытка с тем же токеном: при сбое загрузки скрипт-промис
+  // сброшен, mount перезагрузит checkout-widget.js заново.
+  async function retryWidget() {
+    await openWidget();
+  }
 
   onBeforeUnmount(destroyWidget);
 </script>
@@ -138,7 +160,7 @@
   <Teleport to="body">
     <Transition name="checkout-modal-fade">
       <div
-        v-if="open && plan && !showWidget"
+        v-if="shellVisible && plan"
         class="checkout-modal-overlay"
         role="dialog"
         aria-modal="true"
@@ -169,6 +191,37 @@
             <span>{{ periodLabel }}</span>
           </div>
 
+          <!-- Токен получен, окно YooKassa грузится/не загрузилось: вместо
+               формы показываем статус, а не пустой экран. -->
+          <template v-if="showWidget && widgetState === 'loading'">
+            <p class="checkout-provider checkout-widget-message">
+              {{ t('paywall.widgetOpening') }}
+            </p>
+          </template>
+
+          <template v-else-if="showWidget && widgetState === 'failed'">
+            <p class="checkout-error" role="alert">
+              {{ t('paywall.widgetError') }}
+            </p>
+            <div class="checkout-widget-actions">
+              <button
+                type="button"
+                class="secondary-action"
+                @click="emit('back')"
+              >
+                {{ t('paywall.widgetBack') }}
+              </button>
+              <button
+                type="button"
+                class="primary-action"
+                @click="retryWidget"
+              >
+                {{ t('paywall.widgetRetry') }}
+              </button>
+            </div>
+          </template>
+
+          <template v-else>
           <label v-if="giftAllowed" class="gift-switch">
               <span>
                 <strong>{{ t('pricing.giftToFriend') }}</strong>
@@ -289,6 +342,7 @@
                   : t('pricing.oneTimeDisclosure')
               }}
             </p>
+          </template>
         </section>
       </div>
     </Transition>
@@ -478,6 +532,17 @@
 
   .checkout-submit {
     width: 100%;
+  }
+
+  /* Состояния «Открываем оплату…» / ошибки окна YooKassa вместо формы. */
+  .checkout-widget-message {
+    font-size: 14px;
+  }
+
+  .checkout-widget-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
   }
 
   .checkout-modal-fade-enter-active,

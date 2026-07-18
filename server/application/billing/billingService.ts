@@ -7,6 +7,7 @@ import type {
   BillingStatusResponse,
   UserRole,
 } from '@/shared/dto';
+import { isSafeBillingReturnPath } from '@/shared/dto';
 import { apiError } from '@/server/utils/errors';
 import type {
   BillingOwner,
@@ -182,6 +183,7 @@ export class BillingService {
     planId: string;
     autoRenew?: boolean;
     gift?: { recipientEmail: string; senderName: string };
+    returnPath?: string;
   }): Promise<BillingCheckoutResponse> {
     if (!params.userId) {
       throw apiError('E_AUTH', 'Для оплаты войдите в профиль');
@@ -251,7 +253,11 @@ export class BillingService {
 
     // Куда виджет вернёт пользователя после оплаты. Для embedded это
     // передаётся не в теле платежа, а фронту — он отдаёт URL виджету.
-    const returnUrl = buildYooKassaReturnUrl(this.deps.config.appUrl, order.id);
+    const returnUrl = buildYooKassaReturnUrl(
+      this.deps.config.appUrl,
+      order.id,
+      params.returnPath
+    );
 
     try {
       const payment = await createYooKassaPayment({
@@ -1021,8 +1027,20 @@ function isPendingPaymentStatus(status: string | null | undefined): boolean {
   return status === 'pending' || status === 'waiting_for_capture';
 }
 
-function buildYooKassaReturnUrl(appUrl: string, orderId: string): string {
-  const url = new URL('/pricing', `${appUrl.replace(/\/$/, '')}/`);
+function buildYooKassaReturnUrl(
+  appUrl: string,
+  orderId: string,
+  returnPath?: string
+): string {
+  const base = `${appUrl.replace(/\/$/, '')}/`;
+  const path =
+    returnPath && isSafeBillingReturnPath(returnPath) ? returnPath : '/pricing';
+  const url = new URL(path, base);
+  // Защита в глубину: даже валидный по regexp путь не должен уводить
+  // с нашего origin (например, при будущем ослаблении whitelist).
+  if (url.origin !== new URL(base).origin) {
+    return buildYooKassaReturnUrl(appUrl, orderId);
+  }
   url.searchParams.set('payment', 'return');
   url.searchParams.set('orderId', orderId);
   return url.toString();

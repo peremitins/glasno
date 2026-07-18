@@ -3,11 +3,12 @@
   // - 'minutes': у юзера есть пропуск, но кончились минуты голоса → пакеты;
   // - 'plans': пропуска нет (или истёк) → короткая подборка сроков,
   //   полная сетка — на /pricing.
-  import { computed, onBeforeUnmount, ref, watch } from 'vue';
+  import { computed, inject, onBeforeUnmount, ref, watch } from 'vue';
   import { useI18n } from 'vue-i18n';
   import ButtonLoader from '@/app/components/design/ButtonLoader.vue';
   import GlassSkeletonStack from '@/app/components/design/GlassSkeletonStack.vue';
   import { useYookassaWidget } from '@/app/composables/useYookassaWidget';
+  import { FullscreenEscapeKey } from '@/app/composables/fullscreenEscape';
   import type {
     BillingCheckoutResponse,
     BillingPlansResponse,
@@ -18,13 +19,15 @@
   const props = defineProps<{
     open: boolean;
     mode: 'minutes' | 'plans';
+    // Внутренний путь возврата после оплаты (например, обратно в интервью
+    // после покупки пакета минут). Без него сервер вернёт на /pricing.
+    returnPath?: string;
   }>();
   const emit = defineEmits<{ (e: 'update:open', value: boolean): void }>();
 
   const { t } = useI18n();
   const api = useAPI();
-
-  useBodyScrollLock(() => props.open);
+  const fullscreenEscape = inject(FullscreenEscapeKey, null);
 
   const plansData = ref<BillingPlansResponse | null>(null);
   const plansPending = ref(false);
@@ -36,7 +39,21 @@
   // Нативное всплывающее окно YooKassa (карта, СБП, SberPay).
   const checkoutToken = ref('');
   const checkoutReturnUrl = ref('');
-  const { mount: mountWidget, destroy: destroyWidget } = useYookassaWidget();
+  const {
+    state: widgetState,
+    mount: mountWidget,
+    destroy: destroyWidget,
+  } = useYookassaWidget();
+
+  // Собственный оверлей виден всегда, кроме момента, когда окно YooKassa
+  // реально открыто: во время загрузки — лоадер, при сбое — ошибка с
+  // «Повторить». Scroll-lock привязан к той же видимости, поэтому не может
+  // «залипнуть» на невидимой модалке.
+  const overlayVisible = computed(
+    () => props.open && widgetState.value !== 'open'
+  );
+
+  useBodyScrollLock(overlayVisible);
 
   watch(
     () => props.open,
@@ -53,8 +70,10 @@
     }
   );
 
-  // Как только пришёл токен, скрываем пейволл и открываем собственное
-  // всплывающее окно YooKassa. При закрытии возвращаем выбор тарифов.
+  // Как только пришёл токен, открываем собственное всплывающее окно
+  // YooKassa (оверлей пейволла на это время показывает лоадер/ошибку).
+  // При закрытии окна возвращаем выбор тарифов. Ошибка загрузки НЕ
+  // сбрасывает токен — он нужен кнопке «Повторить».
   watch(
     () => [props.open, checkoutToken.value] as const,
     async ([open, token]) => {
@@ -62,20 +81,30 @@
         destroyWidget();
         return;
       }
-      await mountWidget({
-        confirmationToken: token,
-        returnUrl: checkoutReturnUrl.value,
-        modal: true,
-        onModalClose: resetWidget,
-        onError: resetWidget,
-      });
+      await openWidget();
     }
   );
+
+  async function openWidget() {
+    await mountWidget({
+      confirmationToken: checkoutToken.value,
+      returnUrl: checkoutReturnUrl.value,
+      modal: true,
+      onModalClose: resetWidget,
+    });
+  }
+
+  // Повторная попытка с тем же токеном: при сбое загрузки скрипт-промис
+  // сброшен, mount перезагрузит checkout-widget.js заново.
+  async function retryWidget() {
+    await openWidget();
+  }
 
   function resetWidget() {
     checkoutToken.value = '';
     checkoutReturnUrl.value = '';
     checkoutPlanId.value = '';
+    destroyWidget();
   }
 
   onBeforeUnmount(destroyWidget);
@@ -156,9 +185,13 @@
           body: {
             planId,
             autoRenew: props.mode === 'plans' ? autoRenew.value : false,
+            ...(props.returnPath ? { returnPath: props.returnPath } : {}),
           },
         }
       );
+      // Окно YooKassa инжектится в body с неизвестным z-index — сворачиваем
+      // псевдо-fullscreen интервью (call--fs), чтобы оно не перекрыло оплату.
+      fullscreenEscape?.exit();
       // Нативное окно YooKassa откроется watcher-ом после сохранения токена.
       checkoutToken.value = response.confirmationToken;
       checkoutReturnUrl.value = response.returnUrl;
@@ -175,7 +208,7 @@
   <Teleport to="body">
     <Transition name="paywall-fade">
       <div
-        v-if="open && !checkoutToken"
+        v-if="overlayVisible"
         class="paywall-overlay"
         role="dialog"
         aria-modal="true"
@@ -187,7 +220,45 @@
           <!-- Скролл вынесен во внутренний контейнер, чтобы светящаяся рамка
                glass-frame::before покрывала всю модалку, а не только видимую
                часть при прокрутке на низких экранах. -->
-          <div class="paywall-body">
+
+          <!-- Токен получен, окно YooKassa грузится/не загрузилось: вместо
+               списка тарифов показываем статус, а не пустой экран. -->
+          <div
+            v-if="checkoutToken && widgetState === 'loading'"
+            class="paywall-body paywall-widget-state"
+          >
+            <p class="paywall-widget-message">
+              {{ t('paywall.widgetOpening') }}
+            </p>
+            <GlassSkeletonStack :heights="[52, 52]" />
+          </div>
+
+          <div
+            v-else-if="checkoutToken && widgetState === 'failed'"
+            class="paywall-body paywall-widget-state"
+          >
+            <p class="paywall-error" role="alert">
+              {{ t('paywall.widgetError') }}
+            </p>
+            <div class="paywall-actions">
+              <button
+                type="button"
+                class="secondary-action secondary-action--compact"
+                @click="resetWidget"
+              >
+                {{ t('paywall.widgetBackToPlans') }}
+              </button>
+              <button
+                type="button"
+                class="paywall-option paywall-retry"
+                @click="retryWidget"
+              >
+                {{ t('paywall.widgetRetry') }}
+              </button>
+            </div>
+          </div>
+
+          <div v-else class="paywall-body">
             <header class="paywall-head">
               <h2>{{ title }}</h2>
               <p class="paywall-description">{{ description }}</p>
@@ -262,7 +333,11 @@
   .paywall-overlay {
     position: fixed;
     inset: 0;
-    z-index: 200;
+    /* Выше .call--fs (200) на странице интервью: пейволл должен быть виден
+       поверх псевдо-fullscreen, а не зависеть от порядка в DOM. Пикер
+       интервьюера (300) живёт внутри стекового контекста .call--fs и с этим
+       слоем не конфликтует. */
+    z-index: 300;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -385,6 +460,25 @@
     margin: 0;
     color: var(--danger, #f87171);
     font-size: 13px;
+  }
+
+  /* Состояния «Открываем оплату…» / «Не получилось открыть» вместо списка
+     тарифов, пока идёт работа с окном YooKassa. */
+  .paywall-widget-state {
+    gap: 14px;
+  }
+
+  .paywall-widget-message {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 14px;
+  }
+
+  .paywall-retry {
+    width: auto;
+    justify-content: center;
+    font-size: 14px;
+    font-weight: 600;
   }
 
   /* Тумблер автопродления — по образцу gift-switch из чекаута. */
