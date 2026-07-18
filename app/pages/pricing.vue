@@ -39,6 +39,8 @@
   // создания платежа, переключают модалку с формы на виджет оплаты.
   const checkoutToken = ref('');
   const checkoutReturnUrl = ref('');
+  // Заказ текущего чекаута — для репорта «окно оплаты не открылось».
+  const checkoutOrderId = ref('');
   const paymentHistoryRef = ref<InstanceType<typeof PaymentHistory> | null>(
     null
   );
@@ -207,6 +209,7 @@
       // Не редиректим на страницу YooKassa — показываем встроенный виджет
       // в той же модалке (карта, СБП, SberPay). return_url виджета вернёт
       // пользователя на /pricing, где отработает обычная сверка статуса.
+      checkoutOrderId.value = response.orderId;
       checkoutToken.value = response.confirmationToken;
       checkoutReturnUrl.value = response.returnUrl;
       reachYandexMetrikaGoal(YandexMetrikaGoal.checkoutCreated);
@@ -237,6 +240,7 @@
     // Новый чекаут всегда начинается с формы, а не с прошлого виджета.
     checkoutToken.value = '';
     checkoutReturnUrl.value = '';
+    checkoutOrderId.value = '';
     checkoutModalOpen.value = true;
   }
 
@@ -244,6 +248,7 @@
   function backToCheckoutForm() {
     checkoutToken.value = '';
     checkoutReturnUrl.value = '';
+    checkoutOrderId.value = '';
     checkoutError.value = '';
   }
 
@@ -281,6 +286,7 @@
       // начиналось с формы.
       checkoutToken.value = '';
       checkoutReturnUrl.value = '';
+      checkoutOrderId.value = '';
     }
     if (value || !route.query.checkout) return;
     const query = { ...route.query };
@@ -747,6 +753,7 @@
       :pending="Boolean(checkoutPlanId)"
       :confirmation-token="checkoutToken"
       :return-url="checkoutReturnUrl"
+      :order-id="checkoutOrderId"
       @update:open="updateCheckoutModalOpen"
       @update:gift="giftMode = $event"
       @update:auto-renew="autoRenew = $event"

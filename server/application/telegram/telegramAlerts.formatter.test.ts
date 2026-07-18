@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   formatCriticalErrorAlert,
+  formatPaymentIssueAlert,
   formatSubscriptionPurchasedAlert,
   formatUserDeletedAlert,
   formatUserRegisteredAlert,
@@ -113,5 +114,43 @@ describe('formatCriticalErrorAlert', () => {
     expect(withRequestId).toContain('req-1');
     expect(withRequestId).toContain('Unexpected token');
     expect(withoutRequestId).not.toContain('Request-ID');
+  });
+});
+
+describe('formatPaymentIssueAlert', () => {
+  it('различает этапы платёжного флоу и включает контекст заказа', () => {
+    const widget = formatPaymentIssueAlert({
+      stage: 'widget_load_failed',
+      user: {
+        id: 'u3',
+        email: 'c@example.com',
+        telegramId: null,
+        telegramUsername: null,
+        displayName: null,
+      },
+      orderId: 'order_9',
+      planId: 'realtime_pack_30',
+      message: 'Скрипт платёжного виджета не загрузился (вероятно, VPN)',
+    });
+
+    expect(widget).toContain('[glasno]');
+    expect(widget).toContain('Не открылось окно оплаты');
+    expect(widget).toContain('c@example.com');
+    expect(widget).toContain('order_9');
+    expect(widget).toContain('realtime_pack_30');
+    expect(widget).toContain('VPN');
+  });
+
+  it('не падает без пользователя и заказа, заголовок зависит от этапа', () => {
+    const checkout = formatPaymentIssueAlert({
+      stage: 'checkout_create_failed',
+      message: 'YooKassa вернула 500',
+    });
+    const renewal = formatPaymentIssueAlert({ stage: 'auto_renewal_failed' });
+
+    expect(checkout).toContain('Сбой создания платежа');
+    expect(checkout).toContain('YooKassa вернула 500');
+    expect(renewal).toContain('Сбой автосписания');
+    expect(renewal).not.toContain('Заказ:');
   });
 });

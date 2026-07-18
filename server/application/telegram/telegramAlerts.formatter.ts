@@ -61,6 +61,38 @@ export function formatVoiceMinutesPurchasedAlert(params: {
   ].join('\n');
 }
 
+// Этапы платёжного флоу, на которых теряются деньги. Отдельный алерт (а не
+// «критическая ошибка»), потому что это не всегда исключение на сервере:
+// например, у клиента не загрузился платёжный виджет (типовая причина — VPN).
+export type PaymentIssueStage =
+  | 'widget_load_failed'
+  | 'checkout_create_failed'
+  | 'auto_renewal_failed';
+
+const PAYMENT_ISSUE_TITLES: Record<PaymentIssueStage, string> = {
+  widget_load_failed: '⚠️ [glasno] Не открылось окно оплаты у клиента',
+  checkout_create_failed: '⚠️ [glasno] Сбой создания платежа',
+  auto_renewal_failed: '⚠️ [glasno] Сбой автосписания',
+};
+
+export function formatPaymentIssueAlert(params: {
+  stage: PaymentIssueStage;
+  user?: TelegramAlertUserInfo | null;
+  orderId?: string | null;
+  planId?: string | null;
+  message?: string | null;
+}): string {
+  return [
+    PAYMENT_ISSUE_TITLES[params.stage],
+    ...(params.user ? formatUserIdentityLines(params.user) : []),
+    params.orderId ? `Заказ: ${params.orderId}` : null,
+    params.planId ? `Тариф: ${params.planId}` : null,
+    params.message ? `Детали: ${params.message}` : null,
+  ]
+    .filter((line): line is string => Boolean(line))
+    .join('\n');
+}
+
 export function formatCriticalErrorAlert(params: {
   route: string;
   requestId?: string | null;

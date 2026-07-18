@@ -39,11 +39,26 @@
   // Нативное всплывающее окно YooKassa (карта, СБП, SberPay).
   const checkoutToken = ref('');
   const checkoutReturnUrl = ref('');
+  const checkoutOrderId = ref('');
   const {
     state: widgetState,
     mount: mountWidget,
     destroy: destroyWidget,
   } = useYookassaWidget();
+
+  // Телеметрия: сбой открытия окна оплаты (обычно VPN) виден только в
+  // браузере — сообщаем на сервер для Telegram-алерта. Один раз на заказ,
+  // повторные клики «Повторить» не спамят.
+  const reportedIssueOrderId = ref('');
+  watch(widgetState, (state) => {
+    if (state !== 'failed' || !checkoutToken.value) return;
+    if (reportedIssueOrderId.value === checkoutOrderId.value) return;
+    reportedIssueOrderId.value = checkoutOrderId.value;
+    void api('/api/billing/checkout-issue', {
+      method: 'POST',
+      body: checkoutOrderId.value ? { orderId: checkoutOrderId.value } : {},
+    }).catch(() => {});
+  });
 
   // Собственный оверлей виден всегда, кроме момента, когда окно YooKassa
   // реально открыто: во время загрузки — лоадер, при сбое — ошибка с
@@ -103,6 +118,7 @@
   function resetWidget() {
     checkoutToken.value = '';
     checkoutReturnUrl.value = '';
+    checkoutOrderId.value = '';
     checkoutPlanId.value = '';
     destroyWidget();
   }
@@ -193,6 +209,7 @@
       // псевдо-fullscreen интервью (call--fs), чтобы оно не перекрыло оплату.
       fullscreenEscape?.exit();
       // Нативное окно YooKassa откроется watcher-ом после сохранения токена.
+      checkoutOrderId.value = response.orderId;
       checkoutToken.value = response.confirmationToken;
       checkoutReturnUrl.value = response.returnUrl;
       reachYandexMetrikaGoal(YandexMetrikaGoal.checkoutCreated);
