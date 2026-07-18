@@ -31,6 +31,8 @@ describe('realtimeConfig', () => {
     expect(instructions).toContain('даже если кандидат прямо просит объяснить');
     expect(instructions).toContain('«Давай»');
     expect(instructions).toContain('«На чём мы остановились?»');
+    // Запрет повторять уже заданные уточнения — только в роли интервьюера.
+    expect(instructions).toContain('НИКОГДА не повторяй уточняющий вопрос');
     expect(instructions).not.toContain('Профиль кандидата:');
     expect(instructions).not.toContain('не сохраняешь ответ');
   });

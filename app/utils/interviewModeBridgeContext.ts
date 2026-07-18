@@ -3,6 +3,7 @@ import type {
   InterviewStateResponse,
   InterviewTrainingMode,
 } from '@/shared/dto';
+import { buildAskedQuestionsReminder } from '@/shared/interviewAskedQuestions';
 
 export function buildInterviewModeBridgeContext(
   state: InterviewStateResponse | null | undefined
@@ -28,6 +29,11 @@ export function buildInterviewModeBridgeContext(
       formatBridgeDialogueMessage(message, session.trainingMode)
     )
     .filter(Boolean);
+  // Явный список уже заданных уточнений — только когда AI играет интервьюера:
+  // в тренировке интервьюера вопросы задаёт пользователь.
+  const askedQuestionsReminder = isInterviewerTraining
+    ? ''
+    : buildAskedQuestionsReminder(currentTurn.messages, currentTurn.question);
 
   return [
     'Краткий контекст перехода между текстовым и голосовым режимом.',
@@ -53,6 +59,7 @@ export function buildInterviewModeBridgeContext(
       ? 'Диалог по текущему этапу:'
       : 'Диалог по текущему вопросу:',
     dialogue.length ? dialogue.join('\n') : 'По текущему вопросу ещё нет реплик.',
+    ...(askedQuestionsReminder ? ['', askedQuestionsReminder] : []),
     '',
     isInterviewerTraining
       ? 'Продолжай только как AI-кандидат и отвечай на реплику пользователя-интервьюера. Не задавай вопросы от имени интервьюера и не управляй ходом интервью. Прошлые этапы нужны только для памяти.'
