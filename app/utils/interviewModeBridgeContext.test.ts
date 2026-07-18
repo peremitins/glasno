@@ -78,6 +78,57 @@ describe('interview mode bridge context', () => {
     );
   });
 
+  it('reminds the AI interviewer about follow-ups it already asked', () => {
+    const state = {
+      session: {
+        role: 'Frontend-разработчик',
+        level: 'middle',
+        companyName: null,
+        vacancyTitle: null,
+      },
+      currentTurn: {
+        id: 'turn_1',
+        index: 1,
+        question: 'Какие возможности TypeScript вы используете в Vue?',
+        messages: [
+          {
+            role: 'interviewer',
+            content: 'Какие возможности TypeScript вы используете в Vue?',
+            at: '2026-07-18T10:00:00.000Z',
+          },
+          {
+            role: 'user',
+            content: 'Строгие типы и generics.',
+            at: '2026-07-18T10:01:00.000Z',
+          },
+          {
+            role: 'interviewer',
+            content: 'Понимаю. Как вы типизируете props компонентов?',
+            at: '2026-07-18T10:02:00.000Z',
+          },
+        ],
+      },
+      turns: [
+        {
+          id: 'turn_1',
+          index: 1,
+          kind: 'main',
+          question: 'Какие возможности TypeScript вы используете в Vue?',
+        },
+      ],
+    } as InterviewStateResponse;
+
+    const context = buildInterviewModeBridgeContext(state);
+
+    expect(context).toContain('Уточняющие вопросы, которые ты УЖЕ задал');
+    expect(context).toContain('1. Как вы типизируете props компонентов?');
+    // Основной вопрос не считается уточнением и в список не попадает.
+    expect(context).not.toContain('2. Какие возможности TypeScript');
+    expect(context).toContain(
+      'Не повторяй их и не задавай их переформулировки'
+    );
+  });
+
   it('embeds bridge context into realtime response.create instructions', () => {
     const state = {
       session: {
@@ -179,6 +230,8 @@ describe('interview mode bridge context', () => {
     );
     expect(context).toContain('Продолжай только как AI-кандидат');
     expect(context).not.toContain('Продолжай обсуждать только текущий вопрос');
+    // AI-кандидат не задаёт уточнений — списка уже заданных вопросов быть не должно.
+    expect(context).not.toContain('УЖЕ задал');
   });
 
   it('does not send interviewer timebox commands to the AI-candidate', () => {

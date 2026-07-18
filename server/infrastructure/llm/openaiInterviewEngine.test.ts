@@ -495,6 +495,66 @@ describe('openai interview engine helpers', () => {
     expect(text).not.toContain('Заметки о кандидате');
   });
 
+  it('lists already asked follow-up questions for the AI interviewer', () => {
+    const session: ConverseParams['session'] = {
+      id: 'session_asked_questions',
+      anonymousSessionId: 'anon_asked_questions',
+      userId: null,
+      trainingMode: 'candidate',
+      source: 'profession',
+      role: 'Frontend-разработчик',
+      level: 'middle',
+      questionCount: 3,
+      language: 'ru',
+      interviewerMode: 'friendly',
+      interviewerAvatarId: null,
+      status: 'running',
+      companyName: null,
+      vacancyTitle: null,
+      vacancyRaw: null,
+      vacancyUrl: null,
+      resumeRaw: null,
+      metadata: null,
+      createdAt: new Date('2026-07-18T10:00:00.000Z'),
+    };
+
+    const text = buildConverseUserText({
+      session,
+      turn: {
+        id: 'turn_asked_questions',
+        sessionId: session.id,
+        index: 1,
+        kind: 'main',
+        question: 'Какие возможности TypeScript вы используете в Vue?',
+        answerTranscript: null,
+        followUpForTurnId: null,
+        metadata: null,
+        answeredAt: null,
+        createdAt: new Date('2026-07-18T10:00:00.000Z'),
+      },
+      turns: [],
+      dialogue: [
+        {
+          role: 'interviewer',
+          content: 'Какие возможности TypeScript вы используете в Vue?',
+        },
+        { role: 'user', content: 'Строгие типы и generics.' },
+        {
+          role: 'interviewer',
+          content: 'Понимаю. Как вы типизируете props компонентов?',
+        },
+        { role: 'user', content: 'Через defineProps с generic-синтаксисом.' },
+      ],
+      exchanges: 2,
+    });
+
+    expect(text).toContain('Уточняющие вопросы, которые ты УЖЕ задал');
+    expect(text).toContain('1. Как вы типизируете props компонентов?');
+    // Основной вопрос не считается уточнением и в список не попадает.
+    expect(text).not.toContain('2. Какие возможности TypeScript');
+    expect(text).toContain('Не повторяй их и не задавай их переформулировки');
+  });
+
   it('keeps interviewer settings out of the AI-candidate context', () => {
     const session: ConverseParams['session'] = {
       id: 'session_interviewer_context',
