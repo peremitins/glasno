@@ -24,6 +24,7 @@ import {
   AI_CANDIDATE_ROLE_CONTRACT,
   AI_INTERVIEWER_ROLE_CONTRACT,
 } from '@/shared/interviewRoleContract';
+import { buildAskedQuestionsReminder } from '@/shared/interviewAskedQuestions';
 import type {
   CandidateDifficulty,
   CandidatePersona,
@@ -557,6 +558,12 @@ export function buildConverseUserText(params: ConverseParams): string {
     ? 'Диалог по текущему этапу'
     : 'Диалог по текущему вопросу';
 
+  // Явный список уже заданных уточнений — только когда AI играет интервьюера:
+  // в тренировке интервьюера вопросы задаёт пользователь.
+  const askedQuestionsReminder = isInterviewerTraining
+    ? ''
+    : buildAskedQuestionsReminder(params.dialogue, params.turn.question);
+
   return [
     sessionContextForConverse(params.session),
     '',
@@ -566,6 +573,7 @@ export function buildConverseUserText(params: ConverseParams): string {
     `${exchangeLabel}: ${params.exchanges}`,
     '',
     `${dialogueLabel}:\n${formatConverseDialogue(params)}`,
+    ...(askedQuestionsReminder ? ['', askedQuestionsReminder] : []),
   ].join('\n');
 }
 
@@ -599,6 +607,7 @@ const CANDIDATE_TRAINING_CONVERSE_RULES =
   'Строго соблюдай указанный пол интервьюера и грамматический род в репликах от своего лица. ' +
   'Если кандидат не понял вопрос или просит пояснить — только переформулируй вопрос проще и уточни, какой аспект опыта тебя интересует; не объясняй предметную область и не приводи готовый ответ или решение. ' +
   'Уточняй ответ только если это помогает проверить ещё не раскрытый важный аспект текущего вопроса. Не задавай уточняющие вопросы по инерции. ' +
+  'НИКОГДА не повторяй уточняющий вопрос, который уже задавал по текущему вопросу, даже в другой формулировке — сверяйся со списком уже заданных уточняющих вопросов и с диалогом. ' +
   'Если кандидат уже раскрыл ключевой аспект, по вопросу уже было несколько содержательных уточнений или очередное уточнение не даст новой информации — не задавай следующий вопрос, а коротко предложи перейти к следующему. Не повторяй уже выясненные аспекты другими словами. ' +
   'Не пересказывай и не оценивай ответ кандидата. Вместо объяснения верни кандидата к его собственному рассуждению или предложи перейти дальше. ' +
   'СТРОГО запрещено: отвечать ВМЕСТО кандидата, подсказывать готовый ответ, решать задачу за него или демонстрировать экспертное решение — ты проверяешь кандидата, а не учишь. ' +
