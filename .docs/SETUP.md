@@ -75,10 +75,12 @@ cp .env.example .env.development
 ```
 NUXT_DATABASE_URL=postgres://<user>:<password>@127.0.0.1:54320/glasno
 NUXT_REDIS_URL=redis://localhost:6379/1        # тот же Redis, отдельный logical DB
-NUXT_OPENAI_API_KEY=sk-...                      # для LLM и Realtime Voice (можно позже)
+NUXT_OPENAI_API_KEY=sk-...                      # только runtime: интервью и Realtime Voice
 NUXT_SESSION_SECRET=<длинная_случайная_строка>
 ```
 `<user>:<password>` — те же, что подключался в TablePlus (или `glasno_user`, если создал отдельного).
+
+Используйте отдельный ключ Гласно и не передавайте его служебным скриптам. Генерация и редактура контента репозитория выполняются через активную подписку Codex или Claude Code.
 
 ## 4. Запуск
 

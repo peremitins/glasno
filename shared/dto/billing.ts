@@ -80,6 +80,13 @@ export const BillingStatusResponseDto = z.object({
   }),
 });
 
+// Куда возвращать пользователя после оплаты. Только внутренний путь
+// приложения: начинается с одиночного '/', без '//', '\', query, фрагмента
+// и двоеточия — чтобы returnUrl нельзя было увести на чужой origin.
+export function isSafeBillingReturnPath(path: string): boolean {
+  return /^\/(?!\/)[A-Za-z0-9\-._~/]{0,199}$/.test(path);
+}
+
 export const BillingCheckoutRequestDto = z.object({
   planId: z.string().min(1),
   // Автопродление по умолчанию включено; пользователь может снять галочку
@@ -91,6 +98,9 @@ export const BillingCheckoutRequestDto = z.object({
       senderName: z.string().trim().min(1).max(80),
     })
     .optional(),
+  // Внутренний путь возврата после оплаты (например, обратно в интервью
+  // после покупки пакета минут). Невалидный или отсутствующий → /pricing.
+  returnPath: z.string().refine(isSafeBillingReturnPath).optional(),
 });
 
 export const BillingCheckoutResponseDto = z.object({

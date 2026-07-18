@@ -29,13 +29,15 @@ shared/dto/          — Zod-схемы (общий контракт фронт+
 
 ```bash
 pnpm install
-cp .env.example .env.development   # заполни DATABASE_URL, REDIS_URL, OPENAI_API_KEY
+cp .env.example .env.development   # заполни DATABASE_URL, REDIS_URL, NUXT_OPENAI_API_KEY
 pnpm db:generate                   # сгенерировать миграции из schema.ts
 pnpm db:migrate                    # применить миграции
 pnpm dev                           # http://localhost:3000
 ```
 
 Проверка бэкенда: `GET /api/health` → `{ "status": "ok" }`.
+
+`NUXT_OPENAI_API_KEY` используется только runtime-функциями приложения. Для служебной генерации контента запускайте Codex или Claude Code через активную подписку, не передавайте этот ключ скриптам.
 
 ## База данных
 
