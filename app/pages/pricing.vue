@@ -11,15 +11,11 @@
   import type {
     BillingBindCardResponseDto,
     BillingCheckoutResponse,
-    BillingPaymentStatusResponse,
     BillingPlansResponse,
     BillingStatusResponse,
   } from '@/shared/dto';
   import { YandexMetrikaGoal } from '@/shared/analytics/yandexMetrika';
-  import {
-    reachYandexMetrikaGoal,
-    trackPaidMetrikaGoal,
-  } from '@/app/utils/yandexMetrika';
+  import { reachYandexMetrikaGoal } from '@/app/utils/yandexMetrika';
   import type { z } from 'zod';
 
   const { t } = useI18n();
@@ -47,8 +43,6 @@
     null
   );
   const errorMessage = ref('');
-  const paymentStatusMessage = ref('');
-  const paymentStatusPending = ref(false);
   const cardActionPending = ref(false);
 
   const { data: plansData, pending: plansPending } = await useLazyAsyncData(
@@ -63,12 +57,18 @@
     api<BillingStatusResponse>('/api/billing/status')
   );
 
-  const returnNoticeVisible = computed(() => route.query.payment === 'return');
+  // Сверка оплаты после возврата с YooKassa — общий composable (используется
+  // также страницей интервью при покупке пакета минут из пейволла).
+  const {
+    returnVisible: returnNoticeVisible,
+    message: paymentStatusMessage,
+    reconcile: reconcileReturnedPayment,
+  } = usePaymentReturn({
+    refresh: refreshStatus,
+    onPaid: () => paymentHistoryRef.value?.refresh(),
+  });
   const bindingReturnVisible = computed(() => route.query.binding === 'return');
   const giftReceivedVisible = computed(() => route.query.gift === 'received');
-  const returnOrderId = computed(() =>
-    typeof route.query.orderId === 'string' ? route.query.orderId : ''
-  );
   const plansInitialPending = computed(
     () => plansPending.value && !plansData.value
   );
@@ -407,69 +407,6 @@
       errorMessage.value = data?.error?.message || t('pricing.error');
     } finally {
       cardActionPending.value = false;
-    }
-  }
-
-  function wait(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-  }
-
-  async function fetchCheckoutStatus(): Promise<BillingPaymentStatusResponse> {
-    const params = new URLSearchParams();
-    if (returnOrderId.value) {
-      params.set('orderId', returnOrderId.value);
-    }
-    const query = params.toString();
-    return await api<BillingPaymentStatusResponse>(
-      `/api/billing/checkout-status${query ? `?${query}` : ''}`
-    );
-  }
-
-  async function reconcileReturnedPayment() {
-    if (paymentStatusPending.value) return;
-    paymentStatusPending.value = true;
-    paymentStatusMessage.value = t('pricing.paymentChecking');
-
-    try {
-      for (let attempt = 0; attempt < 8; attempt += 1) {
-        const paymentStatus = await fetchCheckoutStatus();
-        trackPaidMetrikaGoal(paymentStatus);
-        await refreshStatus();
-
-        if (
-          paymentStatus.purchaseType === 'gift' &&
-          paymentStatus.paid &&
-          paymentStatus.gift
-        ) {
-          paymentStatusMessage.value = t('pricing.giftPaymentReady', {
-            email: paymentStatus.gift.recipientEmailMasked,
-          });
-          await paymentHistoryRef.value?.refresh();
-          return;
-        }
-
-        if (paymentStatus.hasActivePaidAccess) {
-          paymentStatusMessage.value = t('pricing.paymentActivated');
-          await paymentHistoryRef.value?.refresh();
-          return;
-        }
-
-        if (!paymentStatus.shouldContinuePolling) {
-          paymentStatusMessage.value =
-            paymentStatus.providerStatus === 'canceled'
-              ? t('pricing.paymentCanceled')
-              : t('pricing.paymentReview');
-          return;
-        }
-
-        await wait(attempt < 3 ? 1000 : 2500);
-      }
-
-      paymentStatusMessage.value = t('pricing.paymentPending');
-    } catch {
-      paymentStatusMessage.value = t('pricing.paymentPending');
-    } finally {
-      paymentStatusPending.value = false;
     }
   }
 

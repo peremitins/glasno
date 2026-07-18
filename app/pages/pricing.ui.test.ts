@@ -14,6 +14,10 @@ const yookassaWidgetSource = readFileSync(
   'app/composables/useYookassaWidget.ts',
   'utf8'
 );
+const realtimeVoicePanelSource = readFileSync(
+  'app/components/realtime/RealtimeVoicePanel.vue',
+  'utf8'
+);
 const layoutSource = readFileSync('app/layouts/default.vue', 'utf8');
 const authSource = readFileSync('app/pages/auth.vue', 'utf8');
 const globalStyles = readFileSync('app/assets/css/main.css', 'utf8');
@@ -154,17 +158,57 @@ describe('YooKassa widget presentation', () => {
     expect(yookassaWidgetSource).not.toContain('payment_methods:');
     expect(yookassaWidgetSource).toContain("instance.on('modal_close'");
     expect(yookassaWidgetSource).toContain('await instance.render();');
-    expect(checkoutModalSource).toContain('v-if="open && plan && !showWidget"');
+    expect(checkoutModalSource).toContain('v-if="shellVisible && plan"');
     expect(checkoutModalSource).not.toContain('ref="widgetContainer"');
     expect(checkoutModalSource).toContain('modal: true');
     expect(checkoutModalSource).toContain("onModalClose: () => emit('back')");
   });
 
   it('returns to the paywall choices when the native YooKassa modal closes', () => {
-    expect(paywallModalSource).toContain('v-if="open && !checkoutToken"');
+    expect(paywallModalSource).toContain('v-if="overlayVisible"');
     expect(paywallModalSource).not.toContain('ref="widgetContainer"');
     expect(paywallModalSource).toContain('modal: true');
     expect(paywallModalSource).toContain('onModalClose: resetWidget');
+  });
+
+  it('keeps its own overlay (loader/error) until the YooKassa modal is open', () => {
+    // Загрузка скрипта виджета ограничена таймаутом, при сбое тег и промис
+    // сбрасываются — «Повторить» вставляет свежий <script>.
+    expect(yookassaWidgetSource).toContain('SCRIPT_LOAD_TIMEOUT_MS');
+    expect(yookassaWidgetSource).toContain('scriptPromise = null');
+    expect(yookassaWidgetSource).toContain('script.remove()');
+
+    // Оверлеи обеих модалок видны, пока окно YooKassa не открыто, и
+    // scroll-lock привязан к той же видимости — лок не может «залипнуть»
+    // на невидимой модалке (баг: нет скролла после закрытия оплаты).
+    expect(paywallModalSource).toContain(
+      "props.open && widgetState.value !== 'open'"
+    );
+    expect(paywallModalSource).toContain('useBodyScrollLock(overlayVisible)');
+    expect(checkoutModalSource).toContain("widgetState.value !== 'open'");
+    expect(checkoutModalSource).toContain('useBodyScrollLock(shellVisible)');
+
+    // Ошибка загрузки не сбрасывает токен молча: пользователь видит текст
+    // ошибки и кнопку «Повторить».
+    expect(paywallModalSource).not.toContain('onError: resetWidget');
+    expect(paywallModalSource).toContain("t('paywall.widgetError')");
+    expect(paywallModalSource).toContain("t('paywall.widgetRetry')");
+    expect(checkoutModalSource).not.toContain("onError: () => emit('back')");
+    expect(checkoutModalSource).toContain("t('paywall.widgetRetry')");
+  });
+
+  it('sends the interview return path so minute-pack payments come back to the session', () => {
+    const paymentReturnSource = readFileSync(
+      'app/composables/usePaymentReturn.ts',
+      'utf8'
+    );
+    expect(source).toContain('usePaymentReturn');
+    expect(paymentReturnSource).toContain("route.query.payment === 'return'");
+    expect(realtimeVoicePanelSource).toContain(
+      ':return-path="`/interview/${sessionId}`"'
+    );
+    expect(paywallModalSource).toContain('returnPath?: string');
+    expect(paywallModalSource).toContain('props.returnPath');
   });
 });
 

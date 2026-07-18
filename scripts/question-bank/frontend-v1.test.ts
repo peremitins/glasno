@@ -64,6 +64,15 @@ function readCorpus(): CorpusRecord[] {
     });
 }
 
+function normalizeQuestion(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/ё/g, 'е')
+    .replace(/[^a-z0-9а-я]+/giu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 describe('frontend question corpus v1', () => {
   it('contains a curated set of valid and unique records without a quantity quota', () => {
     const records = readCorpus();
@@ -100,6 +109,15 @@ describe('frontend question corpus v1', () => {
     );
 
     expect(juniorTestingOverview).toHaveLength(1);
+  });
+
+  it('does not contain exact normalized question duplicates', () => {
+    const records = readCorpus();
+    const duplicateKeys = records
+      .map((item) => normalizeQuestion(item.question))
+      .filter((key, index, keys) => keys.indexOf(key) !== index);
+
+    expect(duplicateKeys).toEqual([]);
   });
 
   it('assigns seniority by required competence instead of a quota', () => {

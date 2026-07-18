@@ -800,6 +800,63 @@ describe('BillingService checkout guards', () => {
     );
   });
 
+  it('builds the return url from a safe internal returnPath', async () => {
+    const repository = createRepository();
+    repository.createPaymentOrder.mockResolvedValue(
+      createOrder({ planId: 'realtime_pack_60', amountRub: 890 })
+    );
+    mockedCreateYooKassaPayment.mockResolvedValue({
+      id: 'payment_return_path_1',
+      status: 'pending',
+      confirmation: {
+        type: 'embedded',
+        confirmation_token: 'ct_payment_return_path_1',
+      },
+    });
+    const service = createService(repository);
+
+    await expect(
+      service.createCheckout({
+        userId: 'user_1',
+        planId: 'realtime_pack_60',
+        returnPath: '/interview/sess-uuid-1',
+      })
+    ).resolves.toEqual(
+      expect.objectContaining({
+        returnUrl:
+          'https://glasno.test/interview/sess-uuid-1?payment=return&orderId=order_1',
+      })
+    );
+  });
+
+  it('falls back to /pricing when returnPath could leave our origin', async () => {
+    const repository = createRepository();
+    repository.createPaymentOrder.mockResolvedValue(
+      createOrder({ planId: 'realtime_pack_60', amountRub: 890 })
+    );
+    mockedCreateYooKassaPayment.mockResolvedValue({
+      id: 'payment_return_path_2',
+      status: 'pending',
+      confirmation: {
+        type: 'embedded',
+        confirmation_token: 'ct_payment_return_path_2',
+      },
+    });
+    const service = createService(repository);
+
+    await expect(
+      service.createCheckout({
+        userId: 'user_1',
+        planId: 'realtime_pack_60',
+        returnPath: '//evil.com',
+      })
+    ).resolves.toEqual(
+      expect.objectContaining({
+        returnUrl: 'https://glasno.test/pricing?payment=return&orderId=order_1',
+      })
+    );
+  });
+
   it('allows minute pack purchase with an active pass', async () => {
     const repository = createRepository();
     repository.__setAccess(

@@ -15,6 +15,7 @@ export default defineApiHandler(async (event) => {
     planId: input.planId,
     autoRenew: input.autoRenew,
     gift: input.gift,
+    returnPath: input.returnPath,
   });
   return BillingCheckoutResponseDto.parse(checkout);
 });
