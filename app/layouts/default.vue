@@ -128,8 +128,23 @@
     }
   }
 
+  // На мобильной вёрстке (≤640px) скроллится не window, а .workspace
+  // (overflow-y: auto), и этот контейнер живёт в лейауте между страницами —
+  // scrollBehavior роутера сбрасывает только окно. Поэтому после рендера
+  // новой страницы возвращаем контейнер к началу вручную.
+  const workspaceEl = ref<HTMLElement | null>(null);
+  const nuxtApp = useNuxtApp();
+  const route = useRoute();
+  let lastWorkspacePath = route.path;
+  const stopWorkspaceScrollReset = nuxtApp.hook('page:loading:end', () => {
+    if (route.path === lastWorkspacePath) return;
+    lastWorkspacePath = route.path;
+    workspaceEl.value?.scrollTo({ left: 0, top: 0, behavior: 'instant' });
+  });
+
   onBeforeUnmount(() => {
     if (shareFeedbackTimer) clearTimeout(shareFeedbackTimer);
+    stopWorkspaceScrollReset();
   });
 </script>
 
@@ -254,7 +269,7 @@
       </section>
     </aside>
 
-    <main class="workspace">
+    <main ref="workspaceEl" class="workspace">
       <header class="topbar glass-frame glass-frame--soft">
         <div class="topbar-title">
           <span>{{ t('app.name') }}</span>

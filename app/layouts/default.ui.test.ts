@@ -32,3 +32,12 @@ describe('default layout sidebar', () => {
     expect(source).toContain('height: 48px');
   });
 });
+
+describe('default layout mobile scroll reset', () => {
+  it('resets the .workspace scroll container after page navigation', () => {
+    expect(source).toContain('ref="workspaceEl"');
+    expect(source).toContain("hook('page:loading:end'");
+    expect(source).toContain("behavior: 'instant'");
+    expect(source).toContain('overflow-y: auto');
+  });
+});
