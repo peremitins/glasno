@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   buildRealtimeCancelEvents,
+  collectSupersededAudioResponseIds,
   createRealtimeStartGuard,
   shouldDeferRealtimeIdleStop,
   shouldPhysicallyMuteRealtimeMicrophone,
@@ -81,6 +82,32 @@ describe('useRealtimeVoiceSession helpers', () => {
   it('treats assistant audio playback as realtime activity', () => {
     expect(source).toContain('onAssistantAudioActivity()');
     expect(source).toContain('void registerRealtimeActivity();');
+  });
+
+  it('treats a cleared output audio buffer as the end of assistant audio', () => {
+    // Перебивание (или клиентский clear) очищает WebRTC-буфер: сервер шлёт
+    // output_audio_buffer.cleared, а stopped не придёт уже никогда. Если
+    // cleared не снимает mute-заявку, микрофон остаётся выключенным навсегда,
+    // а idle-стоп вечно откладывается — сессия «молчит», пока её не перезапустят.
+    expect(source).toContain("type === 'output_audio_buffer.cleared'");
+  });
+
+  it('unmutes stale audio responses when a new response starts playing', () => {
+    // Аудиобуфер один на сессию: старт озвучки нового ответа значит, что
+    // прежние уже не звучат, даже если их терминальные события потерялись.
+    expect(
+      collectSupersededAudioResponseIds(['response_1', 'response_2'], 'response_2')
+    ).toEqual(['response_1']);
+    expect(
+      collectSupersededAudioResponseIds(['response_1'], 'response_1')
+    ).toEqual([]);
+    expect(collectSupersededAudioResponseIds([], 'response_1')).toEqual([]);
+    // Без id нового ответа прежние заявки не трогаем: нет доказательства,
+    // что их звук закончился.
+    expect(
+      collectSupersededAudioResponseIds(['response_1'], '')
+    ).toEqual([]);
+    expect(source).toContain('collectSupersededAudioResponseIds(');
   });
 
   it('builds cancel events for active responses with WebRTC audio flush', () => {

@@ -36,6 +36,16 @@ export type RealtimeInterviewChatSink = {
 // сам вопрос уже показан отдельным пузырём из состояния интервью.
 export const REALTIME_QUESTION_ANNOUNCEMENT_KIND = 'question_announcement';
 
+export type RealtimeInterviewChatAdapterOptions = {
+  // Физический мьют микрофона на время ответа ассистента обрубает сегмент
+  // речи кандидата, открытый в момент response.created. Такой огрызок аудио
+  // Whisper часто «дотранскрибирует» галлюцинацией, которая иначе попадает в
+  // чат и историю и запускает лишний ответ модели. Флаг включается только для
+  // транспортов с физическим мьютом: в Safari кандидат реально может говорить
+  // во время ответа, и его транскрипт — полноценная реплика.
+  discardMuteInterruptedUserSegments?: boolean;
+};
+
 function readResponseMetadataKind(response: unknown): string {
   const metadata = (response as { metadata?: unknown } | undefined)?.metadata;
   const kind = (metadata as { glasno_kind?: unknown } | undefined)?.glasno_kind;
@@ -90,8 +100,18 @@ export class RealtimeInterviewChatAdapter {
     string,
     { text: string; messageId: string }
   >();
+  // Сегменты речи кандидата, открытые прямо сейчас (speech_started пришёл,
+  // speech_stopped ещё нет). Нужны, чтобы понять, какой сегмент обрубил
+  // физический мьют при старте ответа ассистента.
+  private readonly openUserSpeechItemIds = new Set<string>();
+  // Сегменты, оборванные мьютом: их транскрипты — огрызки/галлюцинации,
+  // в чат и историю не попадают и ответ модели не запускают.
+  private readonly muteInterruptedUserItemIds = new Set<string>();
 
-  constructor(private readonly sink: RealtimeInterviewChatSink) {}
+  constructor(
+    private readonly sink: RealtimeInterviewChatSink,
+    private readonly options: RealtimeInterviewChatAdapterOptions = {}
+  ) {}
 
   handleServerEvent(event: RealtimeServerEvent) {
     if (typeof event.type !== 'string') return;
@@ -107,12 +127,16 @@ export class RealtimeInterviewChatAdapter {
 
       case 'input_audio_buffer.speech_started': {
         const itemId = stringValue(event.item_id);
-        if (itemId) this.ensureUserMessage(itemId);
+        if (itemId) {
+          this.openUserSpeechItemIds.add(itemId);
+          this.ensureUserMessage(itemId);
+        }
         this.sink.onUserSpeechStarted?.();
         return;
       }
 
       case 'input_audio_buffer.speech_stopped': {
+        this.openUserSpeechItemIds.clear();
         this.sink.onUserSpeechEnded?.();
         return;
       }
@@ -120,6 +144,7 @@ export class RealtimeInterviewChatAdapter {
       case 'conversation.item.input_audio_transcription.delta': {
         const itemId = stringValue(event.item_id);
         const delta = stringValue(event.delta);
+        if (this.muteInterruptedUserItemIds.has(itemId)) return;
         if (itemId && delta) this.appendUserContent(itemId, delta);
         return;
       }
@@ -130,6 +155,8 @@ export class RealtimeInterviewChatAdapter {
         // Реплика распознана — кандидат точно закончил говорить: гасим подсветку.
         this.sink.onUserSpeechEnded?.();
         if (!itemId) return;
+        this.openUserSpeechItemIds.delete(itemId);
+        if (this.discardMuteInterruptedTranscript(itemId)) return;
         if (transcript) {
           const messageId = this.ensureUserMessage(itemId);
           this.replaceUserContent(itemId, transcript);
@@ -145,13 +172,27 @@ export class RealtimeInterviewChatAdapter {
 
       case 'conversation.item.input_audio_transcription.failed': {
         const itemId = stringValue(event.item_id);
-        if (itemId) this.removeUserMessage(itemId);
+        this.openUserSpeechItemIds.delete(itemId);
         this.sink.onUserSpeechEnded?.();
+        // Огрызок оборванного мьютом сегмента не распознался: пузырь снят, а
+        // onUserTranscriptFailed не зовём — он запускает ответ интервьюера,
+        // и модель отвечала бы на обрубленный кусок речи.
+        if (this.discardMuteInterruptedTranscript(itemId)) return;
+        if (itemId) this.removeUserMessage(itemId);
         this.sink.onUserTranscriptFailed?.();
         return;
       }
 
       case 'response.created': {
+        // Ответ ассистента стартует физический мьют микрофона: сегмент речи
+        // кандидата, открытый в этот момент, будет обрублен на полуслове —
+        // помечаем его, чтобы не считать огрызок транскрипта репликой.
+        if (this.options.discardMuteInterruptedUserSegments) {
+          for (const itemId of this.openUserSpeechItemIds) {
+            this.muteInterruptedUserItemIds.add(itemId);
+          }
+          this.openUserSpeechItemIds.clear();
+        }
         const responseId = stringValue(
           (event.response as { id?: unknown } | undefined)?.id
         );
@@ -169,14 +210,24 @@ export class RealtimeInterviewChatAdapter {
       case 'output_audio_buffer.started': {
         const responseId = stringValue(event.response_id);
         if (responseId) {
+          // Аудиобуфер один: зазвучал новый ответ — прежние точно закончились,
+          // даже если их stopped/cleared потерялся. Иначе анимация «говорит»
+          // зависает навсегда.
+          for (const supersededId of [...this.audioBufferedResponses]) {
+            if (supersededId === responseId) continue;
+            this.audioBufferedResponses.delete(supersededId);
+            this.endAssistantSpeech(supersededId);
+          }
           this.audioBufferedResponses.add(responseId);
           this.startAssistantSpeech(responseId);
         }
         return;
       }
 
-      case 'output_audio_buffer.stopped': {
-        // Голос ассистента реально доиграл — вот теперь гасим анимацию.
+      case 'output_audio_buffer.stopped':
+      case 'output_audio_buffer.cleared': {
+        // Голос ассистента доиграл (stopped) либо буфер очищен и звука больше
+        // не будет (cleared при перебивании/отмене) — озвучка закончилась.
         const responseId = stringValue(event.response_id);
         if (responseId) {
           this.audioBufferedResponses.delete(responseId);
@@ -325,6 +376,15 @@ export class RealtimeInterviewChatAdapter {
     this.sink.removeMessage(messageId);
     this.userMessagesByItemId.delete(itemId);
     this.userContentByItemId.delete(itemId);
+  }
+
+  // Транскрипт сегмента, оборванного мьютом: убираем его пузырь и сообщаем
+  // вызывающему коду, что реплику нужно проигнорировать целиком.
+  private discardMuteInterruptedTranscript(itemId: string): boolean {
+    if (!itemId || !this.muteInterruptedUserItemIds.has(itemId)) return false;
+    this.muteInterruptedUserItemIds.delete(itemId);
+    this.removeUserMessage(itemId);
+    return true;
   }
 
   private appendAssistantContent(
