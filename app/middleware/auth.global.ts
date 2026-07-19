@@ -1,7 +1,8 @@
 import { useAuthStore } from '@/app/stores/auth';
 
 // Публичные маршруты, не требующие авторизации.
-const PUBLIC_ROUTES = ['/auth', '/auth/link'];
+// isPublic матчит и вложенные пути, поэтому '/auth' покрывает весь /auth/*.
+const PUBLIC_ROUTES = ['/auth'];
 
 function isPublic(path: string): boolean {
   return PUBLIC_ROUTES.some(
