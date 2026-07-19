@@ -56,7 +56,10 @@
     REALTIME_QUESTION_ANNOUNCEMENT_KIND,
   } from '@/app/services/realtime/realtimeInterviewChatAdapter';
   import { RealtimeResponseScheduler } from '@/app/services/realtime/realtimeResponseScheduler';
-  import type { RealtimeVoiceControl } from '@/app/composables/useRealtimeVoiceSession';
+  import {
+    shouldPhysicallyMuteRealtimeMicrophone,
+    type RealtimeVoiceControl,
+  } from '@/app/composables/useRealtimeVoiceSession';
   import {
     useRealtimeVoiceSettings,
     RESPONSE_PAUSE_OPTIONS_MS,
@@ -178,6 +181,14 @@
   const responseScheduler = new RealtimeResponseScheduler({
     getDelayMs: () => responsePauseMs.value,
     onElapsed: () => {
+      // Ассистент ещё говорит или его озвучка доигрывает: второй
+      // response.create поверх играющего накладывает два ответа в один
+      // аудиобуфер (обрыв звука, cleared вместо stopped, рассинхрон mute).
+      // Перевзводим окно — ответ уйдёт после конца текущей озвучки.
+      if (realtimeSpeaking.value) {
+        responseScheduler.arm();
+        return;
+      }
       sendRealtimeResponseCreate();
     },
   });
@@ -698,6 +709,12 @@
       onUserSpeechEnded() {
         userSpeaking.value = false;
       },
+    }, {
+      // Физический мьют обрубает сегмент речи кандидата при старте ответа —
+      // огрызок транскрипта (галлюцинация Whisper) не должен попадать в чат
+      // и запускать лишний ответ. В Safari мьюта нет — там транскрипты во
+      // время речи ассистента настоящие, их не отбрасываем.
+      discardMuteInterruptedUserSegments: shouldPhysicallyMuteRealtimeMicrophone(),
     });
     return realtimeAdapter.value;
   }
