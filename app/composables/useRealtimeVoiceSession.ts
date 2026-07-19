@@ -244,6 +244,17 @@ export function useRealtimeVoiceSession(options: {
       const responseId = stringValue(
         (event as { response_id?: unknown }).response_id
       );
+      // Аудиобуфер в WebRTC один на сессию: раз зазвучал новый ответ, прежние
+      // гарантированно не играют. Снимаем их mute-заявки, даже если их
+      // терминальные события потерялись — иначе один пропавший stopped
+      // навсегда глушит микрофон и блокирует idle-остановку.
+      for (const supersededId of collectSupersededAudioResponseIds(
+        assistantAudioResponseIds,
+        responseId
+      )) {
+        assistantAudioResponseIds.delete(supersededId);
+        unmuteMicrophoneForAssistantResponse(supersededId);
+      }
       assistantOutputIsActive = true;
       if (responseId) assistantAudioResponseIds.add(responseId);
       muteMicrophoneForAssistantResponse(responseId);
@@ -253,6 +264,10 @@ export function useRealtimeVoiceSession(options: {
 
     if (
       type === 'output_audio_buffer.stopped' ||
+      // cleared приходит вместо stopped, когда буфер очищен (перебивание или
+      // клиентский clear): звук ответа больше не прозвучит — для mute это
+      // такое же завершение аудио.
+      type === 'output_audio_buffer.cleared' ||
       type === 'response.done' ||
       type === 'response.cancelled' ||
       type === 'response.failed'
@@ -597,6 +612,25 @@ export function buildRealtimeCancelEvents(input: {
     events.push({ type: 'output_audio_buffer.clear' });
   }
   return events;
+}
+
+// Id аудио-ответов, которые гарантированно больше не звучат: аудиобуфер в
+// WebRTC один, старт воспроизведения нового ответа означает, что прежние уже
+// отыграли или были очищены. Их терминальные события могли не дойти — cleared
+// вместо stopped при перебивании, наложение ответов, — поэтому доверяем факту
+// старта нового звука, а не только событиям завершения старого.
+export function collectSupersededAudioResponseIds(
+  activeAudioResponseIds: Iterable<string>,
+  startedResponseId: string
+): string[] {
+  if (!startedResponseId) return [];
+  const superseded: string[] = [];
+  for (const responseId of activeAudioResponseIds) {
+    if (responseId && responseId !== startedResponseId) {
+      superseded.push(responseId);
+    }
+  }
+  return superseded;
 }
 
 export function shouldPhysicallyMuteRealtimeMicrophone(

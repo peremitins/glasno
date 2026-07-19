@@ -526,4 +526,253 @@ describe('RealtimeInterviewChatAdapter', () => {
       ['Добрый день. Расскажите о приоритетах.', 'message_2'],
     ]);
   });
+
+  it('ends assistant speech when the output audio buffer is cleared', () => {
+    // Перебивание/отмена очищает WebRTC-буфер: приходит cleared, а stopped
+    // не придёт уже никогда — анимация не должна зависнуть навсегда.
+    let assistantSpeechStarted = 0;
+    let assistantSpeechEnded = 0;
+
+    const adapter = new RealtimeInterviewChatAdapter({
+      createMessage() {
+        return 'message_1';
+      },
+      appendContent() {},
+      replaceContent() {},
+      removeMessage() {},
+      onAssistantSpeechStarted() {
+        assistantSpeechStarted += 1;
+      },
+      onAssistantSpeechEnded() {
+        assistantSpeechEnded += 1;
+      },
+    });
+
+    adapter.handleServerEvent({
+      type: 'output_audio_buffer.started',
+      response_id: 'response_1',
+    });
+    expect(assistantSpeechStarted).toBe(1);
+
+    adapter.handleServerEvent({
+      type: 'output_audio_buffer.cleared',
+      response_id: 'response_1',
+    });
+    expect(assistantSpeechEnded).toBe(1);
+  });
+
+  it('closes stale audio responses when a new response starts playing', () => {
+    // Аудиобуфер в realtime один: раз зазвучал следующий ответ, предыдущий
+    // точно закончился, даже если его stopped/cleared потерялся.
+    let assistantSpeechEnded = 0;
+
+    const adapter = new RealtimeInterviewChatAdapter({
+      createMessage() {
+        return 'message_1';
+      },
+      appendContent() {},
+      replaceContent() {},
+      removeMessage() {},
+      onAssistantSpeechEnded() {
+        assistantSpeechEnded += 1;
+      },
+    });
+
+    adapter.handleServerEvent({
+      type: 'output_audio_buffer.started',
+      response_id: 'response_1',
+    });
+    adapter.handleServerEvent({
+      type: 'output_audio_buffer.started',
+      response_id: 'response_2',
+    });
+    expect(assistantSpeechEnded).toBe(1);
+
+    adapter.handleServerEvent({
+      type: 'output_audio_buffer.stopped',
+      response_id: 'response_2',
+    });
+    expect(assistantSpeechEnded).toBe(2);
+  });
+
+  it('discards user segments cut off by the assistant-response microphone mute', () => {
+    // Кандидат начал говорить, но приложение запустило ответ и физический мьют
+    // обрубил сегмент на полуслове. Whisper дотранскрибирует такой огрызок
+    // галлюцинацией («chaty, подожди») — она не должна попасть в чат, историю
+    // и не должна запускать ещё один ответ модели.
+    const messages = new Map<string, { role: string; content: string }>();
+    let counter = 0;
+    const completedUserTranscripts: string[] = [];
+
+    const adapter = new RealtimeInterviewChatAdapter(
+      {
+        createMessage(role, content) {
+          counter += 1;
+          const id = `message_${counter}`;
+          messages.set(id, { role, content });
+          return id;
+        },
+        appendContent(messageId, delta) {
+          const message = messages.get(messageId);
+          if (message) message.content += delta;
+        },
+        replaceContent(messageId, content) {
+          const message = messages.get(messageId);
+          if (message) message.content = content;
+        },
+        removeMessage(messageId) {
+          messages.delete(messageId);
+        },
+        onUserTranscriptCompleted(transcript) {
+          completedUserTranscripts.push(transcript);
+        },
+      },
+      { discardMuteInterruptedUserSegments: true }
+    );
+
+    adapter.handleServerEvent({
+      type: 'input_audio_buffer.speech_started',
+      item_id: 'user_item_1',
+    });
+    adapter.handleServerEvent({
+      type: 'response.created',
+      response: { id: 'response_1', status: 'in_progress' },
+    });
+    adapter.handleServerEvent({ type: 'input_audio_buffer.speech_stopped' });
+    adapter.handleServerEvent({
+      type: 'conversation.item.input_audio_transcription.completed',
+      item_id: 'user_item_1',
+      transcript: 'chaty, подожди.',
+    });
+
+    expect([...messages.values()]).toEqual([]);
+    expect(completedUserTranscripts).toEqual([]);
+  });
+
+  it('keeps user transcripts that finished before the assistant response started', () => {
+    // Сегмент закрыт (speech_stopped) до response.created: даже если сама
+    // транскрипция пришла позже старта ответа, это полноценная реплика — её
+    // нельзя терять из-за защиты от оборванных мьютом сегментов.
+    const messages = new Map<string, { role: string; content: string }>();
+    let counter = 0;
+    const completedUserTranscripts: string[] = [];
+
+    const adapter = new RealtimeInterviewChatAdapter(
+      {
+        createMessage(role, content) {
+          counter += 1;
+          const id = `message_${counter}`;
+          messages.set(id, { role, content });
+          return id;
+        },
+        appendContent() {},
+        replaceContent(messageId, content) {
+          const message = messages.get(messageId);
+          if (message) message.content = content;
+        },
+        removeMessage(messageId) {
+          messages.delete(messageId);
+        },
+        onUserTranscriptCompleted(transcript) {
+          completedUserTranscripts.push(transcript);
+        },
+      },
+      { discardMuteInterruptedUserSegments: true }
+    );
+
+    adapter.handleServerEvent({
+      type: 'input_audio_buffer.speech_started',
+      item_id: 'user_item_1',
+    });
+    adapter.handleServerEvent({ type: 'input_audio_buffer.speech_stopped' });
+    adapter.handleServerEvent({
+      type: 'response.created',
+      response: { id: 'response_1', status: 'in_progress' },
+    });
+    adapter.handleServerEvent({
+      type: 'conversation.item.input_audio_transcription.completed',
+      item_id: 'user_item_1',
+      transcript: 'Например, какой-нибудь анекдот расскажи.',
+    });
+
+    expect([...messages.values()]).toEqual([
+      { role: 'user', content: 'Например, какой-нибудь анекдот расскажи.' },
+    ]);
+    expect(completedUserTranscripts).toEqual([
+      'Например, какой-нибудь анекдот расскажи.',
+    ]);
+  });
+
+  it('does not request a reply for failed transcripts of mute-interrupted segments', () => {
+    // Огрызок оборванного мьютом сегмента может и не распознаться вовсе:
+    // onUserTranscriptFailed запускает ответ интервьюера, поэтому для таких
+    // сегментов его вызывать нельзя — иначе модель ответит на обрывок.
+    let transcriptFailed = 0;
+
+    const adapter = new RealtimeInterviewChatAdapter(
+      {
+        createMessage() {
+          return 'message_1';
+        },
+        appendContent() {},
+        replaceContent() {},
+        removeMessage() {},
+        onUserTranscriptFailed() {
+          transcriptFailed += 1;
+        },
+      },
+      { discardMuteInterruptedUserSegments: true }
+    );
+
+    adapter.handleServerEvent({
+      type: 'input_audio_buffer.speech_started',
+      item_id: 'user_item_1',
+    });
+    adapter.handleServerEvent({
+      type: 'response.created',
+      response: { id: 'response_1', status: 'in_progress' },
+    });
+    adapter.handleServerEvent({
+      type: 'conversation.item.input_audio_transcription.failed',
+      item_id: 'user_item_1',
+    });
+
+    expect(transcriptFailed).toBe(0);
+  });
+
+  it('keeps mute-interrupted transcripts by default for transports without physical mute', () => {
+    // Safari не мьютит трек физически: кандидат реально может говорить во
+    // время ответа, его транскрипт — полноценная реплика.
+    const completedUserTranscripts: string[] = [];
+
+    const adapter = new RealtimeInterviewChatAdapter({
+      createMessage() {
+        return 'message_1';
+      },
+      appendContent() {},
+      replaceContent() {},
+      removeMessage() {},
+      onUserTranscriptCompleted(transcript) {
+        completedUserTranscripts.push(transcript);
+      },
+    });
+
+    adapter.handleServerEvent({
+      type: 'input_audio_buffer.speech_started',
+      item_id: 'user_item_1',
+    });
+    adapter.handleServerEvent({
+      type: 'response.created',
+      response: { id: 'response_1', status: 'in_progress' },
+    });
+    adapter.handleServerEvent({
+      type: 'conversation.item.input_audio_transcription.completed',
+      item_id: 'user_item_1',
+      transcript: 'Хочу уточнить формулировку вопроса.',
+    });
+
+    expect(completedUserTranscripts).toEqual([
+      'Хочу уточнить формулировку вопроса.',
+    ]);
+  });
 });
