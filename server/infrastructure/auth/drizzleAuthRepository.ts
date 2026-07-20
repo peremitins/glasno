@@ -267,22 +267,11 @@ export class DrizzleAuthRepository implements AuthRepository {
         .where(eq(schema.interviewSessions.userId, userId));
       const sessionIds = ownedSessions.map((session) => session.id);
 
-      // Старые готовые отчёты, созданные до появления реестра, тоже фиксируем
-      // перед удалением. Иначе удаление аккаунта снова откроет бесплатную
-      // попытку для того же email/Telegram ID.
-      const [completedReport] = sessionIds.length
-        ? await tx
-            .select({ id: schema.interviewReports.id })
-            .from(schema.interviewReports)
-            .where(
-              and(
-                inArray(schema.interviewReports.sessionId, sessionIds),
-                eq(schema.interviewReports.status, 'done')
-              )
-            )
-            .limit(1)
-        : [];
-      if (completedReport) {
+      // Попытка триала расходуется созданием сессии, поэтому фиксируем её
+      // перед удалением при наличии хотя бы одной сессии (не только готового
+      // отчёта). Иначе «начал → удалил аккаунт → зарегистрировался снова»
+      // открывало бы бесплатную попытку для того же email/Telegram ID.
+      if (sessionIds.length > 0) {
         const email = identity?.email?.trim().toLowerCase() || null;
         const telegramId = identity?.telegramId || null;
         if (email || telegramId) {
@@ -428,19 +417,12 @@ export class DrizzleAuthRepository implements AuthRepository {
         .returning({ id: schema.interviewSessions.id });
 
       const sessionIds = rows.map((row) => row.id);
-      const [completedReport] = sessionIds.length
-        ? await tx
-            .select({ id: schema.interviewReports.id })
-            .from(schema.interviewReports)
-            .where(
-              and(
-                inArray(schema.interviewReports.sessionId, sessionIds),
-                eq(schema.interviewReports.status, 'done')
-              )
-            )
-            .limit(1)
-        : [];
-      if (completedReport) {
+      // Анонимные сессии по определению триальные (пропуска у анонима нет),
+      // а попытка расходуется созданием сессии. Поэтому фиксируем историю,
+      // если мигрировала хоть одна сессия — даже брошенная без отчёта.
+      // Иначе «начал анонимно → бросил → вошёл под новым email» давало бы
+      // новую бесплатную попытку.
+      if (sessionIds.length > 0) {
         const [identity] = await tx
           .select({
             email: schema.users.email,

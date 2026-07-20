@@ -40,6 +40,9 @@ export function useBillingStatus() {
     () => Boolean(status.value?.realtimeVoice.canBuyMore)
   );
   const unlimited = computed(() => Boolean(status.value?.unlimited));
+  // Незавершённая триал-сессия: попытка израсходована созданием, но интервью
+  // можно продолжить — вместо пейволла ведём в него.
+  const trialResume = computed(() => status.value?.trialResume ?? null);
   // Realtime voice заблокирован: минуты кончились (или их не было).
   const realtimeLocked = computed(
     () =>
@@ -57,6 +60,7 @@ export function useBillingStatus() {
     hasActivePaidAccess,
     canBuyMinutes,
     unlimited,
+    trialResume,
     realtimeLocked,
   };
 }

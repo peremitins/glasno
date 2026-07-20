@@ -52,6 +52,12 @@
     return Boolean(status) && !status!.unlimited && !status!.canCreateInterview;
   });
 
+  // Попытка триала израсходована незавершённой сессией: вместо пейволла
+  // ведём продолжать её.
+  const trialResumeSession = computed(() =>
+    isLaunchLocked.value ? billing.trialResume.value : null
+  );
+
   const hasFullInterviewAccess = computed(
     () =>
       billing.status.value?.allowedSessionGoals.includes('standard') ?? false
@@ -149,6 +155,9 @@
     if (summary.value?.activeSession) {
       return `/interview/${summary.value.activeSession.id}`;
     }
+    if (trialResumeSession.value) {
+      return `/interview/${trialResumeSession.value.sessionId}`;
+    }
     return isLaunchLocked.value ? '/pricing' : '/interview/new';
   });
 
@@ -217,6 +226,11 @@
 
   async function startQuickInterview() {
     if (isLaunchLocked.value) {
+      const resume = trialResumeSession.value;
+      if (resume) {
+        await navigateTo(`/interview/${resume.sessionId}`);
+        return;
+      }
       paywallOpen.value = true;
       return;
     }
@@ -333,14 +347,16 @@
                   :class="{ 'button-loader-content--loading': isSubmitting }"
                 >
                   <span
-                    v-if="isLaunchLocked"
+                    v-if="isLaunchLocked && !trialResumeSession"
                     class="launcher-diamond"
                     aria-hidden="true"
                     >💎</span
                   >
                   {{
                     isLaunchLocked
-                      ? t('dashboard.launcherUnlock')
+                      ? trialResumeSession
+                        ? t('dashboard.launcherContinue')
+                        : t('dashboard.launcherUnlock')
                       : t('dashboard.launcherStart')
                   }}
                   <span class="primary-action__icon" aria-hidden="true">
@@ -425,7 +441,7 @@
 
           <NuxtLink :to="activeLink" class="primary-action">
             {{
-              summary?.activeSession
+              summary?.activeSession || trialResumeSession
                 ? t('dashboard.continue')
                 : isLaunchLocked
                   ? t('dashboard.launcherUnlock')
@@ -498,14 +514,16 @@
                     :class="{ 'button-loader-content--loading': isSubmitting }"
                   >
                     <span
-                      v-if="isLaunchLocked"
+                      v-if="isLaunchLocked && !trialResumeSession"
                       class="launcher-diamond"
                       aria-hidden="true"
                       >💎</span
                     >
                     {{
                       isLaunchLocked
-                        ? t('dashboard.launcherUnlock')
+                        ? trialResumeSession
+                          ? t('dashboard.launcherContinue')
+                          : t('dashboard.launcherUnlock')
                         : t('dashboard.launcherStart')
                     }}
                     <span class="primary-action__icon" aria-hidden="true">

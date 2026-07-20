@@ -15,6 +15,7 @@ import {
   sql,
 } from 'drizzle-orm';
 import { getDb, schema } from '@/server/infrastructure/db/client';
+import { countOwnerFreeSessionsUsed } from '@/server/infrastructure/billing/freeSessionsUsage';
 import { calculateRealtimeVoiceUsageSeconds } from '@/server/application/realtime/realtimeVoiceUsage';
 import { apiError } from '@/server/utils/errors';
 import type {
@@ -30,6 +31,7 @@ import type {
   PaymentMethodRecord,
   PaymentOrderRecord,
   RealtimeMinuteBalance,
+  UnfinishedSessionRecord,
   UpdatePaymentOrderInput,
 } from '@/server/interface/billingRepository';
 
@@ -168,46 +170,39 @@ export class DrizzleBillingRepository implements BillingRepository {
   }
 
   async countOwnerFreeSessionsUsed(owner: BillingOwner): Promise<number> {
-    const [completedReportCount] = await this.db
-      .select({ value: count() })
-      .from(schema.interviewReports)
-      .innerJoin(
-        schema.interviewSessions,
-        eq(schema.interviewReports.sessionId, schema.interviewSessions.id)
-      )
-      .where(
-        and(ownerWhere(owner), eq(schema.interviewReports.status, 'done'))
-      )
-      .limit(1);
-    const completedInterviews = Number(completedReportCount?.value ?? 0);
-    if (!owner.userId) return completedInterviews;
+    return countOwnerFreeSessionsUsed(this.db, owner);
+  }
 
-    const [user] = await this.db
+  async findOwnerUnfinishedSession(
+    owner: BillingOwner
+  ): Promise<UnfinishedSessionRecord | null> {
+    // Незавершённая триал-сессия, которую предлагаем продолжить вместо
+    // создания новой. Страховка от рассинхрона: сессия с готовым отчётом
+    // завершённой считается независимо от status.
+    const [row] = await this.db
       .select({
-        email: schema.users.email,
-        telegramId: schema.users.telegramId,
+        id: schema.interviewSessions.id,
+        vacancyTitle: schema.interviewSessions.vacancyTitle,
+        createdAt: schema.interviewSessions.createdAt,
       })
-      .from(schema.users)
-      .where(eq(schema.users.id, owner.userId))
-      .limit(1);
-    const email = user?.email?.trim().toLowerCase() || null;
-    const telegramId = user?.telegramId || null;
-    if (!email && !telegramId) return completedInterviews;
-
-    const [history] = await this.db
-      .select({ id: schema.trialInterviewHistory.id })
-      .from(schema.trialInterviewHistory)
-      .where(
-        or(
-          email ? eq(schema.trialInterviewHistory.email, email) : sql`false`,
-          telegramId
-            ? eq(schema.trialInterviewHistory.telegramId, telegramId)
-            : sql`false`
+      .from(schema.interviewSessions)
+      .leftJoin(
+        schema.interviewReports,
+        and(
+          eq(schema.interviewReports.sessionId, schema.interviewSessions.id),
+          eq(schema.interviewReports.status, 'done')
         )
       )
+      .where(
+        and(
+          ownerWhere(owner),
+          inArray(schema.interviewSessions.status, ['created', 'running']),
+          isNull(schema.interviewReports.id)
+        )
+      )
+      .orderBy(desc(schema.interviewSessions.createdAt))
       .limit(1);
-
-    return Math.max(completedInterviews, history ? 1 : 0);
+    return row ?? null;
   }
 
   async countOwnerSessionsSince(

@@ -58,6 +58,16 @@ export const BillingStatusResponseDto = z.object({
   freeSessionsLimit: z.number().int().positive(),
   freeSessionsUsed: z.number().int().nonnegative(),
   canCreateInterview: z.boolean(),
+  // Незавершённая триал-сессия: попытка уже израсходована созданием,
+  // но интервью можно продолжить (вместо пейволла показываем «продолжить»).
+  trialResume: z
+    .object({
+      sessionId: z.string().uuid(),
+      vacancyTitle: z.string().nullable(),
+      createdAt: z.string(),
+    })
+    .nullable()
+    .default(null),
   // Какие форматы интервью доступны сейчас (без пропуска — только 'quick').
   allowedSessionGoals: z.array(BillingSessionGoalAccessDto),
   // Есть активный оплаченный пропуск.

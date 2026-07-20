@@ -37,39 +37,98 @@ const PASS_180D = {
   priceRub: 4990,
 };
 
+// Мок цепочек drizzle-select: очередной вызов limit() отдаёт следующий набор
+// строк из очереди независимо от формы цепочки (where/join/orderBy).
+function createSelectDb(rowsQueue: unknown[][]) {
+  return {
+    select: vi.fn().mockImplementation(() => {
+      const query: Record<string, unknown> = {};
+      const chain = () => query;
+      Object.assign(query, {
+        from: chain,
+        where: chain,
+        innerJoin: chain,
+        leftJoin: chain,
+        orderBy: chain,
+        limit: async () => rowsQueue.shift() ?? [],
+      });
+      return query;
+    }),
+  };
+}
+
 describe('DrizzleBillingRepository (модель доступа v2)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it('не считает активную сессию использованным бесплатным интервью до готового отчёта', async () => {
-    const selectRows = [
-      [{ value: 0 }],
+  it('считает незавершённую сессию использованным бесплатным интервью', async () => {
+    // Попытка триала расходуется созданием сессии: одна running-сессия без
+    // отчёта — это уже freeSessionsUsed = 1.
+    const db = createSelectDb([
+      [{ value: 1 }],
       [{ email: 'hello@mentala.app', telegramId: null }],
       [],
-    ];
-    const db = {
-      select: vi.fn().mockImplementation(() => {
-        const query = {
-          limit: async () => selectRows.shift() ?? [],
-        };
-        const source = {
-          where: () => query,
-          innerJoin: () => ({ where: () => query }),
-        };
-        return { from: () => source };
-      }),
-    };
+    ]);
     database.getDb.mockReturnValue(db);
     const repository = new DrizzleBillingRepository();
-    vi.spyOn(repository, 'countOwnerSessions').mockResolvedValue(1);
 
     await expect(
       repository.countOwnerFreeSessionsUsed({
         anonymousSessionId: 'anon_running',
         userId: 'user_1',
       })
-    ).resolves.toBe(0);
+    ).resolves.toBe(1);
+  });
+
+  it('учитывает историю попыток при нуле сессий (пересозданный аккаунт)', async () => {
+    const db = createSelectDb([
+      [{ value: 0 }],
+      [{ email: 'hello@mentala.app', telegramId: null }],
+      [{ id: 'history_1' }],
+    ]);
+    database.getDb.mockReturnValue(db);
+    const repository = new DrizzleBillingRepository();
+
+    await expect(
+      repository.countOwnerFreeSessionsUsed({
+        anonymousSessionId: 'anon_recreated',
+        userId: 'user_1',
+      })
+    ).resolves.toBe(1);
+  });
+
+  it('возвращает самую свежую незавершённую сессию для «продолжить интервью»', async () => {
+    const createdAt = new Date('2026-07-15T10:00:00.000Z');
+    const db = createSelectDb([
+      [{ id: 'session_1', vacancyTitle: 'Frontend-разработчик', createdAt }],
+    ]);
+    database.getDb.mockReturnValue(db);
+    const repository = new DrizzleBillingRepository();
+
+    await expect(
+      repository.findOwnerUnfinishedSession({
+        anonymousSessionId: 'anon_1',
+        userId: null,
+      })
+    ).resolves.toEqual({
+      id: 'session_1',
+      vacancyTitle: 'Frontend-разработчик',
+      createdAt,
+    });
+  });
+
+  it('не предлагает продолжение, когда незавершённых сессий нет', async () => {
+    const db = createSelectDb([[]]);
+    database.getDb.mockReturnValue(db);
+    const repository = new DrizzleBillingRepository();
+
+    await expect(
+      repository.findOwnerUnfinishedSession({
+        anonymousSessionId: 'anon_1',
+        userId: null,
+      })
+    ).resolves.toBeNull();
   });
 
   it('creates the access row with fixed renewal terms on the first pass purchase', async () => {
