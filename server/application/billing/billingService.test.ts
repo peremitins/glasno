@@ -113,6 +113,7 @@ function createRepository(order = createOrder()) {
   const repository = {
     countOwnerSessions: vi.fn().mockResolvedValue(1),
     countOwnerFreeSessionsUsed: vi.fn().mockResolvedValue(1),
+    findOwnerUnfinishedSession: vi.fn().mockResolvedValue(null),
     countOwnerSessionsSince: vi.fn().mockResolvedValue(0),
     findUserEmail: vi.fn().mockResolvedValue('user@example.com'),
     findAccessByUserId: vi.fn().mockImplementation(async () => access),
