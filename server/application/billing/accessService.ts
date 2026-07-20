@@ -40,6 +40,7 @@ export class BillingAccessService {
         BillingRepository,
         | 'countOwnerSessions'
         | 'countOwnerFreeSessionsUsed'
+        | 'findOwnerUnfinishedSession'
         | 'countOwnerSessionsSince'
         | 'findAccessByUserId'
         | 'getRealtimeMinuteBalance'
@@ -117,6 +118,7 @@ export class BillingAccessService {
         freeSessionsLimit: FREE_SESSIONS_LIMIT,
         freeSessionsUsed: 0,
         canCreateInterview: true,
+        trialResume: null,
         allowedSessionGoals: ALL_SESSION_GOALS,
         hasActivePaidAccess: view.active,
         hasRecurringRenewal: view.active && Boolean(view.access?.autoRenew),
@@ -135,11 +137,28 @@ export class BillingAccessService {
       };
     }
 
+    // Активный платный доступ всегда даёт создавать интервью — состояние
+    // триала (использован, брошенная сессия) на платника не влияет.
     const canCreateInterview =
       view.active || freeSessionsUsed < FREE_SESSIONS_LIMIT;
     const allowedSessionGoals: SessionGoalAccess[] = view.active
       ? ALL_SESSION_GOALS
       : FREE_ALLOWED_SESSION_GOALS;
+
+    // Триал исчерпан созданной, но не завершённой сессией — предлагаем
+    // продолжить её вместо пейволла.
+    let trialResume: BillingStatusResponse['trialResume'] = null;
+    if (!canCreateInterview) {
+      const unfinished =
+        await this.deps.repository.findOwnerUnfinishedSession(owner);
+      if (unfinished) {
+        trialResume = {
+          sessionId: unfinished.id,
+          vacancyTitle: unfinished.vacancyTitle,
+          createdAt: unfinished.createdAt.toISOString(),
+        };
+      }
+    }
 
     const includedMinutes = Math.floor(minuteBalance.totalSeconds / 60);
     const remainingMinutes = Math.floor(minuteBalance.remainingSeconds / 60);
@@ -149,6 +168,7 @@ export class BillingAccessService {
       freeSessionsLimit: FREE_SESSIONS_LIMIT,
       freeSessionsUsed,
       canCreateInterview,
+      trialResume,
       allowedSessionGoals,
       hasActivePaidAccess: view.active,
       hasRecurringRenewal: view.active && Boolean(view.access?.autoRenew),

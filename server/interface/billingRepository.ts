@@ -154,11 +154,25 @@ export interface RealtimeMinuteBalance {
   remainingSeconds: number;
 }
 
+// Незавершённая сессия владельца — предлагается к продолжению в триале
+// вместо создания новой.
+export interface UnfinishedSessionRecord {
+  id: string;
+  vacancyTitle: string | null;
+  createdAt: Date;
+}
+
 export interface BillingRepository {
   countOwnerSessions(owner: BillingOwner): Promise<number>;
-  // Использованные бесплатные интервью: текущие сессии владельца плюс
-  // неизменяемая история завершённых интервью для email/Telegram ID.
+  // Использованные бесплатные интервью: все созданные сессии владельца
+  // (попытка расходуется при создании, не при отчёте) плюс неизменяемая
+  // история попыток для email/Telegram ID.
   countOwnerFreeSessionsUsed(owner: BillingOwner): Promise<number>;
+  // Самая свежая незавершённая сессия владельца (status created|running,
+  // без готового отчёта) — для «продолжить интервью» в триале.
+  findOwnerUnfinishedSession(
+    owner: BillingOwner
+  ): Promise<UnfinishedSessionRecord | null>;
   // Для антиабьюз-порогов: сколько сессий создано с указанного момента.
   countOwnerSessionsSince(owner: BillingOwner, since: Date): Promise<number>;
   findUserEmail(userId: string): Promise<string | null>;

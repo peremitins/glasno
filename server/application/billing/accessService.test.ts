@@ -36,6 +36,11 @@ function createRepository(
     durableTrialSessionsUsed?: number;
     sessionsSince?: number;
     access?: PaidAccessRecord | null;
+    unfinishedSession?: {
+      id: string;
+      vacancyTitle: string | null;
+      createdAt: Date;
+    } | null;
     minuteBalance?: {
       totalSeconds: number;
       consumedSeconds: number;
@@ -48,6 +53,9 @@ function createRepository(
     countOwnerFreeSessionsUsed: vi
       .fn()
       .mockResolvedValue(overrides.durableTrialSessionsUsed ?? 0),
+    findOwnerUnfinishedSession: vi
+      .fn()
+      .mockResolvedValue(overrides.unfinishedSession ?? null),
     countOwnerSessionsSince: vi
       .fn()
       .mockResolvedValue(overrides.sessionsSince ?? 0),
@@ -179,6 +187,69 @@ describe('BillingAccessService', () => {
       anonymousSessionId: 'anon_recreated',
       userId: 'user_recreated',
     });
+  });
+
+  it('offers to resume the unfinished trial session instead of a paywall', async () => {
+    const createdAt = new Date('2026-07-15T10:00:00.000Z');
+    const repository = createRepository({
+      durableTrialSessionsUsed: 1,
+      unfinishedSession: {
+        id: 'session_1',
+        vacancyTitle: 'Frontend-разработчик',
+        createdAt,
+      },
+    });
+    const service = new BillingAccessService({ repository });
+
+    await expect(
+      service.getStatus({ anonymousSessionId: 'anon_1', userId: null })
+    ).resolves.toMatchObject({
+      canCreateInterview: false,
+      trialResume: {
+        sessionId: 'session_1',
+        vacancyTitle: 'Frontend-разработчик',
+        createdAt: createdAt.toISOString(),
+      },
+    });
+  });
+
+  it('returns no trialResume while the trial attempt is still available', async () => {
+    const repository = createRepository({ durableTrialSessionsUsed: 0 });
+    const service = new BillingAccessService({ repository });
+
+    await expect(
+      service.getStatus({ anonymousSessionId: 'anon_1', userId: null })
+    ).resolves.toMatchObject({ canCreateInterview: true, trialResume: null });
+    expect(repository.findOwnerUnfinishedSession).not.toHaveBeenCalled();
+  });
+
+  it('keeps unlimited interviews for a paid pass despite an unfinished trial session', async () => {
+    // Критичный кейс: юзер начал (или не начал) бесплатное интервью, не
+    // завершил его и купил пропуск — активный доступ открывает создание
+    // интервью без ограничений и без «продолжите начатое».
+    const repository = createRepository({
+      durableTrialSessionsUsed: 1,
+      access: accessRecord(),
+      unfinishedSession: {
+        id: 'session_1',
+        vacancyTitle: null,
+        createdAt: new Date('2026-07-15T10:00:00.000Z'),
+      },
+    });
+    const service = new BillingAccessService({ repository });
+
+    await expect(
+      service.assertCanCreateInterview(
+        { anonymousSessionId: 'anon_1', userId: 'user_1' },
+        { sessionGoal: 'deep' }
+      )
+    ).resolves.toMatchObject({
+      canCreateInterview: true,
+      hasActivePaidAccess: true,
+      trialResume: null,
+      allowedSessionGoals: ['quick', 'standard', 'deep'],
+    });
+    expect(repository.findOwnerUnfinishedSession).not.toHaveBeenCalled();
   });
 
   it('blocks deep formats for trial users', async () => {

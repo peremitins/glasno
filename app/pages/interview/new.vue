@@ -96,7 +96,10 @@
   }
 
   onMounted(() => {
-    void billing.ensureLoaded();
+    // refresh, а не ensureLoaded: после создания сессии кэш статуса устарел
+    // (попытка триала расходуется созданием) — иначе покажем незаблокированный
+    // запуск при возврате на страницу.
+    void billing.refresh();
   });
 
   // Все форматы интервью в порядке возрастания длительности. Отдельная
@@ -132,6 +135,12 @@
     const status = billing.status.value;
     return Boolean(status) && !status!.unlimited && !status!.canCreateInterview;
   });
+
+  // Попытка триала израсходована незавершённой сессией: вместо пейволла
+  // предлагаем продолжить её.
+  const trialResumeSession = computed(() =>
+    isLaunchLocked.value ? billing.trialResume.value : null
+  );
 
   function selectSessionGoal(goal: InterviewSessionGoal) {
     if (isSessionGoalLocked(goal)) {
@@ -930,6 +939,11 @@
 
   async function submit() {
     if (isLaunchLocked.value) {
+      const resume = trialResumeSession.value;
+      if (resume) {
+        await navigateTo(`/interview/${resume.sessionId}`);
+        return;
+      }
       paywallOpen.value = true;
       return;
     }
@@ -1849,7 +1863,11 @@
           {{ submitBlockerMessage }}
         </p>
         <p v-else-if="isLaunchLocked" class="actions-hint actions-hint--locked">
-          {{ t('interview.new.actions.lockedHint') }}
+          {{
+            trialResumeSession
+              ? t('interview.new.actions.continueHint')
+              : t('interview.new.actions.lockedHint')
+          }}
         </p>
         <button
           class="primary-action start-button button-loader-host"
@@ -1863,14 +1881,16 @@
             :class="{ 'button-loader-content--loading': isSubmitting }"
           >
             <span
-              v-if="isLaunchLocked"
+              v-if="isLaunchLocked && !trialResumeSession"
               class="start-button__diamond"
               aria-hidden="true"
               >💎</span
             >
             {{
               isLaunchLocked
-                ? t('interview.new.actions.unlock')
+                ? trialResumeSession
+                  ? t('interview.new.actions.continueInterview')
+                  : t('interview.new.actions.unlock')
                 : t(
                     isInterviewerTraining
                       ? 'interview.new.actions.startInterviewer'

@@ -1,5 +1,6 @@
-import { and, count, desc, eq, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, isNull } from 'drizzle-orm';
 import { getDb, schema } from '@/server/infrastructure/db/client';
+import { countOwnerFreeSessionsUsed } from '@/server/infrastructure/billing/freeSessionsUsage';
 import type {
   DashboardRepository,
   DashboardSessionRecord,
@@ -29,45 +30,7 @@ export class DrizzleDashboardRepository implements DashboardRepository {
   private readonly db = getDb();
 
   async countOwnerFreeSessionsUsed(owner: BillingOwner): Promise<number> {
-    const [completedReportCount] = await this.db
-      .select({ value: count() })
-      .from(schema.interviewReports)
-      .innerJoin(
-        schema.interviewSessions,
-        eq(schema.interviewReports.sessionId, schema.interviewSessions.id)
-      )
-      .where(
-        and(ownerWhere(owner), eq(schema.interviewReports.status, 'done'))
-      )
-      .limit(1);
-    const completedInterviews = Number(completedReportCount?.value ?? 0);
-    if (!owner.userId) return completedInterviews;
-
-    const [user] = await this.db
-      .select({
-        email: schema.users.email,
-        telegramId: schema.users.telegramId,
-      })
-      .from(schema.users)
-      .where(eq(schema.users.id, owner.userId))
-      .limit(1);
-    const email = user?.email?.trim().toLowerCase() || null;
-    const telegramId = user?.telegramId || null;
-    if (!email && !telegramId) return completedInterviews;
-
-    const [history] = await this.db
-      .select({ id: schema.trialInterviewHistory.id })
-      .from(schema.trialInterviewHistory)
-      .where(
-        or(
-          email ? eq(schema.trialInterviewHistory.email, email) : sql`false`,
-          telegramId
-            ? eq(schema.trialInterviewHistory.telegramId, telegramId)
-            : sql`false`
-        )
-      )
-      .limit(1);
-    return Math.max(completedInterviews, history ? 1 : 0);
+    return countOwnerFreeSessionsUsed(this.db, owner);
   }
 
   async listOwnerSessions(
