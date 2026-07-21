@@ -12,3 +12,4 @@ export * from './billing';
 export * from './learningTerms';
 export * from './onboarding';
 export * from './questionPreferences';
+export * from './support';

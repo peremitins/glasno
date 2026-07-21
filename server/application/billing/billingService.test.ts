@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { BillingService } from './billingService';
+import { BillingService, resolveRenewalNoticeLeadMs } from './billingService';
 import {
   createYooKassaPayment,
   createYooKassaPaymentMethodBinding,
@@ -8,6 +8,7 @@ import {
   getYooKassaPaymentMethod,
 } from './yookassaClient';
 import {
+  sendRenewalChargedEmail,
   sendRenewalFailedEmail,
   sendRenewalNoticeEmail,
 } from './renewalEmailSender';
@@ -33,6 +34,7 @@ vi.mock('./yookassaClient', async (importOriginal) => {
 vi.mock('./renewalEmailSender', () => ({
   sendRenewalNoticeEmail: vi.fn().mockResolvedValue(true),
   sendRenewalFailedEmail: vi.fn().mockResolvedValue(true),
+  sendRenewalChargedEmail: vi.fn().mockResolvedValue(true),
 }));
 
 const mockedGetYooKassaPayment = vi.mocked(getYooKassaPayment);
@@ -46,6 +48,7 @@ const mockedCreateYooKassaRecurringPayment = vi.mocked(
 );
 const mockedSendRenewalNoticeEmail = vi.mocked(sendRenewalNoticeEmail);
 const mockedSendRenewalFailedEmail = vi.mocked(sendRenewalFailedEmail);
+const mockedSendRenewalChargedEmail = vi.mocked(sendRenewalChargedEmail);
 
 function createOrder(
   overrides: Partial<PaymentOrderRecord> = {}
@@ -1396,6 +1399,101 @@ describe('BillingService renewal sweep', () => {
     expect(repository.fulfillPaidOrder).toHaveBeenCalledOnce();
   });
 
+  it('confirms a successful renewal by email regardless of pass duration', async () => {
+    const due = createAccess({
+      planId: 'pass_7d',
+      renewalPlanId: 'pass_7d',
+      renewalAmountRub: 449,
+      autoRenew: true,
+      nextChargeAt: new Date('2026-07-31T09:00:00.000Z'),
+    });
+    const renewalOrder = createOrder({
+      id: 'renewal_order_1',
+      planId: 'pass_7d',
+      providerPaymentId: null,
+      status: 'pending',
+      amountRub: 449,
+    });
+    const repository = createRepository(renewalOrder);
+    repository.listAccessDueForCharge.mockResolvedValue([due]);
+    repository.claimAccessForCharge.mockResolvedValue({
+      ...due,
+      chargeAttempts: 1,
+    });
+    repository.findPaymentMethodByUserId.mockResolvedValue(
+      activePaymentMethod
+    );
+    repository.createPaymentOrder.mockResolvedValue(renewalOrder);
+    repository.findAccessByUserId.mockResolvedValue(
+      createAccess({
+        planId: 'pass_7d',
+        currentPeriodEnd: new Date('2026-08-07T10:00:00.000Z'),
+      })
+    );
+    mockedCreateYooKassaRecurringPayment.mockResolvedValue({
+      id: 'renewal_payment_1',
+      status: 'succeeded',
+    });
+    mockedGetYooKassaPayment.mockResolvedValue({
+      id: 'renewal_payment_1',
+      status: 'succeeded',
+      paid: true,
+      amountValue: '449.00',
+      currency: 'RUB',
+      metadata: { orderId: 'renewal_order_1' },
+      paymentMethod: null,
+    });
+    const service = createService(repository);
+
+    await service.runAutoRenewalSweep();
+
+    expect(mockedSendRenewalChargedEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: 'user@example.com',
+        planName: 'Полный доступ · 7 дн.',
+        amountRub: 449,
+        accessUntil: new Date('2026-08-07T10:00:00.000Z'),
+      })
+    );
+  });
+
+  it('does not confirm a declined renewal', async () => {
+    const due = createAccess();
+    const renewalOrder = createOrder({
+      id: 'renewal_order_1',
+      providerPaymentId: null,
+      status: 'pending',
+    });
+    const repository = createRepository(renewalOrder);
+    repository.listAccessDueForCharge.mockResolvedValue([due]);
+    repository.claimAccessForCharge.mockResolvedValue({
+      ...due,
+      chargeAttempts: 1,
+    });
+    repository.findPaymentMethodByUserId.mockResolvedValue(
+      activePaymentMethod
+    );
+    repository.createPaymentOrder.mockResolvedValue(renewalOrder);
+    mockedCreateYooKassaRecurringPayment.mockResolvedValue({
+      id: 'renewal_payment_1',
+      status: 'pending',
+    });
+    mockedGetYooKassaPayment.mockResolvedValue({
+      id: 'renewal_payment_1',
+      status: 'canceled',
+      paid: false,
+      amountValue: '1190.00',
+      currency: 'RUB',
+      metadata: { orderId: 'renewal_order_1' },
+      paymentMethod: null,
+    });
+    const service = createService(repository);
+
+    await service.runAutoRenewalSweep();
+
+    expect(mockedSendRenewalChargedEmail).not.toHaveBeenCalled();
+  });
+
   it('uses the due-access query for the opportunistic backup', async () => {
     const due = createAccess({
       autoRenew: true,
@@ -1548,6 +1646,20 @@ describe('BillingService renewal sweep', () => {
   });
 });
 
+describe('resolveRenewalNoticeLeadMs', () => {
+  const DAY = 24 * 60 * 60 * 1000;
+
+  it('stays silent for short passes and scales the lead with duration', () => {
+    expect(resolveRenewalNoticeLeadMs(7)).toBeNull();
+    expect(resolveRenewalNoticeLeadMs(15)).toBeNull();
+    expect(resolveRenewalNoticeLeadMs(29)).toBeNull();
+    expect(resolveRenewalNoticeLeadMs(30)).toBe(3 * DAY);
+    expect(resolveRenewalNoticeLeadMs(89)).toBe(3 * DAY);
+    expect(resolveRenewalNoticeLeadMs(90)).toBe(7 * DAY);
+    expect(resolveRenewalNoticeLeadMs(365)).toBe(7 * DAY);
+  });
+});
+
 describe('BillingService renewal notices', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -1598,13 +1710,13 @@ describe('BillingService renewal notices', () => {
     expect(mockedSendRenewalNoticeEmail).not.toHaveBeenCalled();
   });
 
-  it('waits for the 1-day lead on short passes', async () => {
+  it('never notifies short passes, even on the charge date', async () => {
     const access = createAccess({
       planId: 'pass_7d',
       renewalPlanId: 'pass_7d',
       renewalAmountRub: 449,
-      // Списание через 2 дня: для 7-дневного пропуска ещё рано (lead 1 день).
-      nextChargeAt: new Date('2026-07-31T10:00:00.000Z'),
+      // Списание уже сегодня — коротким пропускам письмо всё равно не шлём.
+      nextChargeAt: new Date('2026-07-29T10:00:00.000Z'),
     });
     const repository = createRepository();
     repository.listAccessDueForRenewalNotice.mockResolvedValue([access]);
@@ -1615,6 +1727,31 @@ describe('BillingService renewal notices', () => {
       skipped: 1,
     });
     expect(repository.claimRenewalNotice).not.toHaveBeenCalled();
+    expect(mockedSendRenewalNoticeEmail).not.toHaveBeenCalled();
+  });
+
+  it('notifies long passes 7 days ahead', async () => {
+    const access = createAccess({
+      planId: 'pass_365d',
+      renewalPlanId: 'pass_365d',
+      renewalAmountRub: 4990,
+      // Через 3 дня письмо для 30-дневного ушло бы, для годового — рано.
+      nextChargeAt: new Date('2026-08-05T10:00:00.000Z'),
+    });
+    const repository = createRepository();
+    repository.listAccessDueForRenewalNotice.mockResolvedValue([access]);
+    const service = createService(repository);
+
+    await expect(service.runRenewalNoticeSweep()).resolves.toEqual({
+      sent: 1,
+      skipped: 0,
+    });
+    expect(mockedSendRenewalNoticeEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        planName: 'Полный доступ · 365 дн.',
+        amountRub: 4990,
+      })
+    );
   });
 
   it('claims but skips sending when the user has no email', async () => {
