@@ -1,4 +1,4 @@
-import { and, asc, eq, isNull } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull } from 'drizzle-orm';
 import { getDb, schema } from '@/server/infrastructure/db/client';
 import { apiError } from '@/server/utils/errors';
 import type {
@@ -151,6 +151,24 @@ export class DrizzleInterviewRepository implements InterviewRepository {
 
   async deleteSession(id: string): Promise<boolean> {
     const [deleted] = await this.db.transaction(async (tx) => {
+      const voiceSessions = await tx
+        .select({ id: schema.realtimeVoiceSessions.id })
+        .from(schema.realtimeVoiceSessions)
+        .where(eq(schema.realtimeVoiceSessions.interviewSessionId, id));
+      const voiceSessionIds = voiceSessions.map((row) => row.id);
+
+      // Списания минут сохраняем для аудита, но они ссылаются на голосовую
+      // сессию. Сначала снимаем эту ссылку, иначе PostgreSQL не даст удалить
+      // realtime_voice_sessions из-за внешнего ключа.
+      if (voiceSessionIds.length > 0) {
+        await tx
+          .update(schema.realtimeMinuteDebits)
+          .set({ realtimeSessionId: null })
+          .where(
+            inArray(schema.realtimeMinuteDebits.realtimeSessionId, voiceSessionIds)
+          );
+      }
+
       await tx
         .delete(schema.realtimeVoiceSessions)
         .where(eq(schema.realtimeVoiceSessions.interviewSessionId, id));
