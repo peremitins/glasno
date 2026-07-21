@@ -38,6 +38,7 @@ import {
 import { GiftNotificationService } from './giftNotificationService';
 import { sendGiftNotificationEmail } from './giftEmailSender';
 import {
+  sendRenewalChargedEmail,
   sendRenewalFailedEmail,
   sendRenewalNoticeEmail,
 } from './renewalEmailSender';
@@ -49,11 +50,30 @@ import type { TelegramAlertsService } from '@/server/application/telegram/telegr
 export const AUTO_RENEW_RETRY_AFTER_MS = 24 * 60 * 60 * 1000;
 export const AUTO_RENEW_MAX_ATTEMPTS = 3;
 
-// Предуведомление о списании: за 3 дня для пропусков от 30 дней, за 1 день
-// для коротких. Горизонт выборки — максимальный из сроков.
-const RENEWAL_NOTICE_LONG_LEAD_MS = 3 * 24 * 60 * 60 * 1000;
-const RENEWAL_NOTICE_SHORT_LEAD_MS = 24 * 60 * 60 * 1000;
-const RENEWAL_NOTICE_LONG_LEAD_MIN_DURATION_DAYS = 30;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// Политика предуведомлений о списании. Коротким пропускам (7–15 дней) письмо
+// не шлём: покупка ещё свежа в памяти, напоминание читается как спам и как
+// приглашение отписаться. Чем длиннее пропуск — тем выше шанс, что о сервисе
+// забыли, поэтому предупреждаем заранее. Подтверждение состоявшегося списания
+// (sendRenewalChargedEmail) уходит всем и от срока не зависит.
+const RENEWAL_NOTICE_LEAD_RULES: { minDurationDays: number; leadMs: number }[] =
+  [
+    { minDurationDays: 90, leadMs: 7 * DAY_MS },
+    { minDurationDays: 30, leadMs: 3 * DAY_MS },
+  ];
+// Горизонт выборки кандидатов — максимальный из lead-сроков.
+const RENEWAL_NOTICE_MAX_LEAD_MS = Math.max(
+  ...RENEWAL_NOTICE_LEAD_RULES.map((rule) => rule.leadMs)
+);
+
+// null — предуведомление для этого срока не отправляем вовсе.
+export function resolveRenewalNoticeLeadMs(durationDays: number): number | null {
+  const rule = RENEWAL_NOTICE_LEAD_RULES.find(
+    (candidate) => durationDays >= candidate.minDurationDays
+  );
+  return rule?.leadMs ?? null;
+}
 
 export interface BillingServiceConfig {
   yookassa: YooKassaConfig;
@@ -616,7 +636,7 @@ export class BillingService {
   }
 
   // Предуведомления о предстоящем автосписании (ТЗ тарифы v2, раздел 3):
-  // за 1 день для коротких пропусков, за 3 дня для 30+. Идемпотентно:
+  // сроки — в resolveRenewalNoticeLeadMs. Идемпотентно:
   // claim через renewal_notice_sent_at — параллельные обходы письмо не
   // продублируют (at-most-once: потерянное письмо лучше двойного).
   async runRenewalNoticeSweep(params?: {
@@ -627,7 +647,7 @@ export class BillingService {
     const candidates =
       await this.deps.repository.listAccessDueForRenewalNotice({
         now,
-        horizonMs: RENEWAL_NOTICE_LONG_LEAD_MS,
+        horizonMs: RENEWAL_NOTICE_MAX_LEAD_MS,
         limit: params?.limit ?? 50,
       });
 
@@ -640,12 +660,15 @@ export class BillingService {
           skipped += 1;
           continue;
         }
-        const leadMs =
-          plan.durationDays >= RENEWAL_NOTICE_LONG_LEAD_MIN_DURATION_DAYS
-            ? RENEWAL_NOTICE_LONG_LEAD_MS
-            : RENEWAL_NOTICE_SHORT_LEAD_MS;
+        const leadMs = resolveRenewalNoticeLeadMs(plan.durationDays);
+        if (leadMs === null) {
+          // Короткий пропуск: предуведомление не шлём совсем — покупка свежая,
+          // подтверждение придёт по факту списания.
+          skipped += 1;
+          continue;
+        }
         if (access.nextChargeAt.getTime() - now.getTime() > leadMs) {
-          // Для короткого пропуска ещё рано — попадёт в следующий обход.
+          // Ещё рано — запись попадёт в один из следующих обходов.
           skipped += 1;
           continue;
         }
@@ -683,6 +706,36 @@ export class BillingService {
       console.info('[billing] renewal notice sweep done', { sent, skipped });
     }
     return { sent, skipped };
+  }
+
+  // Подтверждение состоявшегося автопродления. Уходит всем, независимо от
+  // срока пропуска. Никогда не бросает: сбой письма не должен откатывать
+  // уже выданный доступ.
+  private async notifyRenewalCharged(params: {
+    userId: string;
+    planName: string;
+    amountRub: number;
+  }): Promise<void> {
+    try {
+      const email = await this.deps.repository.findUserEmail(params.userId);
+      if (!email) return;
+      const access = await this.deps.repository.findAccessByUserId(
+        params.userId
+      );
+      if (!access) return;
+      await sendRenewalChargedEmail({
+        to: email,
+        planName: params.planName,
+        amountRub: params.amountRub,
+        accessUntil: access.currentPeriodEnd,
+        pricingUrl: buildPricingUrl(this.deps.config.appUrl),
+      });
+    } catch (err) {
+      console.error('[billing] renewal charged email failed', {
+        userId: params.userId,
+        err,
+      });
+    }
   }
 
   private requireYooKassaConfig() {
@@ -793,6 +846,12 @@ export class BillingService {
           `Списание отклонено (${verified.status})`,
           now
         );
+      } else if (verified.status === 'succeeded' && verified.paid) {
+        await this.notifyRenewalCharged({
+          userId,
+          planName: plan.name,
+          amountRub,
+        });
       }
     } catch (err) {
       await this.deps.repository.updatePaymentOrder({

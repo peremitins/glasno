@@ -1,5 +1,6 @@
 <script setup lang="ts">
   import {
+    ChatBubbleIcon,
     CheckIcon,
     Cross2Icon,
     ExitIcon,
@@ -35,6 +36,11 @@
   const devCode = ref('');
   const deleteDialogOpen = ref(false);
   const deleteError = ref('');
+  const supportDialogOpen = ref(false);
+  const supportSubject = ref('');
+  const supportMessage = ref('');
+  const supportError = ref('');
+  const supportStatus = ref<'idle' | 'sending' | 'sent'>('idle');
   const isDeletingAccount = ref(false);
   const isDisplayNameEditing = ref(false);
   const profileDisplayName = ref('');
@@ -54,7 +60,7 @@
   const MAX_AVATAR_SIZE_BYTES = 5 * 1024 * 1024;
   const AVATAR_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 
-  useBodyScrollLock(() => deleteDialogOpen.value);
+  useBodyScrollLock(() => deleteDialogOpen.value || supportDialogOpen.value);
   const profileAuthAction = ref<'send-code' | 'verify-code' | 'logout' | null>(
     null
   );
@@ -337,6 +343,50 @@
     } finally {
       isDeletingAvatar.value = false;
       finishProfileMutation('avatar-delete');
+    }
+  }
+
+  function openSupportDialog() {
+    supportError.value = '';
+    supportStatus.value = 'idle';
+    supportDialogOpen.value = true;
+  }
+
+  function closeSupportDialog() {
+    if (supportStatus.value === 'sending') return;
+    supportDialogOpen.value = false;
+    supportError.value = '';
+    if (supportStatus.value === 'sent') {
+      supportSubject.value = '';
+      supportMessage.value = '';
+      supportStatus.value = 'idle';
+    }
+  }
+
+  async function submitSupportMessage() {
+    if (supportStatus.value === 'sending') return;
+    const message = supportMessage.value.trim();
+    if (message.length < 5) {
+      supportError.value = t('profile.support.tooShort');
+      return;
+    }
+
+    supportStatus.value = 'sending';
+    supportError.value = '';
+
+    try {
+      await api('/api/support/message', {
+        method: 'POST',
+        body: {
+          subject: supportSubject.value.trim() || undefined,
+          message,
+        },
+      });
+      supportStatus.value = 'sent';
+    } catch (err) {
+      supportStatus.value = 'idle';
+      const data = (err as { data?: { error?: { message?: string } } }).data;
+      supportError.value = data?.error?.message || t('profile.support.error');
     }
   }
 
@@ -658,6 +708,15 @@
         </div>
 
         <div class="settings-list">
+          <button type="button" class="settings-row" @click="openSupportDialog">
+            <span class="settings-row__icon" aria-hidden="true">
+              <ChatBubbleIcon />
+            </span>
+            <span class="settings-row__content">
+              <span>{{ t('profile.support.entry') }}</span>
+              <small>{{ t('profile.support.entryHint') }}</small>
+            </span>
+          </button>
           <a
             class="settings-row"
             :href="termsOfServiceUrl"
@@ -848,6 +907,111 @@
               >
                 {{ t('profile.delete.confirm') }}
               </span>
+            </button>
+          </div>
+        </section>
+      </div>
+    </Teleport>
+
+    <Teleport to="body">
+      <div
+        v-if="supportDialogOpen"
+        class="delete-backdrop"
+        role="presentation"
+        @click.self="closeSupportDialog"
+      >
+        <section
+          class="delete-dialog glass-frame"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="support-dialog-title"
+        >
+          <div>
+            <p class="panel-label">{{ t('profile.support.kicker') }}</p>
+            <h2 id="support-dialog-title">
+              {{ t('profile.support.title') }}
+            </h2>
+            <p class="dialog-copy">
+              {{
+                supportStatus === 'sent'
+                  ? t('profile.support.sentText')
+                  : t('profile.support.text')
+              }}
+            </p>
+          </div>
+
+          <template v-if="supportStatus !== 'sent'">
+            <div class="field">
+              <label for="support-subject">
+                {{ t('profile.support.subjectLabel') }}
+                <span class="field-optional">
+                  {{ t('profile.support.optional') }}
+                </span>
+              </label>
+              <input
+                id="support-subject"
+                v-model="supportSubject"
+                class="soft-control"
+                type="text"
+                maxlength="200"
+                :placeholder="t('profile.support.subjectPlaceholder')"
+                :disabled="supportStatus === 'sending'"
+              />
+            </div>
+
+            <div class="field">
+              <label for="support-message">
+                {{ t('profile.support.messageLabel') }}
+              </label>
+              <textarea
+                id="support-message"
+                v-model="supportMessage"
+                class="soft-control support-textarea"
+                rows="5"
+                maxlength="4000"
+                :placeholder="t('profile.support.messagePlaceholder')"
+                :disabled="supportStatus === 'sending'"
+              />
+            </div>
+
+            <p v-if="supportError" class="delete-error">{{ supportError }}</p>
+
+            <div class="dialog-actions">
+              <button
+                type="button"
+                class="secondary-action secondary-action--compact"
+                :disabled="supportStatus === 'sending'"
+                @click="closeSupportDialog"
+              >
+                {{ t('profile.support.cancel') }}
+              </button>
+              <button
+                type="button"
+                class="primary-action button-loader-host"
+                :disabled="supportStatus === 'sending'"
+                @click="submitSupportMessage"
+              >
+                <ButtonLoader v-if="supportStatus === 'sending'" />
+                <span
+                  class="button-loader-content"
+                  :class="{
+                    'button-loader-content--loading':
+                      supportStatus === 'sending',
+                  }"
+                >
+                  {{ t('profile.support.submit') }}
+                </span>
+              </button>
+            </div>
+          </template>
+
+          <div v-else class="dialog-actions">
+            <button
+              type="button"
+              class="primary-action"
+              @click="closeSupportDialog"
+            >
+              {{ t('profile.support.close') }}
             </button>
           </div>
         </section>
@@ -1289,10 +1453,15 @@
       transform var(--motion-fast) var(--ease-out);
   }
 
-  .settings-row[href]:hover {
+  .settings-row[href]:hover,
+  button.settings-row:enabled:hover {
     border-color: var(--glass-border-strong);
     background: var(--surface-raised);
     transform: translateY(-1px);
+  }
+
+  button.settings-row {
+    cursor: pointer;
   }
 
   .settings-row:disabled {
@@ -1481,6 +1650,12 @@
   .dialog-copy {
     color: var(--text-secondary);
     line-height: 1.5;
+  }
+
+  .support-textarea {
+    resize: vertical;
+    min-height: 120px;
+    padding: 12px 14px;
   }
 
   @media (max-width: 920px) {

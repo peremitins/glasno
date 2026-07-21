@@ -40,6 +40,7 @@ export async function sendSmtpEmail(input: {
   subject: string;
   text: string;
   html: string;
+  replyTo?: string;
 }): Promise<boolean> {
   const smtp = readSmtpConfig();
   if (!smtp) {

@@ -10,7 +10,9 @@ const DATE_FORMAT = new Intl.DateTimeFormat('ru-RU', {
 const PRICE_FORMAT = new Intl.NumberFormat('ru-RU');
 
 // Предуведомление о предстоящем автосписании (ТЗ тарифы v2, раздел 3):
-// прозрачность списаний и защита от чарджбеков.
+// прозрачность списаний и защита от чарджбеков. Шлём только длинным
+// пропускам — см. resolveRenewalNoticeLeadMs. Тон письма — про сохранение
+// доступа, а не про отмену: отписка доступна, но не выносится в заголовок.
 export async function sendRenewalNoticeEmail(input: {
   to: string;
   planName: string;
@@ -20,23 +22,58 @@ export async function sendRenewalNoticeEmail(input: {
 }): Promise<boolean> {
   const date = DATE_FORMAT.format(input.chargeAt);
   const amount = PRICE_FORMAT.format(input.amountRub);
-  const subject = `Гласно: продление доступа ${date}`;
-  const text = `Напоминаем о продлении доступа в Гласно
+  const subject = `Гласно: доступ продлится ${date}`;
+  const text = `Доступ продлится автоматически
 
-${date} мы автоматически продлим «${input.planName}» и спишем ${amount} ₽ с привязанной карты.
+${date} мы продлим «${input.planName}» и спишем ${amount} ₽ с привязанной карты.
 
-Если продление не нужно, отключите его в настройках до даты списания — доступ сохранится до конца оплаченного срока: ${input.pricingUrl}
+Интервью, разборы и PDF-отчёты останутся доступны без перерыва. Делать ничего не нужно.
 
-Если всё в порядке, ничего делать не нужно.`;
+Отключить автопродление можно в настройках. Тогда доступ сохранится до конца оплаченного срока: ${input.pricingUrl}`;
   const html = renewalEmailHtml({
-    title: 'Напоминаем о продлении доступа',
+    title: 'Доступ продлится автоматически',
     paragraphs: [
-      `${escapeHtml(date)} мы автоматически продлим «${escapeHtml(input.planName)}» и спишем <strong style="color:#191b2e;">${escapeHtml(amount)} ₽</strong> с привязанной карты.`,
-      'Если продление не нужно, отключите его в настройках до даты списания — доступ сохранится до конца оплаченного срока.',
-      'Если всё в порядке, ничего делать не нужно.',
+      `${escapeHtml(date)} мы продлим «${escapeHtml(input.planName)}» и спишем <strong style="color:#191b2e;">${escapeHtml(amount)} ₽</strong> с привязанной карты.`,
+      'Интервью, разборы и PDF-отчёты останутся доступны без перерыва. Делать ничего не нужно.',
     ],
-    ctaLabel: 'Управлять автопродлением',
+    ctaLabel: 'Открыть Гласно',
     ctaUrl: input.pricingUrl,
+    footnote:
+      'Отключить автопродление можно в настройках. Тогда доступ сохранится до конца оплаченного срока.',
+  });
+  return await sendSmtpEmail({ to: input.to, subject, text, html });
+}
+
+// Подтверждение состоявшегося продления. Шлём всегда, независимо от срока
+// пропуска: это ожидаемый документ, который снимает большую часть вопросов
+// «что за списание» — и он дешевле чарджбека.
+export async function sendRenewalChargedEmail(input: {
+  to: string;
+  planName: string;
+  amountRub: number;
+  accessUntil: Date;
+  pricingUrl: string;
+}): Promise<boolean> {
+  const until = DATE_FORMAT.format(input.accessUntil);
+  const amount = PRICE_FORMAT.format(input.amountRub);
+  const subject = `Гласно: доступ продлён до ${until}`;
+  const text = `Доступ продлён
+
+Мы продлили «${input.planName}» и списали ${amount} ₽ с привязанной карты. Доступ активен до ${until}.
+
+Фискальный чек придёт отдельным письмом от платёжного сервиса.
+
+Отключить автопродление можно в настройках: ${input.pricingUrl}`;
+  const html = renewalEmailHtml({
+    title: 'Доступ продлён',
+    paragraphs: [
+      `Мы продлили «${escapeHtml(input.planName)}» и списали <strong style="color:#191b2e;">${escapeHtml(amount)} ₽</strong> с привязанной карты.`,
+      `Доступ активен до <strong style="color:#191b2e;">${escapeHtml(until)}</strong>.`,
+    ],
+    ctaLabel: 'Продолжить тренировки',
+    ctaUrl: input.pricingUrl,
+    footnote:
+      'Фискальный чек придёт отдельным письмом от платёжного сервиса. Отключить автопродление можно в настройках.',
   });
   return await sendSmtpEmail({ to: input.to, subject, text, html });
 }
@@ -53,14 +90,14 @@ export async function sendRenewalFailedEmail(input: {
   const subject = 'Гласно: не удалось продлить доступ';
   const text = `Не удалось продлить доступ в Гласно
 
-Мы не смогли списать ${amount} ₽ за продление «${input.planName}» с привязанной карты, поэтому автопродление выключено. Доступ останется активным до конца оплаченного срока.
+Мы не смогли списать ${amount} ₽ за продление «${input.planName}» с привязанной карты, поэтому автопродление выключено. Доступ сохранится до конца оплаченного срока.
 
 Чтобы продолжить тренировки без перерыва, обновите карту и продлите доступ: ${input.pricingUrl}`;
   const html = renewalEmailHtml({
     title: 'Не удалось продлить доступ',
     paragraphs: [
       `Мы не смогли списать <strong style="color:#191b2e;">${escapeHtml(amount)} ₽</strong> за продление «${escapeHtml(input.planName)}» с привязанной карты, поэтому автопродление выключено.`,
-      'Доступ останется активным до конца оплаченного срока.',
+      'Доступ сохранится до конца оплаченного срока.',
       'Чтобы продолжить тренировки без перерыва, обновите карту и продлите доступ.',
     ],
     ctaLabel: 'Продлить доступ',
@@ -74,6 +111,7 @@ function renewalEmailHtml(input: {
   paragraphs: string[];
   ctaLabel: string;
   ctaUrl: string;
+  footnote?: string;
 }): string {
   const paragraphs = input.paragraphs
     .map(
@@ -81,6 +119,11 @@ function renewalEmailHtml(input: {
         `<p style="margin:0 0 14px;font-size:16px;line-height:1.6;color:#4f526b;">${paragraph}</p>`
     )
     .join('\n');
+  // Условия отмены — сноской под кнопкой: обязаны быть в письме, но не должны
+  // конкурировать за внимание с основным сообщением.
+  const footnote = input.footnote
+    ? `<p style="margin:22px 0 0;font-size:13px;line-height:1.5;color:#8b8ea6;">${escapeHtml(input.footnote)}</p>`
+    : '';
   return `
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="width:100%;background:#f3f4fa;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;color:#191b2e;">
       <tr>
@@ -100,6 +143,7 @@ function renewalEmailHtml(input: {
                     </td>
                   </tr>
                 </table>
+                ${footnote}
               </td>
             </tr>
           </table>
