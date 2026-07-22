@@ -123,8 +123,11 @@ export interface CreatePaymentOrderInput {
   amountRub: number;
   currency: 'RUB';
   metadata: Record<string, unknown>;
-  // Обычный checkout пропуска и автопродление сериализуются одной блокировкой
-  // пользователя: два конкурирующих платежа за доступ создать нельзя.
+  // Checkout пропуска и автопродление сериализуются одной блокировкой
+  // пользователя. Новый checkout блокируют только оплаченные или
+  // неопределённые состояния (waiting_for_capture/succeeded/indeterminate);
+  // просто открытый или брошенный виджет (pending) не мешает начать заново.
+  // Renewal консервативнее: он не стартует, пока открыт любой ручной checkout.
   accessPaymentFlow?: 'checkout' | 'renewal';
   conflictingPassPlanIds?: string[];
   // Снимок доступа после claim. Создание renewal-order допустимо только

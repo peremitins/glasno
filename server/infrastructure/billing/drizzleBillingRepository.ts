@@ -364,6 +364,11 @@ export class DrizzleBillingRepository implements BillingRepository {
         if (blockingRenewal) {
           throw new RenewalPaymentQuarantinedError();
         }
+        // Новый checkout блокируют только состояния, где деньги уже уплачены
+        // (waiting_for_capture/succeeded до fulfillment) или их судьба
+        // неизвестна (indeterminate). Открытый или брошенный виджет — это
+        // pending без оплаты: пользователь волен закрыть его и начать заново,
+        // а забытый платёж доведут webhook/sweep (YooKassa отменит его сама).
         const [manualCheckout] = await tx
           .select({ id: schema.paymentOrders.id })
           .from(schema.paymentOrders)
@@ -375,7 +380,6 @@ export class DrizzleBillingRepository implements BillingRepository {
               sql`coalesce(${schema.paymentOrders.metadata}->>'renewal', 'false') <> 'true'`,
               sql`coalesce(${schema.paymentOrders.metadata}->>'gift', 'false') <> 'true'`,
               inArray(schema.paymentOrders.status, [
-                'pending',
                 'waiting_for_capture',
                 'succeeded',
                 'indeterminate',
