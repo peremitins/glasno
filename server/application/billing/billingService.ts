@@ -40,6 +40,7 @@ import {
   formatYooKassaApiError,
   getYooKassaConfirmationToken,
   getYooKassaPayment,
+  listYooKassaPayments,
   getYooKassaPaymentMethod,
   type YooKassaConfig,
 } from './yookassaClient';
@@ -69,6 +70,16 @@ const PAYMENT_RECONCILIATION_LEASE_MS = 5 * 60 * 1000;
 // YooKassa гарантирует идемпотентность ключа 24 часа. Оставляем часовой запас:
 // после этого срока повтор POST с прежним ключом уже может дать второе списание.
 const YOOKASSA_IDEMPOTENCE_SAFE_WINDOW_MS = 23 * 60 * 60 * 1000;
+// Карантин — не приговор: заказ без providerPaymentId перепроверяется поиском
+// платежа по metadata.orderId в списке платежей YooKassa.
+const RENEWAL_QUARANTINE_RECHECK_AFTER_MS = 15 * 60 * 1000;
+// Запас на расхождение часов между нашим сервером и YooKassa при фильтрации
+// списка платежей по дате создания.
+const PROVIDERLESS_PAYMENT_SEARCH_SKEW_MS = 15 * 60 * 1000;
+// Вердикт «платежа не существует» выносим только отлежавшемуся заказу:
+// свежесозданный платёж мог ещё не попасть в выдачу списка.
+const PROVIDERLESS_PAYMENT_ABSENCE_MIN_AGE_MS = 30 * 60 * 1000;
+const PROVIDERLESS_PAYMENT_SEARCH_MAX_PAGES = 25;
 
 const PERMANENT_PAYMENT_METHOD_CANCELLATION_REASONS = new Set([
   'card_expired',
@@ -326,94 +337,125 @@ export class BillingService {
         order.metadata,
         'renewalErrorKind'
       );
-      const unknownProviderOutcome =
+      let unknownProviderOutcome =
         storedGeneration === undefined ||
         !storedErrorKind ||
         storedErrorKind === 'indeterminate' ||
         storedErrorKind === 'transient';
       if (unknownProviderOutcome) {
-        await this.quarantineRenewalOrder(
-          order.id,
+        // Неопределённость разрешается фактами: ищем платёж этого заказа в
+        // списке платежей YooKassa вместо вечного карантина.
+        const located = await this.locateProviderlessRenewalPayment(
+          order,
+          now
+        );
+        if (
+          located.kind === 'found' &&
+          (await this.bindLocatedRenewalPayment(order, located.payment))
+        ) {
+          providerPaymentId = located.payment.id;
+        } else if (located.kind === 'absent') {
+          // Провайдер подтвердил: платежа не существует, списание не
+          // начиналось. Исход определён — карантин не нужен.
+          unknownProviderOutcome = false;
+          await this.deps.repository.updatePaymentOrder({
+            id: order.id,
+            onlyIfUnfulfilled: true,
+            metadata: {
+              renewalErrorKind: 'not_attempted',
+              renewalQuarantined: false,
+              renewalRetryAt: null,
+            },
+            mergeMetadata: true,
+          });
+        } else if (!providerPaymentId) {
+          await this.quarantineRenewalOrder(
+            order.id,
+            readRenewalMetadataString(
+              order.metadata,
+              'renewalErrorDiagnostic'
+            ) ??
+              'Исход автосписания без идентификатора платежа YooKassa неизвестен',
+            now
+          );
+        }
+      }
+      if (!providerPaymentId) {
+        if (order.metadata?.renewalFailureHandled === true) return;
+        // Legacy-код не сохранял generation и помечал failed даже при 5xx.
+        // По тому же accessId считаем исход старого POST неизвестным и
+        // fail-close, чтобы новый key не списал дважды. updatedAt не подходит:
+        // подарок тоже меняет его, не создавая новое платёжное соглашение.
+        const accessForFailure =
+          expectedRenewalAccess ?? legacyRenewalAccess;
+        if (
+          !access ||
+          !accessForFailure ||
+          !access.autoRenew ||
+          !plan
+        ) {
+          await this.deps.repository.markRenewalFailureHandled({
+            orderId: order.id,
+            now,
+          });
+          return;
+        }
+        if (
+          !unknownProviderOutcome &&
+          !(await this.isRenewalPaymentMethodCurrent(order))
+        ) {
+          await this.deps.repository.markRenewalFailureHandled({
+            orderId: order.id,
+            now,
+          });
+          return;
+        }
+
+        const attemptedPaymentMethodId =
+          readRenewalMetadataString(
+            order.metadata,
+            'renewalFailedPaymentMethodId'
+          ) ?? renewalRequest?.paymentMethodId ?? '';
+        const invalidCurrentPaymentMethod =
+          storedErrorKind === 'invalid_payment_method'
+            ? await this.deletePaymentMethodIfCurrent(
+                order.userId,
+                attemptedPaymentMethodId
+              )
+            : false;
+        const error =
           readRenewalMetadataString(
             order.metadata,
             'renewalErrorDiagnostic'
           ) ??
-            'Исход автосписания без идентификатора платежа YooKassa неизвестен'
-        );
-      }
-      if (order.metadata?.renewalFailureHandled === true) return;
-      // Legacy-код не сохранял generation и помечал failed даже при 5xx.
-      // По тому же accessId считаем исход старого POST неизвестным и
-      // fail-close, чтобы новый key не списал дважды. updatedAt не подходит:
-      // подарок тоже меняет его, не создавая новое платёжное соглашение.
-      const accessForFailure =
-        expectedRenewalAccess ?? legacyRenewalAccess;
-      if (
-        !access ||
-        !accessForFailure ||
-        !access.autoRenew ||
-        !plan
-      ) {
-        await this.deps.repository.markRenewalFailureHandled({
-          orderId: order.id,
+          (order.status === 'verification_failed'
+            ? 'Автосписание подтверждено, но сумма или валюта не совпадает с заказом'
+            : `Списание отклонено (${order.status})`);
+        await this.handleChargeFailure(
+          { ...accessForFailure, chargeAttempts: renewalAttemptNumber },
+          plan,
+          error,
           now,
-        });
-        return;
-      }
-      if (
-        !unknownProviderOutcome &&
-        !(await this.isRenewalPaymentMethodCurrent(order))
-      ) {
-        await this.deps.repository.markRenewalFailureHandled({
-          orderId: order.id,
-          now,
-        });
-        return;
-      }
-
-      const attemptedPaymentMethodId =
-        readRenewalMetadataString(
-          order.metadata,
-          'renewalFailedPaymentMethodId'
-        ) ?? renewalRequest?.paymentMethodId ?? '';
-      const invalidCurrentPaymentMethod =
-        storedErrorKind === 'invalid_payment_method'
-          ? await this.deletePaymentMethodIfCurrent(
-              order.userId,
+          {
+            permanent:
+              unknownProviderOutcome ||
+              order.status === 'verification_failed' ||
+              invalidCurrentPaymentMethod,
+            requireNoActivePaymentMethod: invalidCurrentPaymentMethod,
+            expectedActivePaymentMethodId:
+              !unknownProviderOutcome &&
+              !invalidCurrentPaymentMethod &&
               attemptedPaymentMethodId
-            )
-          : false;
-      const error =
-        readRenewalMetadataString(
-          order.metadata,
-          'renewalErrorDiagnostic'
-        ) ??
-        (order.status === 'verification_failed'
-          ? 'Автосписание подтверждено, но сумма или валюта не совпадает с заказом'
-          : `Списание отклонено (${order.status})`);
-      await this.handleChargeFailure(
-        { ...accessForFailure, chargeAttempts: renewalAttemptNumber },
-        plan,
-        error,
-        now,
-        {
-          permanent:
-            unknownProviderOutcome ||
-            order.status === 'verification_failed' ||
-            invalidCurrentPaymentMethod,
-          requireNoActivePaymentMethod: invalidCurrentPaymentMethod,
-          expectedActivePaymentMethodId:
-            !unknownProviderOutcome &&
-            !invalidCurrentPaymentMethod &&
-            attemptedPaymentMethodId
-              ? attemptedPaymentMethodId
-              : undefined,
-          chargeAttemptsTo: renewalAttemptNumber,
-          handledOrderId: order.id,
-          manualReviewRequired: unknownProviderOutcome,
-        }
-      );
-      return;
+                ? attemptedPaymentMethodId
+                : undefined,
+            chargeAttemptsTo: renewalAttemptNumber,
+            handledOrderId: order.id,
+            manualReviewRequired: unknownProviderOutcome,
+          }
+        );
+        return;
+      }
+      // Платёж найден поиском — продолжаем обычной GET-сверкой ниже.
     }
 
     if (!providerPaymentId) {
@@ -423,17 +465,6 @@ export class BillingService {
           renewalRequest.planId === order.planId &&
           renewalRequest.amountRub === order.amountRub
       );
-      // Kill-switch запрещает инициировать даже same-key POST. Уже созданные
-      // платежи по-прежнему можно безопасно сверять GET-запросом ниже.
-      if (!options.allowRenewalCreate) {
-        await this.scheduleRenewalOrderReconciliation(
-          order.id,
-          now,
-          AUTO_RENEW_INDETERMINATE_RETRY_AFTER_MS
-        );
-        return;
-      }
-
       const currentPaymentMethod =
         await this.deps.repository.findPaymentMethodByUserId(order.userId);
       const consentStillCurrent = Boolean(
@@ -449,48 +480,125 @@ export class BillingService {
         isPendingPaymentStatus(order.status) &&
         now.getTime() - order.createdAt.getTime() <
           YOOKASSA_IDEMPOTENCE_SAFE_WINDOW_MS;
+      // Kill-switch запрещает инициировать даже same-key POST. Уже созданные
+      // платежи по-прежнему можно сверять GET-запросами, включая поиск ниже.
+      if (requestCanBeRepeated && !options.allowRenewalCreate) {
+        await this.scheduleRenewalOrderReconciliation(
+          order.id,
+          now,
+          AUTO_RENEW_INDETERMINATE_RETRY_AFTER_MS
+        );
+        return;
+      }
       if (!requestCanBeRepeated) {
-        const error =
-          consentStillCurrent
-            ? 'Небезопасно повторять незавершённое автосписание без идентификатора платежа YooKassa'
-            : 'Автосписание не возобновлено: согласие или сохранённый способ оплаты уже изменились';
-        await this.quarantineRenewalOrder(order.id, error);
-        const accessAtRisk =
-          expectedRenewalAccess ?? legacyRenewalAccess;
-        if (accessAtRisk?.autoRenew) {
-          // Исход старого POST неизвестен, а same-key повтор уже небезопасен.
-          // Новый order/key мог бы привести к двойному списанию.
-          await this.handleChargeFailure(
-            {
-              ...accessAtRisk,
-              chargeAttempts: renewalAttemptNumber,
+        // Same-key повтор невозможен, но неопределённость всё ещё можно
+        // разрешить фактами: ищем платёж заказа в списке платежей YooKassa.
+        const located = await this.locateProviderlessRenewalPayment(
+          order,
+          now
+        );
+        if (
+          located.kind === 'found' &&
+          (await this.bindLocatedRenewalPayment(order, located.payment))
+        ) {
+          providerPaymentId = located.payment.id;
+        } else if (located.kind === 'absent') {
+          // Провайдер подтвердил отсутствие платежа: списание не начиналось,
+          // двойное списание исключено. Закрываем заказ без карантина.
+          const error =
+            'Платёж по заказу не найден в YooKassa: автосписание не начиналось';
+          await this.deps.repository.updatePaymentOrder({
+            id: order.id,
+            status: 'canceled',
+            onlyIfUnfulfilled: true,
+            metadata: {
+              renewalErrorKind: 'not_attempted',
+              renewalErrorDiagnostic: error,
+              renewalQuarantined: false,
+              renewalRetryAt: null,
             },
-            plan,
-            error,
-            now,
-            {
-              permanent: true,
-              chargeAttemptsTo: renewalAttemptNumber,
-              handledOrderId: order.id,
-              manualReviewRequired: true,
-            }
-          );
-        } else {
+            mergeMetadata: true,
+          });
           await this.deps.repository.markRenewalFailureHandled({
             orderId: order.id,
             now,
           });
+          if (consentStillCurrent && expectedRenewalAccess) {
+            // Согласие в силе, а старый POST доказуемо не состоялся — новая
+            // попытка с новым заказом безопасна и не ждёт следующего цикла.
+            await this.deps.repository.rescheduleAccessChargeVerification({
+              accessId: access.id,
+              chargeAttempts: Math.max(0, renewalAttemptNumber - 1),
+              retryAt: now,
+              expectedProviderPaymentId:
+                expectedRenewalAccess.providerPaymentId,
+              expectedActivePaymentMethodId:
+                renewalRequest?.paymentMethodId,
+              now,
+            });
+          }
+          return;
+        } else {
+          const alreadyQuarantined =
+            order.metadata?.renewalQuarantined === true;
+          const alreadyHandled =
+            order.metadata?.renewalFailureHandled === true;
+          const error =
+            consentStillCurrent
+              ? 'Небезопасно повторять незавершённое автосписание без идентификатора платежа YooKassa'
+              : 'Автосписание не возобновлено: согласие или сохранённый способ оплаты уже изменились';
+          if (alreadyQuarantined && alreadyHandled) {
+            // Повторный проход авторазрешения: только продлеваем backoff,
+            // без повторных писем, алертов и записей об ошибке.
+            await this.quarantineRenewalOrder(
+              order.id,
+              readRenewalMetadataString(
+                order.metadata,
+                'renewalErrorDiagnostic'
+              ) ?? error,
+              now
+            );
+            return;
+          }
+          await this.quarantineRenewalOrder(order.id, error, now);
+          const accessAtRisk =
+            expectedRenewalAccess ?? legacyRenewalAccess;
+          if (accessAtRisk?.autoRenew) {
+            // Исход старого POST неизвестен, а same-key повтор уже небезопасен.
+            // Новый order/key мог бы привести к двойному списанию.
+            await this.handleChargeFailure(
+              {
+                ...accessAtRisk,
+                chargeAttempts: renewalAttemptNumber,
+              },
+              plan,
+              error,
+              now,
+              {
+                permanent: true,
+                chargeAttemptsTo: renewalAttemptNumber,
+                handledOrderId: order.id,
+                manualReviewRequired: true,
+              }
+            );
+          } else {
+            await this.deps.repository.markRenewalFailureHandled({
+              orderId: order.id,
+              now,
+            });
+          }
+          await this.notifyPaymentIssueTelegram({
+            stage: 'auto_renewal_failed',
+            userId: order.userId,
+            orderId: order.id,
+            planId: order.planId,
+            message: error,
+          });
+          return;
         }
-        await this.notifyPaymentIssueTelegram({
-          stage: 'auto_renewal_failed',
-          userId: order.userId,
-          orderId: order.id,
-          planId: order.planId,
-          message: error,
-        });
-        return;
       }
 
+      if (!providerPaymentId) {
       this.requireYooKassaConfig();
       try {
         const payment = await retryIndeterminateYooKassaRequest(async () =>
@@ -536,6 +644,7 @@ export class BillingService {
           renewalAttemptNumber,
         });
         return;
+      }
       }
     }
 
@@ -748,7 +857,7 @@ export class BillingService {
       if (error instanceof RenewalPaymentQuarantinedError) {
         throw apiError(
           'E_CONFLICT',
-          'Статус предыдущего автосписания ещё проверяется. Чтобы избежать повторного списания, новая покупка временно недоступна. Обновите страницу позже; если статус не изменится, напишите в поддержку.'
+          'Статус предыдущего автосписания ещё проверяется. Чтобы избежать повторного списания, новая покупка временно недоступна. Проверка идёт автоматически — обновите страницу через 15–20 минут; если статус не изменится за час, напишите в поддержку.'
         );
       }
       if (error instanceof PassCheckoutInProgressError) {
@@ -1565,7 +1674,7 @@ export class BillingService {
       if (!requestMatchesOrder && !unfinishedOrder.providerPaymentId) {
         const error =
           'Небезопасно повторять автосписание: у заказа отсутствует неизменяемый снимок запроса';
-        await this.quarantineRenewalOrder(unfinishedOrder.id, error);
+        await this.quarantineRenewalOrder(unfinishedOrder.id, error, now);
         // Без снимка нельзя доказать, что старый POST не дошёл до YooKassa.
         // Новый order/key мог бы списать деньги второй раз, поэтому текущее
         // соглашение безопасно останавливаем до ручной перепривязки.
@@ -1733,7 +1842,7 @@ export class BillingService {
         const error =
           'Автосписание не начато: согласие или сохранённый способ оплаты уже изменились';
         if (unfinishedOrder) {
-          await this.quarantineRenewalOrder(order.id, error);
+          await this.quarantineRenewalOrder(order.id, error, now);
         } else {
           await this.deps.repository.updatePaymentOrder({
             id: order.id,
@@ -1780,7 +1889,7 @@ export class BillingService {
       ) {
         const error =
           'Небезопасно повторять автосписание: истекло гарантированное окно Idempotence-Key YooKassa';
-        await this.quarantineRenewalOrder(order.id, error);
+        await this.quarantineRenewalOrder(order.id, error, now);
         await this.handleChargeFailure(
           {
             ...liveExpectedRenewalAccess!,
@@ -1993,7 +2102,8 @@ export class BillingService {
 
   private async quarantineRenewalOrder(
     orderId: string,
-    diagnostic: string
+    diagnostic: string,
+    now: Date
   ): Promise<void> {
     await this.deps.repository.updatePaymentOrder({
       id: orderId,
@@ -2002,10 +2112,103 @@ export class BillingService {
       metadata: {
         renewalErrorDiagnostic: diagnostic,
         renewalQuarantined: true,
+        // Карантин перепроверяется автоматически: sweep ищет платёж заказа
+        // в списке платежей YooKassa, backoff защищает API от частых проходов.
+        renewalRetryAt: new Date(
+          now.getTime() + RENEWAL_QUARANTINE_RECHECK_AFTER_MS
+        ).toISOString(),
+      },
+      mergeMetadata: true,
+    });
+  }
+
+  // Поиск платежа заказа, у которого не сохранился providerPaymentId
+  // (упавший POST, legacy-заказ). Совпадение — по metadata.orderId: его
+  // пишет наш сервер в каждый созданный платёж.
+  private async locateProviderlessRenewalPayment(
+    order: PaymentOrderRecord,
+    now: Date
+  ): Promise<
+    | { kind: 'found'; payment: Awaited<ReturnType<typeof getYooKassaPayment>> }
+    | { kind: 'absent' }
+    | { kind: 'unknown' }
+  > {
+    try {
+      this.requireYooKassaConfig();
+      // POST с Idempotence-Key = order.id мог уйти только между созданием
+      // заказа и концом same-key окна; запас покрывает расхождение часов.
+      const searchFrom = new Date(
+        order.createdAt.getTime() - PROVIDERLESS_PAYMENT_SEARCH_SKEW_MS
+      );
+      const searchTo = new Date(
+        Math.min(
+          now.getTime(),
+          order.createdAt.getTime() + YOOKASSA_IDEMPOTENCE_SAFE_WINDOW_MS
+        ) + PROVIDERLESS_PAYMENT_SEARCH_SKEW_MS
+      );
+      let cursor: string | null = null;
+      for (
+        let page = 0;
+        page < PROVIDERLESS_PAYMENT_SEARCH_MAX_PAGES;
+        page += 1
+      ) {
+        const result = await listYooKassaPayments(
+          this.deps.config.yookassa,
+          {
+            createdAtGte: searchFrom,
+            createdAtLte: searchTo,
+            cursor,
+            limit: 100,
+          }
+        );
+        const match = result.items.find(
+          (item) =>
+            readVerifiedMetadataString(item.metadata, 'orderId') === order.id
+        );
+        if (match) return { kind: 'found', payment: match };
+        if (!result.nextCursor) {
+          return now.getTime() - order.createdAt.getTime() >=
+            PROVIDERLESS_PAYMENT_ABSENCE_MIN_AGE_MS
+            ? { kind: 'absent' }
+            : { kind: 'unknown' };
+        }
+        cursor = result.nextCursor;
+      }
+      // Окно не дочитано до конца — отсутствие платежа не доказано.
+      return { kind: 'unknown' };
+    } catch (error) {
+      console.error('[billing] renewal payment search failed', {
+        orderId: order.id,
+        error,
+      });
+      return { kind: 'unknown' };
+    }
+  }
+
+  private async bindLocatedRenewalPayment(
+    order: PaymentOrderRecord,
+    payment: Awaited<ReturnType<typeof getYooKassaPayment>>
+  ): Promise<boolean> {
+    const bound =
+      await this.deps.repository.bindPaymentOrderProviderPaymentId({
+        orderId: order.id,
+        providerPaymentId: payment.id,
+      });
+    if (!bound) return false;
+    // Идентификатор найден — неопределённости больше нет: дальше платёж
+    // ведут обычная GET-сверка и webhook.
+    await this.deps.repository.updatePaymentOrder({
+      id: order.id,
+      providerPaymentId: payment.id,
+      status: payment.status || 'pending',
+      onlyIfUnfulfilled: true,
+      metadata: {
+        renewalQuarantined: false,
         renewalRetryAt: null,
       },
       mergeMetadata: true,
     });
+    return true;
   }
 
   private async isRenewalPaymentMethodCurrent(

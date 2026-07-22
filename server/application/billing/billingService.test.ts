@@ -6,6 +6,7 @@ import {
   createYooKassaRecurringPayment,
   getYooKassaPayment,
   getYooKassaPaymentMethod,
+  listYooKassaPayments,
 } from './yookassaClient';
 import {
   sendRenewalChargedEmail,
@@ -33,6 +34,7 @@ vi.mock('./yookassaClient', async (importOriginal) => {
     createYooKassaPayment: vi.fn(),
     createYooKassaPaymentMethodBinding: vi.fn(),
     createYooKassaRecurringPayment: vi.fn(),
+    listYooKassaPayments: vi.fn(),
   };
 });
 
@@ -52,6 +54,7 @@ const mockedCreateYooKassaPaymentMethodBinding = vi.mocked(
 const mockedCreateYooKassaRecurringPayment = vi.mocked(
   createYooKassaRecurringPayment
 );
+const mockedListYooKassaPayments = vi.mocked(listYooKassaPayments);
 const mockedSendRenewalNoticeEmail = vi.mocked(sendRenewalNoticeEmail);
 const mockedSendRenewalFailedEmail = vi.mocked(sendRenewalFailedEmail);
 const mockedSendRenewalManualReviewEmail = vi.mocked(
@@ -706,6 +709,249 @@ describe('BillingService payment reconciliation', () => {
       })
     );
     expect(repository.recordAccessChargeError).not.toHaveBeenCalled();
+  });
+
+  it('resolves a quarantined renewal by locating the lost payment in YooKassa', async () => {
+    // Упавший POST: заказ в карантине без providerPaymentId, согласие уже
+    // отозвано. Поиск по metadata.orderId находит реальный успешный платёж —
+    // пользователь получает оплаченный доступ, карантин снимается.
+    const order = createOrder({
+      id: 'renewal_quarantined_lost_payment',
+      providerPaymentId: null,
+      status: 'indeterminate',
+      createdAt: new Date('2026-07-01T08:00:00.000Z'),
+      metadata: {
+        userId: 'user_1',
+        planId: 'pass_30d',
+        renewal: true,
+        autoRenew: true,
+        accessId: 'access_1',
+        renewalQuarantined: true,
+        renewalFailureHandled: true,
+        renewalAttemptNumber: 1,
+        renewalAccessProviderPaymentId: 'payment_1',
+        renewalRequest: {
+          amountRub: 1190,
+          description: 'Гласно Полный доступ · 30 дн. (автопродление)',
+          paymentMethodId: 'pm_1',
+          planId: 'pass_30d',
+          receiptEmail: 'user@example.com',
+        },
+      },
+    });
+    const repository = createRepository(order);
+    repository.__setAccess(
+      createAccess({ autoRenew: false, nextChargeAt: null })
+    );
+    repository.listPendingPaymentOrders.mockResolvedValue([order]);
+    mockedListYooKassaPayments.mockResolvedValue({
+      items: [
+        {
+          id: 'payment_lost',
+          status: 'succeeded',
+          paid: true,
+          amountValue: '1190.00',
+          currency: 'RUB',
+          metadata: {
+            orderId: order.id,
+            userId: 'user_1',
+            planId: 'pass_30d',
+          },
+          paymentMethod: null,
+        },
+      ],
+      nextCursor: null,
+    });
+    mockedGetYooKassaPayment.mockResolvedValue({
+      id: 'payment_lost',
+      status: 'succeeded',
+      paid: true,
+      amountValue: '1190.00',
+      currency: 'RUB',
+      metadata: { orderId: order.id, userId: 'user_1', planId: 'pass_30d' },
+      paymentMethod: null,
+    });
+    const service = createService(repository);
+
+    await expect(service.runPendingPaymentSweep()).resolves.toEqual({
+      checked: 1,
+      reconciled: 1,
+      failed: 0,
+    });
+
+    expect(repository.bindPaymentOrderProviderPaymentId).toHaveBeenCalledWith({
+      orderId: order.id,
+      providerPaymentId: 'payment_lost',
+    });
+    expect(repository.fulfillPaidOrder).toHaveBeenCalledOnce();
+    expect(mockedCreateYooKassaRecurringPayment).not.toHaveBeenCalled();
+    expect(mockedSendRenewalManualReviewEmail).not.toHaveBeenCalled();
+  });
+
+  it('unblocks a revoked-consent renewal when YooKassa proves no payment exists', async () => {
+    // Сценарий пользователя: списание сорвалось без id, потом он отвязал
+    // способ и выключил автопродление. Доказанное отсутствие платежа
+    // закрывает заказ без карантина, поддержки и блокировки новой покупки.
+    const order = createOrder({
+      id: 'renewal_absent_after_revocation',
+      providerPaymentId: null,
+      status: 'pending',
+      createdAt: new Date('2026-07-01T08:00:00.000Z'),
+      metadata: {
+        renewal: true,
+        accessId: 'access_1',
+        renewalAttemptNumber: 1,
+        renewalAccessProviderPaymentId: 'payment_1',
+        renewalRequest: {
+          amountRub: 1190,
+          description: 'Гласно Полный доступ · 30 дн. (автопродление)',
+          paymentMethodId: 'pm_1',
+          planId: 'pass_30d',
+          receiptEmail: 'user@example.com',
+        },
+      },
+    });
+    const repository = createRepository(order);
+    repository.__setAccess(
+      createAccess({ autoRenew: false, nextChargeAt: null })
+    );
+    repository.listPendingPaymentOrders.mockResolvedValue([order]);
+    mockedListYooKassaPayments.mockResolvedValue({
+      items: [],
+      nextCursor: null,
+    });
+    const service = createService(repository);
+
+    await service.runPendingPaymentSweep();
+
+    expect(repository.updatePaymentOrder).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: order.id,
+        status: 'canceled',
+        onlyIfUnfulfilled: true,
+        metadata: expect.objectContaining({
+          renewalErrorKind: 'not_attempted',
+          renewalQuarantined: false,
+        }),
+      })
+    );
+    expect(repository.markRenewalFailureHandled).toHaveBeenCalledWith({
+      orderId: order.id,
+      now: new Date('2026-07-01T10:00:00.000Z'),
+    });
+    expect(mockedSendRenewalManualReviewEmail).not.toHaveBeenCalled();
+    expect(repository.recordAccessChargeError).not.toHaveBeenCalled();
+    expect(mockedCreateYooKassaRecurringPayment).not.toHaveBeenCalled();
+  });
+
+  it('schedules a fresh charge after proving an expired-key renewal never started', async () => {
+    // Согласие в силе, но same-key окно истекло. Отсутствие платежа доказано —
+    // новая попытка с новым заказом безопасна и назначается сразу.
+    const order = createOrder({
+      id: 'renewal_absent_expired_key',
+      providerPaymentId: null,
+      status: 'pending',
+      createdAt: new Date('2026-06-30T09:00:00.000Z'),
+      metadata: {
+        renewal: true,
+        accessId: 'access_1',
+        renewalAttemptNumber: 1,
+        renewalAccessProviderPaymentId: 'payment_1',
+        renewalRequest: {
+          amountRub: 1190,
+          description: 'Гласно Полный доступ · 30 дн. (автопродление)',
+          paymentMethodId: 'pm_1',
+          planId: 'pass_30d',
+          receiptEmail: 'user@example.com',
+        },
+      },
+    });
+    const repository = createRepository(order);
+    repository.__setAccess(createAccess({ chargeAttempts: 1 }));
+    repository.findPaymentMethodByUserId.mockResolvedValue(
+      activePaymentMethod
+    );
+    repository.listPendingPaymentOrders.mockResolvedValue([order]);
+    mockedListYooKassaPayments.mockResolvedValue({
+      items: [],
+      nextCursor: null,
+    });
+    const service = createService(repository);
+
+    await service.runPendingPaymentSweep();
+
+    expect(repository.updatePaymentOrder).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: order.id,
+        status: 'canceled',
+        metadata: expect.objectContaining({
+          renewalErrorKind: 'not_attempted',
+        }),
+      })
+    );
+    expect(repository.rescheduleAccessChargeVerification).toHaveBeenCalledWith({
+      accessId: 'access_1',
+      chargeAttempts: 0,
+      retryAt: new Date('2026-07-01T10:00:00.000Z'),
+      expectedProviderPaymentId: 'payment_1',
+      expectedActivePaymentMethodId: 'pm_1',
+      now: new Date('2026-07-01T10:00:00.000Z'),
+    });
+    expect(mockedCreateYooKassaRecurringPayment).not.toHaveBeenCalled();
+    expect(mockedSendRenewalManualReviewEmail).not.toHaveBeenCalled();
+  });
+
+  it('keeps the quarantine with backoff when the payment search is unavailable', async () => {
+    // Повторный проход уже обработанного карантина: только продление backoff,
+    // без новых писем, алертов и записей об ошибке списания.
+    const order = createOrder({
+      id: 'renewal_quarantine_search_failed',
+      providerPaymentId: null,
+      status: 'indeterminate',
+      createdAt: new Date('2026-07-01T08:00:00.000Z'),
+      metadata: {
+        renewal: true,
+        accessId: 'access_1',
+        renewalQuarantined: true,
+        renewalFailureHandled: true,
+        renewalErrorDiagnostic: 'Исход автосписания неизвестен',
+        renewalAttemptNumber: 1,
+        renewalAccessProviderPaymentId: 'payment_1',
+        renewalRequest: {
+          amountRub: 1190,
+          description: 'Гласно Полный доступ · 30 дн. (автопродление)',
+          paymentMethodId: 'pm_1',
+          planId: 'pass_30d',
+          receiptEmail: 'user@example.com',
+        },
+      },
+    });
+    const repository = createRepository(order);
+    repository.__setAccess(createAccess());
+    repository.findPaymentMethodByUserId.mockResolvedValue(
+      activePaymentMethod
+    );
+    repository.listPendingPaymentOrders.mockResolvedValue([order]);
+    mockedListYooKassaPayments.mockRejectedValue(new Error('network down'));
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const service = createService(repository);
+
+    await service.runPendingPaymentSweep();
+    errorSpy.mockRestore();
+
+    expect(repository.updatePaymentOrder).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: order.id,
+        status: 'indeterminate',
+        metadata: expect.objectContaining({
+          renewalQuarantined: true,
+          renewalRetryAt: expect.any(String),
+        }),
+      })
+    );
+    expect(repository.recordAccessChargeError).not.toHaveBeenCalled();
+    expect(mockedSendRenewalManualReviewEmail).not.toHaveBeenCalled();
+    expect(repository.markRenewalFailureHandled).not.toHaveBeenCalled();
   });
 
   it('fails closed for a legacy failed order with an unknown POST outcome', async () => {
@@ -2731,7 +2977,7 @@ describe('BillingService renewal sweep', () => {
       metadata: {
         renewalErrorDiagnostic: expect.stringContaining('снимок запроса'),
         renewalQuarantined: true,
-        renewalRetryAt: null,
+        renewalRetryAt: expect.any(String),
       },
       mergeMetadata: true,
     });
@@ -3027,7 +3273,7 @@ describe('BillingService renewal sweep', () => {
       metadata: {
         renewalErrorDiagnostic: expect.stringContaining('Idempotence-Key'),
         renewalQuarantined: true,
-        renewalRetryAt: null,
+        renewalRetryAt: expect.any(String),
       },
       mergeMetadata: true,
     });

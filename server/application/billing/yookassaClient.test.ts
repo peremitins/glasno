@@ -284,4 +284,52 @@ describe('yookassaClient helpers', () => {
       cancellationReason: 'insufficient_funds',
     });
   });
+
+  it('lists payments filtered by creation window with cursor pagination', async () => {
+    mockedFetch.mockResolvedValueOnce({
+      items: [
+        {
+          id: 'payment_listed_1',
+          status: 'succeeded',
+          paid: true,
+          amount: { value: '1190.00', currency: 'RUB' },
+          metadata: { orderId: 'order_1' },
+        },
+      ],
+      next_cursor: 'cursor_2',
+    });
+
+    const page = await yookassaClient.listYooKassaPayments(
+      { shopId: '123456', secretKey: 'test_secret' },
+      {
+        createdAtGte: new Date('2026-07-01T08:00:00.000Z'),
+        createdAtLte: new Date('2026-07-01T10:00:00.000Z'),
+        cursor: 'cursor_1',
+      }
+    );
+
+    expect(mockedFetch).toHaveBeenCalledWith(
+      'https://api.yookassa.ru/v3/payments',
+      expect.objectContaining({
+        method: 'GET',
+        query: {
+          'created_at.gte': '2026-07-01T08:00:00.000Z',
+          'created_at.lte': '2026-07-01T10:00:00.000Z',
+          limit: 100,
+          cursor: 'cursor_1',
+        },
+      })
+    );
+    expect(page).toEqual({
+      items: [
+        expect.objectContaining({
+          id: 'payment_listed_1',
+          status: 'succeeded',
+          paid: true,
+          metadata: { orderId: 'order_1' },
+        }),
+      ],
+      nextCursor: 'cursor_2',
+    });
+  });
 });
