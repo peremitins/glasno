@@ -201,7 +201,13 @@ export default defineNuxtConfig({
       // Доступно на клиенте (префикс NUXT_PUBLIC_)
       appName: 'Гласно',
       apiBase: '/api',
-      appUrl: process.env.NUXT_PUBLIC_APP_URL || 'http://localhost:3000',
+      // Никогда не запекаем localhost в production-письма/return_url, даже
+      // если переменную окружения забыли передать во время сборки.
+      appUrl:
+        process.env.NUXT_PUBLIC_APP_URL ||
+        (process.env.NODE_ENV === 'development'
+          ? 'http://localhost:3000'
+          : 'https://my.glasno.app'),
       landingUrl: landingSiteUrl,
       speechDefaultEngine:
         process.env.NUXT_PUBLIC_SPEECH_DEFAULT_ENGINE || 'webspeech',

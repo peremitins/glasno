@@ -72,7 +72,7 @@ export const BillingStatusResponseDto = z.object({
   allowedSessionGoals: z.array(BillingSessionGoalAccessDto),
   // Есть активный оплаченный пропуск.
   hasActivePaidAccess: z.boolean(),
-  // Автопродление включено на активном пропуске.
+  // Автопродление включено, включая retry после окончания периода доступа.
   hasRecurringRenewal: z.boolean(),
   // true для admin: безлимитное использование без тарифа.
   unlimited: z.boolean().default(false),

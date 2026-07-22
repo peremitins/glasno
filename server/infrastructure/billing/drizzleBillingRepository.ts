@@ -1,5 +1,6 @@
 import {
   and,
+  asc,
   count,
   desc,
   eq,
@@ -34,6 +35,13 @@ import type {
   UnfinishedSessionRecord,
   UpdatePaymentOrderInput,
 } from '@/server/interface/billingRepository';
+import {
+  PassCheckoutInProgressError,
+  RenewalAccessChangedError,
+  RenewalPaymentQuarantinedError,
+} from '@/server/interface/billingRepository';
+
+const CHECKOUT_STALE_AFTER_MS = 30 * 60 * 1000;
 
 type PaymentOrderRow = typeof schema.paymentOrders.$inferSelect;
 type AccessRow = typeof schema.userSubscriptions.$inferSelect;
@@ -56,6 +64,9 @@ type GrantAccessSource =
   | {
       kind: 'purchase';
       autoRenew: boolean;
+      requireExistingAutoRenewConsent: boolean;
+      expectedPaymentMethodId: string | null;
+      expectedAccessProviderPaymentId?: string | null;
       paymentMethod: GrantAccessPaymentMethod | null;
     }
   | { kind: 'gift' };
@@ -289,18 +300,156 @@ export class DrizzleBillingRepository implements BillingRepository {
   async createPaymentOrder(
     input: CreatePaymentOrderInput
   ): Promise<PaymentOrderRecord> {
-    const [row] = await this.db
-      .insert(schema.paymentOrders)
-      .values({
-        userId: input.userId,
-        planId: input.planId,
-        amountRub: input.amountRub,
-        currency: input.currency,
-        metadata: input.metadata,
-        status: 'pending',
-      })
-      .returning();
-    return mapPaymentOrder(requireRow(row, 'payment_order'));
+    if (!input.accessPaymentFlow) {
+      const [row] = await this.db
+        .insert(schema.paymentOrders)
+        .values({
+          userId: input.userId,
+          planId: input.planId,
+          amountRub: input.amountRub,
+          currency: input.currency,
+          metadata: input.metadata,
+          status: 'pending',
+        })
+        .returning();
+      return mapPaymentOrder(requireRow(row, 'payment_order'));
+    }
+    return await this.db.transaction(async (tx) => {
+      await tx
+        .select({ id: schema.users.id })
+        .from(schema.users)
+        .where(eq(schema.users.id, input.userId))
+        .for('update');
+      const passPlanIds =
+        input.conflictingPassPlanIds?.length
+          ? input.conflictingPassPlanIds
+          : [input.planId];
+      // Если процесс упал между созданием локального order и ответом
+      // YooKassa, confirmation_token не мог попасть в браузер. Такой
+      // provider-less checkout спустя TTL безопасно освобождаем и для
+      // повторного checkout, и для фонового автопродления.
+      const staleCutoff = new Date(Date.now() - CHECKOUT_STALE_AFTER_MS);
+      await tx
+        .update(schema.paymentOrders)
+        .set({
+          status: 'failed',
+          metadata: sql`coalesce(${schema.paymentOrders.metadata}, '{}'::jsonb) || jsonb_build_object('checkoutStaleReleased', true)`,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(schema.paymentOrders.userId, input.userId),
+            isNull(schema.paymentOrders.fulfilledAt),
+            isNull(schema.paymentOrders.providerPaymentId),
+            eq(schema.paymentOrders.status, 'pending'),
+            lte(schema.paymentOrders.createdAt, staleCutoff),
+            inArray(schema.paymentOrders.planId, passPlanIds),
+            sql`coalesce(${schema.paymentOrders.metadata}->>'renewal', 'false') <> 'true'`,
+            sql`coalesce(${schema.paymentOrders.metadata}->>'gift', 'false') <> 'true'`
+          )
+        );
+      if (input.accessPaymentFlow === 'checkout') {
+        const [blockingRenewal] = await tx
+          .select({ id: schema.paymentOrders.id })
+          .from(schema.paymentOrders)
+          .where(
+            and(
+              eq(schema.paymentOrders.userId, input.userId),
+              isNull(schema.paymentOrders.fulfilledAt),
+              sql`${schema.paymentOrders.metadata}->>'renewal' = 'true'`,
+              isBlockingRenewalForCheckout()
+            )
+          )
+          .limit(1);
+        if (blockingRenewal) {
+          throw new RenewalPaymentQuarantinedError();
+        }
+        const [manualCheckout] = await tx
+          .select({ id: schema.paymentOrders.id })
+          .from(schema.paymentOrders)
+          .where(
+            and(
+              eq(schema.paymentOrders.userId, input.userId),
+              isNull(schema.paymentOrders.fulfilledAt),
+              inArray(schema.paymentOrders.planId, passPlanIds),
+              sql`coalesce(${schema.paymentOrders.metadata}->>'renewal', 'false') <> 'true'`,
+              sql`coalesce(${schema.paymentOrders.metadata}->>'gift', 'false') <> 'true'`,
+              inArray(schema.paymentOrders.status, [
+                'pending',
+                'waiting_for_capture',
+                'succeeded',
+                'indeterminate',
+              ])
+            )
+          )
+          .limit(1);
+        if (manualCheckout) {
+          throw new PassCheckoutInProgressError();
+        }
+      } else {
+        const [manualCheckout] = await tx
+          .select({ id: schema.paymentOrders.id })
+          .from(schema.paymentOrders)
+          .where(
+            and(
+              eq(schema.paymentOrders.userId, input.userId),
+              isNull(schema.paymentOrders.fulfilledAt),
+              inArray(schema.paymentOrders.planId, passPlanIds),
+              sql`coalesce(${schema.paymentOrders.metadata}->>'renewal', 'false') <> 'true'`,
+              sql`coalesce(${schema.paymentOrders.metadata}->>'gift', 'false') <> 'true'`,
+              inArray(schema.paymentOrders.status, [
+                'pending',
+                'waiting_for_capture',
+                'succeeded',
+                'indeterminate',
+              ])
+            )
+          )
+          .limit(1);
+        if (manualCheckout) {
+          throw new PassCheckoutInProgressError();
+        }
+        if (input.renewalAccessGuard) {
+          const guard = input.renewalAccessGuard;
+          const [unchangedAccess] = await tx
+            .select({ id: schema.userSubscriptions.id })
+            .from(schema.userSubscriptions)
+            .where(
+              and(
+                eq(schema.userSubscriptions.id, guard.accessId),
+                eq(schema.userSubscriptions.userId, input.userId),
+                eq(schema.userSubscriptions.autoRenew, true),
+                eq(
+                  schema.userSubscriptions.currentPeriodEnd,
+                  guard.currentPeriodEnd
+                ),
+                guard.providerPaymentId === null
+                  ? isNull(schema.userSubscriptions.providerPaymentId)
+                  : eq(
+                      schema.userSubscriptions.providerPaymentId,
+                      guard.providerPaymentId
+                    )
+              )
+            )
+            .limit(1);
+          if (!unchangedAccess) {
+            throw new RenewalAccessChangedError();
+          }
+        }
+      }
+      const [row] = await tx
+        .insert(schema.paymentOrders)
+        .values({
+          userId: input.userId,
+          planId: input.planId,
+          amountRub: input.amountRub,
+          currency: input.currency,
+          metadata: input.metadata,
+          status: 'pending',
+        })
+        .returning();
+      return mapPaymentOrder(requireRow(row, 'payment_order'));
+    });
   }
 
   async createGiftPaymentOrder(input: {
@@ -561,13 +710,127 @@ export class DrizzleBillingRepository implements BillingRepository {
       .from(schema.paymentOrders)
       .where(
         and(
-          inArray(schema.paymentOrders.status, ['pending', 'waiting_for_capture']),
-          isNotNull(schema.paymentOrders.providerPaymentId)
+          isNull(schema.paymentOrders.fulfilledAt),
+          sql`coalesce((${schema.paymentOrders.metadata}->>'reconciliationLeaseUntil')::timestamptz, '-infinity'::timestamptz) <= now()`,
+          sql`coalesce((${schema.paymentOrders.metadata}->>'renewalRetryAt')::timestamptz, '-infinity'::timestamptz) <= now()`,
+          or(
+            and(
+              sql`${schema.paymentOrders.metadata}->>'renewal' = 'true'`,
+              sql`coalesce(${schema.paymentOrders.metadata}->>'renewalQuarantined', 'false') = 'true'`,
+              sql`coalesce(${schema.paymentOrders.metadata}->>'renewalFailureHandled', 'false') <> 'true'`
+            ),
+            and(
+              isNotNull(schema.paymentOrders.providerPaymentId),
+              inArray(schema.paymentOrders.status, [
+                'pending',
+                'waiting_for_capture',
+                'succeeded',
+                'indeterminate',
+              ])
+            ),
+            and(
+              sql`${schema.paymentOrders.metadata}->>'renewal' = 'true'`,
+              or(
+                and(
+                  isNull(schema.paymentOrders.providerPaymentId),
+                  inArray(schema.paymentOrders.status, [
+                    'pending',
+                    'waiting_for_capture',
+                  ])
+                ),
+                and(
+                  inArray(schema.paymentOrders.status, [
+                    'failed',
+                    'canceled',
+                    'verification_failed',
+                  ]),
+                  sql`coalesce(${schema.paymentOrders.metadata}->>'renewalFailureHandled', 'false') <> 'true'`
+                )
+              )
+            )
+          )
         )
       )
-      .orderBy(desc(schema.paymentOrders.updatedAt))
+      .orderBy(asc(schema.paymentOrders.updatedAt))
       .limit(limit);
     return rows.map(mapPaymentOrder);
+  }
+
+  async claimPaymentOrderReconciliation(params: {
+    orderId: string;
+    now: Date;
+    leaseUntil: Date;
+  }): Promise<boolean> {
+    const rows = await this.db
+      .update(schema.paymentOrders)
+      .set({
+        metadata: sql`coalesce(${schema.paymentOrders.metadata}, '{}'::jsonb) || jsonb_build_object('reconciliationLeaseUntil', ${params.leaseUntil.toISOString()})`,
+      })
+      .where(
+        and(
+          eq(schema.paymentOrders.id, params.orderId),
+          isNull(schema.paymentOrders.fulfilledAt),
+          sql`coalesce((${schema.paymentOrders.metadata}->>'reconciliationLeaseUntil')::timestamptz, '-infinity'::timestamptz) <= ${params.now}`,
+          // SELECT списка и claim — разные запросы. Если другой worker уже
+          // перенёс retryAt, устаревшая строка не должна обойти backoff.
+          sql`coalesce((${schema.paymentOrders.metadata}->>'renewalRetryAt')::timestamptz, '-infinity'::timestamptz) <= ${params.now}`
+        )
+      )
+      .returning({ id: schema.paymentOrders.id });
+    return rows.length > 0;
+  }
+
+  async findUnfulfilledRenewalPaymentOrder(params: {
+    userId: string;
+    accessId: string;
+  }): Promise<PaymentOrderRecord | null> {
+    const [row] = await this.db
+      .select()
+      .from(schema.paymentOrders)
+      .where(
+        and(
+          eq(schema.paymentOrders.userId, params.userId),
+          eq(schema.paymentOrders.provider, 'yookassa'),
+          isNull(schema.paymentOrders.fulfilledAt),
+          or(
+            isBlockingUnknownRenewalOrder(),
+            and(
+              isNotNull(schema.paymentOrders.providerPaymentId),
+              inArray(schema.paymentOrders.status, [
+                'pending',
+                'waiting_for_capture',
+                'succeeded',
+                'indeterminate',
+              ])
+            ),
+            and(
+              isNull(schema.paymentOrders.providerPaymentId),
+              inArray(schema.paymentOrders.status, [
+                'pending',
+                'waiting_for_capture',
+              ])
+            ),
+            and(
+              isNull(schema.paymentOrders.providerPaymentId),
+              eq(schema.paymentOrders.status, 'indeterminate'),
+              sql`coalesce(${schema.paymentOrders.metadata}->>'renewalQuarantined', 'false') = 'true'`
+            ),
+            and(
+              inArray(schema.paymentOrders.status, [
+                'failed',
+                'canceled',
+                'verification_failed',
+              ]),
+              sql`coalesce(${schema.paymentOrders.metadata}->>'renewalFailureHandled', 'false') <> 'true'`
+            )
+          ),
+          sql`${schema.paymentOrders.metadata}->>'renewal' = 'true'`,
+          sql`${schema.paymentOrders.metadata}->>'accessId' = ${params.accessId}`
+        )
+      )
+      .orderBy(desc(schema.paymentOrders.createdAt))
+      .limit(1);
+    return row ? mapPaymentOrder(row) : null;
   }
 
   async claimGiftNotifications(params: {
@@ -672,6 +935,51 @@ export class DrizzleBillingRepository implements BillingRepository {
     return row ? mapPaymentOrder(row) : null;
   }
 
+  async bindPaymentOrderProviderPaymentId(params: {
+    orderId: string;
+    providerPaymentId: string;
+  }): Promise<boolean> {
+    try {
+      const rows = await this.db
+        .update(schema.paymentOrders)
+        .set({
+          providerPaymentId: params.providerPaymentId,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(schema.paymentOrders.id, params.orderId),
+            or(
+              isNull(schema.paymentOrders.providerPaymentId),
+              eq(
+                schema.paymentOrders.providerPaymentId,
+                params.providerPaymentId
+              )
+            ),
+            sql`not exists (
+              select 1
+              from ${schema.paymentOrders} as other_order
+              where other_order.provider_payment_id = ${params.providerPaymentId}
+                and other_order.id <> ${params.orderId}
+            )`
+          )
+        )
+        .returning({ id: schema.paymentOrders.id });
+      return rows.length > 0;
+    } catch (error) {
+      // Unique index — последняя защита от двух конкурентных bind.
+      if (
+        error &&
+        typeof error === 'object' &&
+        'code' in error &&
+        error.code === '23505'
+      ) {
+        return false;
+      }
+      throw error;
+    }
+  }
+
   async findLatestPaymentOrderByUserId(
     userId: string
   ): Promise<PaymentOrderRecord | null> {
@@ -703,10 +1011,31 @@ export class DrizzleBillingRepository implements BillingRepository {
         providerPaymentId: input.providerPaymentId ?? undefined,
         status: input.status ?? undefined,
         confirmationUrl: input.confirmationUrl ?? undefined,
-        metadata: input.metadata ?? undefined,
+        metadata:
+          input.mergeMetadata && input.metadata
+            ? sql`coalesce(${schema.paymentOrders.metadata}, '{}'::jsonb) || ${JSON.stringify(input.metadata)}::jsonb`
+            : (input.metadata ?? undefined),
         updatedAt: new Date(),
       })
-      .where(eq(schema.paymentOrders.id, input.id))
+      .where(
+        and(
+          eq(schema.paymentOrders.id, input.id),
+          input.onlyIfUnfulfilled
+            ? isNull(schema.paymentOrders.fulfilledAt)
+            : undefined,
+          input.monotonicProviderStatus && input.status
+            ? or(
+                eq(schema.paymentOrders.status, input.status),
+                notInArray(schema.paymentOrders.status, [
+                  'succeeded',
+                  'canceled',
+                  'failed',
+                  'verification_failed',
+                ])
+              )
+            : undefined
+        )
+      )
       .returning();
     return row ? mapPaymentOrder(row) : null;
   }
@@ -722,6 +1051,9 @@ export class DrizzleBillingRepository implements BillingRepository {
     providerPaymentId: string;
     plan: FulfillPlanInput;
     autoRenew: boolean;
+    requireExistingAutoRenewConsent?: boolean;
+    expectedPaymentMethodId?: string | null;
+    expectedAccessProviderPaymentId?: string | null;
     paymentMethod?: {
       providerPaymentMethodId: string;
       methodType?: string | null;
@@ -755,6 +1087,11 @@ export class DrizzleBillingRepository implements BillingRepository {
         source: {
           kind: 'purchase',
           autoRenew: params.autoRenew,
+          requireExistingAutoRenewConsent:
+            params.requireExistingAutoRenewConsent === true,
+          expectedPaymentMethodId: params.expectedPaymentMethodId ?? null,
+          expectedAccessProviderPaymentId:
+            params.expectedAccessProviderPaymentId,
           paymentMethod: params.paymentMethod ?? null,
         },
         now,
@@ -765,7 +1102,12 @@ export class DrizzleBillingRepository implements BillingRepository {
 
       await tx
         .update(schema.paymentOrders)
-        .set({ fulfilledAt: now, updatedAt: now })
+        .set({
+          providerPaymentId: params.providerPaymentId,
+          status: 'succeeded',
+          fulfilledAt: now,
+          updatedAt: now,
+        })
         .where(eq(schema.paymentOrders.id, orderRow.id));
 
       return { fulfilled: true, alreadyFulfilled: false };
@@ -935,29 +1277,36 @@ export class DrizzleBillingRepository implements BillingRepository {
     providerPaymentMethodId: string;
   }): Promise<void> {
     const now = new Date();
-    await this.db
-      .insert(schema.userPaymentMethods)
-      .values({
-        userId: params.userId,
-        provider: 'yookassa',
-        providerPaymentMethodId: params.providerPaymentMethodId,
-        status: 'pending',
-        updatedAt: now,
-      })
-      .onConflictDoUpdate({
-        target: schema.userPaymentMethods.userId,
-        set: {
+    await this.db.transaction(async (tx) => {
+      await tx
+        .select({ id: schema.users.id })
+        .from(schema.users)
+        .where(eq(schema.users.id, params.userId))
+        .for('update');
+      await tx
+        .insert(schema.userPaymentMethods)
+        .values({
+          userId: params.userId,
+          provider: 'yookassa',
           providerPaymentMethodId: params.providerPaymentMethodId,
           status: 'pending',
-          methodType: null,
-          title: null,
-          cardBrand: null,
-          cardLast4: null,
-          cardExpiryMonth: null,
-          cardExpiryYear: null,
           updatedAt: now,
-        },
-      });
+        })
+        .onConflictDoUpdate({
+          target: schema.userPaymentMethods.userId,
+          set: {
+            providerPaymentMethodId: params.providerPaymentMethodId,
+            status: 'pending',
+            methodType: null,
+            title: null,
+            cardBrand: null,
+            cardLast4: null,
+            cardExpiryMonth: null,
+            cardExpiryYear: null,
+            updatedAt: now,
+          },
+        });
+    });
   }
 
   async activatePaymentMethod(params: {
@@ -969,21 +1318,75 @@ export class DrizzleBillingRepository implements BillingRepository {
     cardLast4?: string | null;
     cardExpiryMonth?: string | null;
     cardExpiryYear?: string | null;
-  }): Promise<void> {
-    await this.db
-      .update(schema.userPaymentMethods)
-      .set({
-        providerPaymentMethodId: params.providerPaymentMethodId,
-        status: 'active',
-        methodType: params.methodType ?? null,
-        title: params.title ?? null,
-        cardBrand: params.cardBrand ?? null,
-        cardLast4: params.cardLast4 ?? null,
-        cardExpiryMonth: params.cardExpiryMonth ?? null,
-        cardExpiryYear: params.cardExpiryYear ?? null,
-        updatedAt: new Date(),
-      })
-      .where(eq(schema.userPaymentMethods.userId, params.userId));
+    enableAutoRenewForActiveAccess?: boolean;
+    now?: Date;
+  }): Promise<boolean> {
+    const now = params.now ?? new Date();
+    return await this.db.transaction(async (tx) => {
+      await tx
+        .select({ id: schema.users.id })
+        .from(schema.users)
+        .where(eq(schema.users.id, params.userId))
+        .for('update');
+      const rows = await tx
+        .update(schema.userPaymentMethods)
+        .set({
+          status: 'active',
+          methodType: params.methodType ?? null,
+          title: params.title ?? null,
+          cardBrand: params.cardBrand ?? null,
+          cardLast4: params.cardLast4 ?? null,
+          cardExpiryMonth: params.cardExpiryMonth ?? null,
+          cardExpiryYear: params.cardExpiryYear ?? null,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(schema.userPaymentMethods.userId, params.userId),
+            eq(
+              schema.userPaymentMethods.providerPaymentMethodId,
+              params.providerPaymentMethodId
+            )
+          )
+        )
+        .returning({ id: schema.userPaymentMethods.id });
+      if (rows.length === 0) return false;
+
+      if (params.enableAutoRenewForActiveAccess) {
+        const [unknownRenewal] = await tx
+          .select({ id: schema.paymentOrders.id })
+          .from(schema.paymentOrders)
+          .where(
+            and(
+              eq(schema.paymentOrders.userId, params.userId),
+              isNull(schema.paymentOrders.fulfilledAt),
+              sql`${schema.paymentOrders.metadata}->>'renewal' = 'true'`,
+              isBlockingUnknownRenewalOrder()
+            )
+          )
+          .limit(1);
+        await tx
+          .update(schema.userSubscriptions)
+          .set({
+            autoRenew: !unknownRenewal,
+            nextChargeAt: unknownRenewal
+              ? null
+              : sql`${schema.userSubscriptions.currentPeriodEnd}`,
+            lastChargeError: null,
+            chargeAttempts: 0,
+            renewalNoticeSentAt: null,
+            updatedAt: now,
+          })
+          .where(
+            and(
+              eq(schema.userSubscriptions.userId, params.userId),
+              eq(schema.userSubscriptions.status, 'active'),
+              gt(schema.userSubscriptions.currentPeriodEnd, now)
+            )
+          );
+      }
+      return true;
+    });
   }
 
   async deletePaymentMethodByUserId(userId: string): Promise<void> {
@@ -992,44 +1395,134 @@ export class DrizzleBillingRepository implements BillingRepository {
       .where(eq(schema.userPaymentMethods.userId, userId));
   }
 
+  async deletePaymentMethodIfMatches(params: {
+    userId: string;
+    providerPaymentMethodId: string;
+  }): Promise<boolean> {
+    return await this.db.transaction(async (tx) => {
+      await tx
+        .select({ id: schema.users.id })
+        .from(schema.users)
+        .where(eq(schema.users.id, params.userId))
+        .for('update');
+      const rows = await tx
+        .delete(schema.userPaymentMethods)
+        .where(
+          and(
+            eq(schema.userPaymentMethods.userId, params.userId),
+            eq(
+              schema.userPaymentMethods.providerPaymentMethodId,
+              params.providerPaymentMethodId
+            )
+          )
+        )
+        .returning({ id: schema.userPaymentMethods.id });
+      return rows.length > 0;
+    });
+  }
+
+  async revokeRecurringPaymentConsent(params: {
+    userId: string;
+    now?: Date;
+  }): Promise<void> {
+    const now = params.now ?? new Date();
+    await this.db.transaction(async (tx) => {
+      // grantPaidAccess берёт ту же блокировку пользователя до чтения
+      // autoRenew. Любой порядок гонки заканчивается состоянием «отвязано».
+      await tx
+        .select({ id: schema.users.id })
+        .from(schema.users)
+        .where(eq(schema.users.id, params.userId))
+        .for('update');
+      await tx
+        .update(schema.userSubscriptions)
+        .set({
+          autoRenew: false,
+          nextChargeAt: null,
+          renewalNoticeSentAt: null,
+          updatedAt: now,
+        })
+        .where(eq(schema.userSubscriptions.userId, params.userId));
+      await tx
+        .delete(schema.userPaymentMethods)
+        .where(eq(schema.userPaymentMethods.userId, params.userId));
+    });
+  }
+
   async setAccessAutoRenew(params: {
     userId: string;
     autoRenew: boolean;
     now?: Date;
-  }): Promise<void> {
+  }): Promise<boolean> {
     const now = params.now ?? new Date();
-    if (params.autoRenew) {
-      // Включение — только на активном доступе: списание планируем на конец
-      // периода, счётчик попыток и предуведомление сбрасываем.
-      await this.db
+    return await this.db.transaction(async (tx) => {
+      // Все изменения согласия, привязки метода и поздняя выдача доступа
+      // сериализуются одной блокировкой пользователя.
+      await tx
+        .select({ id: schema.users.id })
+        .from(schema.users)
+        .where(eq(schema.users.id, params.userId))
+        .for('update');
+      if (params.autoRenew) {
+        const [unknownRenewal] = await tx
+          .select({ id: schema.paymentOrders.id })
+          .from(schema.paymentOrders)
+          .where(
+            and(
+              eq(schema.paymentOrders.userId, params.userId),
+              isNull(schema.paymentOrders.fulfilledAt),
+              sql`${schema.paymentOrders.metadata}->>'renewal' = 'true'`,
+              isBlockingUnknownRenewalOrder()
+            )
+          )
+          .limit(1);
+        if (unknownRenewal) return false;
+        const [activeMethod] = await tx
+          .select({ id: schema.userPaymentMethods.id })
+          .from(schema.userPaymentMethods)
+          .where(
+            and(
+              eq(schema.userPaymentMethods.userId, params.userId),
+              eq(schema.userPaymentMethods.status, 'active')
+            )
+          )
+          .limit(1);
+        if (!activeMethod) return false;
+        // Включение — только на активном доступе: списание планируем на конец
+        // периода, счётчик попыток и предуведомление сбрасываем.
+        const rows = await tx
+          .update(schema.userSubscriptions)
+          .set({
+            autoRenew: true,
+            nextChargeAt: sql`${schema.userSubscriptions.currentPeriodEnd}`,
+            lastChargeError: null,
+            chargeAttempts: 0,
+            renewalNoticeSentAt: null,
+            updatedAt: now,
+          })
+          .where(
+            and(
+              eq(schema.userSubscriptions.userId, params.userId),
+              eq(schema.userSubscriptions.status, 'active'),
+              gt(schema.userSubscriptions.currentPeriodEnd, now)
+            )
+          )
+          .returning({ id: schema.userSubscriptions.id });
+        return rows.length > 0;
+      }
+      // Выключение — безусловное (376-ФЗ: отказ от списаний должен работать
+      // всегда, в том числе для просроченной записи).
+      const rows = await tx
         .update(schema.userSubscriptions)
         .set({
-          autoRenew: true,
-          nextChargeAt: sql`${schema.userSubscriptions.currentPeriodEnd}`,
-          lastChargeError: null,
-          chargeAttempts: 0,
-          renewalNoticeSentAt: null,
+          autoRenew: false,
+          nextChargeAt: null,
           updatedAt: now,
         })
-        .where(
-          and(
-            eq(schema.userSubscriptions.userId, params.userId),
-            eq(schema.userSubscriptions.status, 'active'),
-            gt(schema.userSubscriptions.currentPeriodEnd, now)
-          )
-        );
-      return;
-    }
-    // Выключение — безусловное (376-ФЗ: отказ от списаний должен работать
-    // всегда, в том числе для просроченной записи).
-    await this.db
-      .update(schema.userSubscriptions)
-      .set({
-        autoRenew: false,
-        nextChargeAt: null,
-        updatedAt: now,
-      })
-      .where(eq(schema.userSubscriptions.userId, params.userId));
+        .where(eq(schema.userSubscriptions.userId, params.userId))
+        .returning({ id: schema.userSubscriptions.id });
+      return rows.length > 0;
+    });
   }
 
   // Доступы, которым пора автосписание: базовые eligibility-условия
@@ -1054,11 +1547,21 @@ export class DrizzleBillingRepository implements BillingRepository {
           eq(schema.userSubscriptions.status, 'active'),
           eq(schema.userSubscriptions.autoRenew, true),
           lte(schema.userSubscriptions.nextChargeAt, now),
-          lt(schema.userSubscriptions.chargeAttempts, params.maxAttempts),
+          // autoRenew=true при maxAttempts означает, что процесс упал после
+          // claim, но до terminal-обработки. Даём восстановить ту же последнюю
+          // попытку; счётчик ниже насыщается на maxAttempts.
+          lte(schema.userSubscriptions.chargeAttempts, params.maxAttempts),
           or(
             isNull(schema.userSubscriptions.lastChargeAttemptAt),
             lt(schema.userSubscriptions.lastChargeAttemptAt, retryCutoff)
-          )
+          ),
+          sql`not exists (
+            select 1
+            from ${schema.paymentOrders}
+            where ${schema.paymentOrders.userId} = ${schema.userSubscriptions.userId}
+              and ${schema.paymentOrders.fulfilledAt} is null
+              and coalesce(${schema.paymentOrders.metadata}->>'renewalQuarantined', 'false') = 'true'
+          )`
         )
       )
       .orderBy(schema.userSubscriptions.nextChargeAt)
@@ -1080,7 +1583,7 @@ export class DrizzleBillingRepository implements BillingRepository {
       .update(schema.userSubscriptions)
       .set({
         lastChargeAttemptAt: now,
-        chargeAttempts: sql`${schema.userSubscriptions.chargeAttempts} + 1`,
+        chargeAttempts: sql`least(${schema.userSubscriptions.chargeAttempts} + 1, ${params.maxAttempts})`,
         updatedAt: now,
       })
       .where(
@@ -1089,11 +1592,18 @@ export class DrizzleBillingRepository implements BillingRepository {
           eq(schema.userSubscriptions.status, 'active'),
           eq(schema.userSubscriptions.autoRenew, true),
           lte(schema.userSubscriptions.nextChargeAt, now),
-          lt(schema.userSubscriptions.chargeAttempts, params.maxAttempts),
+          lte(schema.userSubscriptions.chargeAttempts, params.maxAttempts),
           or(
             isNull(schema.userSubscriptions.lastChargeAttemptAt),
             lt(schema.userSubscriptions.lastChargeAttemptAt, retryCutoff)
-          )
+          ),
+          sql`not exists (
+            select 1
+            from ${schema.paymentOrders}
+            where ${schema.paymentOrders.userId} = ${schema.userSubscriptions.userId}
+              and ${schema.paymentOrders.fulfilledAt} is null
+              and coalesce(${schema.paymentOrders.metadata}->>'renewalQuarantined', 'false') = 'true'
+          )`
         )
       )
       .returning();
@@ -1104,19 +1614,197 @@ export class DrizzleBillingRepository implements BillingRepository {
     accessId: string;
     error: string;
     disableAutoRenew?: boolean;
+    retryAt?: Date | null;
+    restoreChargeAttemptsTo?: number;
+    expectedProviderPaymentId?: string | null;
+    expectedActivePaymentMethodId?: string;
+    requireNoActivePaymentMethod?: boolean;
+    deferRetryUntilPeriodEnd?: boolean;
     now?: Date;
-  }): Promise<void> {
+  }): Promise<boolean> {
     const now = params.now ?? new Date();
-    await this.db
-      .update(schema.userSubscriptions)
+    return await this.db.transaction(async (tx) => {
+      const [access] = await tx
+        .select({ userId: schema.userSubscriptions.userId })
+        .from(schema.userSubscriptions)
+        .where(eq(schema.userSubscriptions.id, params.accessId))
+        .limit(1);
+      if (!access) return false;
+      await tx
+        .select({ id: schema.users.id })
+        .from(schema.users)
+        .where(eq(schema.users.id, access.userId))
+        .for('update');
+      const rows = await tx
+        .update(schema.userSubscriptions)
+        .set({
+          lastChargeError: params.error.slice(0, 500),
+          chargeAttempts: params.restoreChargeAttemptsTo,
+          ...(params.disableAutoRenew
+            ? { autoRenew: false, nextChargeAt: null }
+            : params.retryAt !== undefined
+              ? {
+                  nextChargeAt:
+                    params.deferRetryUntilPeriodEnd && params.retryAt
+                      ? sql`greatest(${schema.userSubscriptions.currentPeriodEnd}, ${params.retryAt})`
+                      : params.retryAt,
+                  // Дата повтора уже ограничивает выборку. Снимаем общий
+                  // 24-часовой троттлинг, чтобы короткий retry сработал вовремя.
+                  lastChargeAttemptAt: null,
+                }
+              : {}),
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(schema.userSubscriptions.id, params.accessId),
+            // Запоздалая ошибка не должна менять уже отозванное согласие.
+            eq(schema.userSubscriptions.autoRenew, true),
+            params.expectedProviderPaymentId === undefined
+              ? undefined
+              : params.expectedProviderPaymentId === null
+                ? isNull(schema.userSubscriptions.providerPaymentId)
+                : eq(
+                    schema.userSubscriptions.providerPaymentId,
+                    params.expectedProviderPaymentId
+                  ),
+            params.expectedActivePaymentMethodId
+              ? sql`exists (
+                  select 1
+                  from ${schema.userPaymentMethods}
+                  where ${schema.userPaymentMethods.userId} = ${schema.userSubscriptions.userId}
+                    and ${schema.userPaymentMethods.status} = 'active'
+                    and ${schema.userPaymentMethods.providerPaymentMethodId} = ${params.expectedActivePaymentMethodId}
+                )`
+              : undefined,
+            params.requireNoActivePaymentMethod
+              ? sql`not exists (
+                  select 1
+                  from ${schema.userPaymentMethods}
+                  where ${schema.userPaymentMethods.userId} = ${schema.userSubscriptions.userId}
+                    and ${schema.userPaymentMethods.status} = 'active'
+                )`
+              : undefined
+          )
+        )
+        .returning({ id: schema.userSubscriptions.id });
+      return rows.length > 0;
+    });
+  }
+
+  async rescheduleAccessChargeVerification(params: {
+    accessId: string;
+    chargeAttempts: number;
+    retryAt: Date;
+    expectedProviderPaymentId?: string | null;
+    expectedActivePaymentMethodId?: string;
+    expectedPendingOrderId?: string;
+    now?: Date;
+  }): Promise<boolean> {
+    const now = params.now ?? new Date();
+    return await this.db.transaction(async (tx) => {
+      const [access] = await tx
+        .select({ userId: schema.userSubscriptions.userId })
+        .from(schema.userSubscriptions)
+        .where(eq(schema.userSubscriptions.id, params.accessId))
+        .limit(1);
+      if (!access) return false;
+      await tx
+        .select({ id: schema.users.id })
+        .from(schema.users)
+        .where(eq(schema.users.id, access.userId))
+        .for('update');
+      const rows = await tx
+        .update(schema.userSubscriptions)
+        .set({
+          chargeAttempts: params.chargeAttempts,
+          nextChargeAt: params.retryAt,
+          lastChargeAttemptAt: null,
+          lastChargeError: null,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(schema.userSubscriptions.id, params.accessId),
+            eq(schema.userSubscriptions.autoRenew, true),
+            params.expectedProviderPaymentId === undefined
+              ? undefined
+              : params.expectedProviderPaymentId === null
+                ? isNull(schema.userSubscriptions.providerPaymentId)
+                : eq(
+                    schema.userSubscriptions.providerPaymentId,
+                    params.expectedProviderPaymentId
+                  ),
+            params.expectedActivePaymentMethodId
+              ? sql`exists (
+                  select 1
+                  from ${schema.userPaymentMethods}
+                  where ${schema.userPaymentMethods.userId} = ${schema.userSubscriptions.userId}
+                    and ${schema.userPaymentMethods.status} = 'active'
+                    and ${schema.userPaymentMethods.providerPaymentMethodId} = ${params.expectedActivePaymentMethodId}
+                )`
+              : undefined,
+            params.expectedPendingOrderId
+              ? sql`exists (
+                  select 1
+                  from ${schema.paymentOrders}
+                  where ${schema.paymentOrders.id} = ${params.expectedPendingOrderId}
+                    and ${schema.paymentOrders.userId} = ${schema.userSubscriptions.userId}
+                    and ${schema.paymentOrders.fulfilledAt} is null
+                    and ${schema.paymentOrders.status} in ('pending', 'waiting_for_capture', 'indeterminate')
+                    and coalesce(${schema.paymentOrders.metadata}->>'renewalFailureHandled', 'false') <> 'true'
+                    and coalesce(${schema.paymentOrders.metadata}->>'renewalQuarantined', 'false') <> 'true'
+                )`
+              : undefined
+          )
+        )
+        .returning({ id: schema.userSubscriptions.id });
+      return rows.length > 0;
+    });
+  }
+
+  async markRenewalFailureHandled(params: {
+    orderId: string;
+    now?: Date;
+  }): Promise<boolean> {
+    const now = params.now ?? new Date();
+    const rows = await this.db
+      .update(schema.paymentOrders)
       .set({
-        lastChargeError: params.error.slice(0, 500),
-        ...(params.disableAutoRenew
-          ? { autoRenew: false, nextChargeAt: null }
-          : {}),
+        metadata: sql`coalesce(${schema.paymentOrders.metadata}, '{}'::jsonb) || jsonb_build_object('renewalFailureHandled', true)`,
         updatedAt: now,
       })
-      .where(eq(schema.userSubscriptions.id, params.accessId));
+      .where(
+        and(
+          eq(schema.paymentOrders.id, params.orderId),
+          isNull(schema.paymentOrders.fulfilledAt),
+          sql`coalesce(${schema.paymentOrders.metadata}->>'renewalFailureHandled', 'false') <> 'true'`
+        )
+      )
+      .returning({ id: schema.paymentOrders.id });
+    return rows.length > 0;
+  }
+
+  async claimRenewalSuccessNotification(params: {
+    orderId: string;
+    now?: Date;
+  }): Promise<boolean> {
+    const now = params.now ?? new Date();
+    const rows = await this.db
+      .update(schema.paymentOrders)
+      .set({
+        metadata: sql`coalesce(${schema.paymentOrders.metadata}, '{}'::jsonb) || jsonb_build_object('renewalSuccessNotified', true)`,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(schema.paymentOrders.id, params.orderId),
+          isNotNull(schema.paymentOrders.fulfilledAt),
+          sql`coalesce(${schema.paymentOrders.metadata}->>'renewalSuccessNotified', 'false') <> 'true'`
+        )
+      )
+      .returning({ id: schema.paymentOrders.id });
+    return rows.length > 0;
   }
 
   async listAccessDueForRenewalNotice(params: {
@@ -1217,14 +1905,77 @@ async function grantPaidAccess(
     return true;
   }
 
-  const savedPaymentMethod =
-    params.source.kind === 'purchase' ? params.source.paymentMethod : null;
   const [existing] = await tx
     .select()
     .from(schema.userSubscriptions)
     .where(eq(schema.userSubscriptions.userId, beneficiaryUserId))
     .for('update')
     .limit(1);
+
+  const [currentPaymentMethod] =
+    params.source.kind === 'purchase'
+      ? await tx
+          .select({
+            providerPaymentMethodId:
+              schema.userPaymentMethods.providerPaymentMethodId,
+          })
+          .from(schema.userPaymentMethods)
+          .where(
+            and(
+              eq(schema.userPaymentMethods.userId, beneficiaryUserId),
+              eq(schema.userPaymentMethods.status, 'active')
+            )
+          )
+          .limit(1)
+      : [];
+
+  // Неизвестный исход старого POST нельзя автоматически «перекрыть» новой
+  // покупкой или перепривязкой: старый платёж ещё может оказаться успешным.
+  // Метод новой покупки сохраняем, но автопродление остаётся выключенным до
+  // ручной сверки карантинного заказа с YooKassa.
+  const [blockingRenewal] =
+    params.source.kind === 'purchase'
+      ? await tx
+          .select({ id: schema.paymentOrders.id })
+          .from(schema.paymentOrders)
+          .where(
+            and(
+              eq(schema.paymentOrders.userId, beneficiaryUserId),
+              isNull(schema.paymentOrders.fulfilledAt),
+              sql`${schema.paymentOrders.metadata}->>'renewal' = 'true'`,
+              isBlockingUnknownRenewalOrder()
+            )
+          )
+          .limit(1)
+      : [];
+  const renewalActivationAllowed = !blockingRenewal;
+
+  // Результат автосписания может прийти после того, как пользователь уже
+  // отключил автопродление и отвязал способ оплаты. Доступ за состоявшийся
+  // платёж выдаём, но внутри той же блокировки не восстанавливаем согласие и
+  // не записываем обратно отозванный способ оплаты.
+  const renewalConsentActive =
+    params.source.kind !== 'purchase' ||
+    !params.source.requireExistingAutoRenewConsent ||
+    (Boolean(existing?.autoRenew) && Boolean(currentPaymentMethod));
+  const renewalPaymentMethodStillCurrent =
+    params.source.kind !== 'purchase' ||
+    !params.source.requireExistingAutoRenewConsent ||
+    (Boolean(params.source.expectedPaymentMethodId) &&
+      currentPaymentMethod?.providerPaymentMethodId ===
+        params.source.expectedPaymentMethodId);
+  const renewalGenerationStillCurrent =
+    params.source.kind !== 'purchase' ||
+    !params.source.requireExistingAutoRenewConsent ||
+    (params.source.expectedAccessProviderPaymentId !== undefined &&
+      existing?.providerPaymentId ===
+        params.source.expectedAccessProviderPaymentId);
+  const savedPaymentMethod =
+    params.source.kind === 'purchase' &&
+    renewalConsentActive &&
+    renewalPaymentMethodStillCurrent
+      ? params.source.paymentMethod
+      : null;
 
   const existingActive = Boolean(
     existing &&
@@ -1235,7 +1986,7 @@ async function grantPaidAccess(
   const periodEnd = addDaysTo(periodStart, plan.durationDays);
 
   let accessId: string;
-  if (existingActive && params.source.kind === 'gift') {
+  if (existing && params.source.kind === 'gift') {
     // Подарок — изолированное продление доступа. Он сдвигает дату
     // следующего списания вместе с концом доступа, но не меняет ни одного
     // условия ранее подтверждённого пользователем платёжного соглашения.
@@ -1243,49 +1994,55 @@ async function grantPaidAccess(
       .update(schema.userSubscriptions)
       .set({
         currentPeriodEnd: periodEnd,
-        nextChargeAt: existing!.autoRenew ? periodEnd : null,
+        // Подарок всегда переносит следующую бизнес-попытку на новый конец
+        // доступа. Уже созданный renewal-order продолжает независимую
+        // сверку по своему lease/retryAt и не требует раннего nextChargeAt.
+        nextChargeAt: existing.autoRenew ? periodEnd : null,
         renewalNoticeSentAt: null,
         updatedAt: now,
       })
-      .where(eq(schema.userSubscriptions.id, existing!.id));
-    accessId = existing!.id;
+      .where(eq(schema.userSubscriptions.id, existing.id));
+    accessId = existing.id;
   } else {
     // Автопродление может включить только собственная покупка получателя.
     // Подарочный платёж принципиально не читает и не меняет его способ
     // оплаты или настройки будущих списаний.
-    let hasChargeableMethod = Boolean(savedPaymentMethod);
-    if (params.source.kind === 'purchase' && !hasChargeableMethod) {
-      const [method] = await tx
-        .select({ id: schema.userPaymentMethods.id })
-        .from(schema.userPaymentMethods)
-        .where(
-          and(
-            eq(schema.userPaymentMethods.userId, beneficiaryUserId),
-            eq(schema.userPaymentMethods.status, 'active')
-          )
-        )
-        .limit(1);
-      hasChargeableMethod = Boolean(method);
-    }
+    const hasChargeableMethod =
+      renewalConsentActive &&
+      (Boolean(savedPaymentMethod) || Boolean(currentPaymentMethod));
     // Повторная покупка со снятой галочкой не выключает уже включённое
     // автопродление — выключение только явным действием пользователя.
     const autoRenewOn =
       params.source.kind === 'purchase' &&
+      renewalActivationAllowed &&
+      renewalConsentActive &&
       ((params.source.autoRenew && hasChargeableMethod) ||
         (existingActive && Boolean(existing!.autoRenew)));
     const renewalAgreementConfirmed =
       params.source.kind === 'purchase' &&
+      renewalActivationAllowed &&
+      renewalConsentActive &&
+      renewalGenerationStillCurrent &&
       params.source.autoRenew &&
       hasChargeableMethod;
     // Новые тариф и сумма автосписания требуют отдельного явного согласия.
     // Разовая покупка может продлить доступ, но сохраняет ранее включённое
     // автопродление ровно на прежних условиях.
+    const preserveExistingRenewalTerms = Boolean(
+      existing &&
+        ((params.source.kind === 'purchase' &&
+          params.source.requireExistingAutoRenewConsent &&
+          !renewalGenerationStillCurrent) ||
+          (existingActive &&
+            existing.autoRenew &&
+            !renewalAgreementConfirmed))
+    );
     const renewalPlanId =
-      existingActive && existing!.autoRenew && !renewalAgreementConfirmed
+      preserveExistingRenewalTerms
         ? existing!.renewalPlanId
         : plan.id;
     const renewalAmountRub =
-      existingActive && existing!.autoRenew && !renewalAgreementConfirmed
+      preserveExistingRenewalTerms
         ? existing!.renewalAmountRub
         : plan.priceRub;
 
@@ -1395,6 +2152,48 @@ function addDaysTo(date: Date, days: number): Date {
   const next = new Date(date);
   next.setDate(next.getDate() + days);
   return next;
+}
+
+// Блокирующее состояние начинается сразу после потенциально ушедшего POST,
+// а не только после истечения окна Idempotence-Key. Точный отказ текущего
+// кода сохраняет renewalErrorKind и не мешает пользователю оплатить заново;
+// legacy terminal без диагностики считаем неизвестным исходом fail-close.
+function isBlockingUnknownRenewalOrder() {
+  return or(
+    sql`coalesce(${schema.paymentOrders.metadata}->>'renewalQuarantined', 'false') = 'true'`,
+    and(
+      isNull(schema.paymentOrders.providerPaymentId),
+      inArray(schema.paymentOrders.status, [
+        'pending',
+        'waiting_for_capture',
+        'indeterminate',
+      ])
+    ),
+    and(
+      isNull(schema.paymentOrders.providerPaymentId),
+      inArray(schema.paymentOrders.status, [
+        'failed',
+        'canceled',
+        'verification_failed',
+      ]),
+      sql`coalesce(${schema.paymentOrders.metadata}->>'renewalErrorKind', '') not in ('definitive_failure', 'invalid_payment_method', 'not_attempted')`
+    )
+  );
+}
+
+function isBlockingRenewalForCheckout() {
+  return or(
+    isBlockingUnknownRenewalOrder(),
+    and(
+      isNotNull(schema.paymentOrders.providerPaymentId),
+      inArray(schema.paymentOrders.status, [
+        'pending',
+        'waiting_for_capture',
+        'succeeded',
+        'indeterminate',
+      ])
+    )
+  );
 }
 
 function encodePaymentCursor(createdAt: Date, id: string): string {

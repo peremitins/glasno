@@ -28,7 +28,12 @@ export default defineNitroPlugin((nitroApp) => {
   // Периодическая сверка не даёт финальному статусу остаться pending локально.
   const pendingPaymentSweep = () => {
     void createService()
-      .runPendingPaymentSweep()
+      .runPendingPaymentSweep({
+        // Sweep продолжает GET-сверку уже созданных платежей, но kill-switch
+        // запрещает recovery POST для заказа без providerPaymentId.
+        allowRenewalCreate:
+          process.env.BILLING_RENEWAL_DISABLED !== 'true',
+      })
       .catch((err) => {
         console.error('[billing] pending payment sweep failed', err);
       });

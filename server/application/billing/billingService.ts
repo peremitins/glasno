@@ -16,6 +16,11 @@ import type {
   PaidAccessRecord,
   PaymentOrderRecord,
 } from '@/server/interface/billingRepository';
+import {
+  PassCheckoutInProgressError,
+  RenewalAccessChangedError,
+  RenewalPaymentQuarantinedError,
+} from '@/server/interface/billingRepository';
 import { BillingAccessService } from './accessService';
 import {
   findBillingPlan,
@@ -26,10 +31,13 @@ import {
 } from './plans';
 import {
   buildYooKassaReceipt,
+  classifyYooKassaRecurringPaymentError,
   createYooKassaPayment,
   createYooKassaPaymentMethodBinding,
   createYooKassaRecurringPayment,
+  extractYooKassaApiError,
   extractYooKassaPaymentEvent,
+  formatYooKassaApiError,
   getYooKassaConfirmationToken,
   getYooKassaPayment,
   getYooKassaPaymentMethod,
@@ -40,17 +48,130 @@ import { sendGiftNotificationEmail } from './giftEmailSender';
 import {
   sendRenewalChargedEmail,
   sendRenewalFailedEmail,
+  sendRenewalManualReviewEmail,
   sendRenewalNoticeEmail,
 } from './renewalEmailSender';
 import type { TelegramAlertsService } from '@/server/application/telegram/telegramAlertsService';
+import { resolveBillingAppUrl } from './appUrl';
 
 // Политика ретраев автосписания (ТЗ тарифы v2, раздел 3): попытка в дату
 // продления, повтор через 24 часа, максимум 3 попытки — затем автопродление
 // выключается и пользователь получает письмо с CTA.
 export const AUTO_RENEW_RETRY_AFTER_MS = 24 * 60 * 60 * 1000;
 export const AUTO_RENEW_MAX_ATTEMPTS = 3;
+// Sweep запускается раз в час, поэтому более короткая задержка создаёт ложное
+// обещание времени повтора и всё равно не исполняется раньше следующего тика.
+const AUTO_RENEW_INDETERMINATE_RETRY_AFTER_MS = 60 * 60 * 1000;
+// Ограничение частоты YooKassa — не отказ оплаты. Даём провайдеру паузу и
+// повторяем тот же запрос, не расходуя одну из трёх попыток пользователя.
+const AUTO_RENEW_TRANSIENT_RETRY_AFTER_MS = 15 * 60 * 1000;
+const PAYMENT_RECONCILIATION_LEASE_MS = 5 * 60 * 1000;
+// YooKassa гарантирует идемпотентность ключа 24 часа. Оставляем часовой запас:
+// после этого срока повтор POST с прежним ключом уже может дать второе списание.
+const YOOKASSA_IDEMPOTENCE_SAFE_WINDOW_MS = 23 * 60 * 60 * 1000;
+
+const PERMANENT_PAYMENT_METHOD_CANCELLATION_REASONS = new Set([
+  'card_expired',
+  'payment_method_restricted',
+  'permission_revoked',
+]);
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+interface RenewalRequestSnapshot {
+  amountRub: number;
+  description: string;
+  paymentMethodId: string;
+  planId: string;
+  receiptEmail: string | null;
+}
+
+function readRenewalRequestSnapshot(
+  metadata: Record<string, unknown> | null
+): RenewalRequestSnapshot | null {
+  const value = metadata?.renewalRequest;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+
+  const snapshot = value as Record<string, unknown>;
+  const receiptEmail = snapshot.receiptEmail;
+  if (
+    typeof snapshot.amountRub !== 'number' ||
+    !Number.isFinite(snapshot.amountRub) ||
+    snapshot.amountRub <= 0 ||
+    typeof snapshot.description !== 'string' ||
+    snapshot.description.length === 0 ||
+    typeof snapshot.paymentMethodId !== 'string' ||
+    snapshot.paymentMethodId.length === 0 ||
+    typeof snapshot.planId !== 'string' ||
+    snapshot.planId.length === 0 ||
+    (receiptEmail !== null && typeof receiptEmail !== 'string')
+  ) {
+    return null;
+  }
+
+  return {
+    amountRub: snapshot.amountRub,
+    description: snapshot.description,
+    paymentMethodId: snapshot.paymentMethodId,
+    planId: snapshot.planId,
+    receiptEmail,
+  };
+}
+
+function readRenewalAttemptNumber(
+  metadata: Record<string, unknown> | null
+): number | null {
+  const value = metadata?.renewalAttemptNumber;
+  return typeof value === 'number' && Number.isInteger(value) && value > 0
+    ? value
+    : null;
+}
+
+function readRenewalAccessProviderPaymentId(
+  metadata: Record<string, unknown> | null
+): string | null | undefined {
+  const value = metadata?.renewalAccessProviderPaymentId;
+  if (value === null) return null;
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+function readRenewalMetadataString(
+  metadata: Record<string, unknown> | null,
+  key: string
+): string | null {
+  const value = metadata?.[key];
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+function getExpectedRenewalAccess(
+  access: PaidAccessRecord | null,
+  metadata: Record<string, unknown> | null
+): PaidAccessRecord | null {
+  if (!access) return null;
+  const expectedProviderPaymentId =
+    readRenewalAccessProviderPaymentId(metadata);
+  if (
+    expectedProviderPaymentId === undefined ||
+    access.providerPaymentId !== expectedProviderPaymentId
+  ) {
+    return null;
+  }
+  return { ...access, providerPaymentId: expectedProviderPaymentId };
+}
+
+async function retryIndeterminateYooKassaRequest<T>(
+  request: () => Promise<T>
+): Promise<T> {
+  try {
+    return await request();
+  } catch (error) {
+    const errorInfo = extractYooKassaApiError(error);
+    if (classifyYooKassaRecurringPaymentError(errorInfo) !== 'indeterminate') {
+      throw error;
+    }
+    return await request();
+  }
+}
 
 // Политика предуведомлений о списании. Коротким пропускам (7–15 дней) письмо
 // не шлём: покупка ещё свежа в памяти, напоминание читается как спам и как
@@ -83,6 +204,7 @@ export interface BillingServiceConfig {
 export class BillingService {
   private readonly access: BillingAccessService;
   private readonly giftNotifications: GiftNotificationService;
+  private readonly appUrl: string;
 
   constructor(
     private readonly deps: {
@@ -91,13 +213,14 @@ export class BillingService {
       telegramAlerts?: TelegramAlertsService;
     }
   ) {
+    this.appUrl = resolveBillingAppUrl(deps.config.appUrl);
     this.access = new BillingAccessService({
       repository: deps.repository,
     });
     this.giftNotifications = new GiftNotificationService({
       repository: deps.repository,
       sendEmail: sendGiftNotificationEmail,
-      appUrl: deps.config.appUrl,
+      appUrl: this.appUrl,
     });
   }
 
@@ -125,16 +248,29 @@ export class BillingService {
     return await this.giftNotifications.runSweep(params);
   }
 
-  async runPendingPaymentSweep(params?: { limit?: number }) {
-    const orders = await this.deps.repository.listPendingPaymentOrders(params);
+  async runPendingPaymentSweep(params?: {
+    limit?: number;
+    allowRenewalCreate?: boolean;
+  }) {
+    const orders = await this.deps.repository.listPendingPaymentOrders({
+      limit: params?.limit,
+    });
     const results = await Promise.allSettled(
       orders.map(async (order) => {
-        if (!order.providerPaymentId) return;
-        const verified = await getYooKassaPayment(
-          this.deps.config.yookassa,
-          order.providerPaymentId
-        );
-        await this.applyVerifiedYooKassaPayment(order, verified, 'pending-sweep');
+        const now = new Date();
+        const claimed =
+          await this.deps.repository.claimPaymentOrderReconciliation({
+            orderId: order.id,
+            now,
+            leaseUntil: new Date(
+              now.getTime() + PAYMENT_RECONCILIATION_LEASE_MS
+            ),
+          });
+        if (!claimed) return false;
+        await this.reconcilePendingPaymentOrder(order, now, {
+          allowRenewalCreate: params?.allowRenewalCreate !== false,
+        });
+        return true;
       })
     );
     const failed = results.filter((result) => result.status === 'rejected').length;
@@ -146,9 +282,343 @@ export class BillingService {
     }
     return {
       checked: orders.length,
-      reconciled: orders.length - failed,
+      reconciled: results.filter(
+        (result) => result.status === 'fulfilled' && result.value
+      ).length,
       failed,
     };
+  }
+
+  private async reconcilePendingPaymentOrder(
+    order: PaymentOrderRecord,
+    now: Date,
+    options: { allowRenewalCreate: boolean }
+  ): Promise<void> {
+    let providerPaymentId = order.providerPaymentId;
+    const isRenewal = order.metadata?.renewal === true;
+    const renewalRequest = readRenewalRequestSnapshot(order.metadata);
+    const access = isRenewal
+      ? await this.deps.repository.findAccessByUserId(order.userId)
+      : null;
+    const expectedRenewalAccess = getExpectedRenewalAccess(
+      access,
+      order.metadata
+    );
+    const plan = isRenewal ? findBillingPlan(order.planId) : null;
+    const renewalAttemptNumber =
+      readRenewalAttemptNumber(order.metadata) ??
+      Math.max(1, access?.chargeAttempts ?? 1);
+    const storedGeneration = readRenewalAccessProviderPaymentId(
+      order.metadata
+    );
+    const legacyRenewalAccess =
+      storedGeneration === undefined &&
+      access &&
+      order.metadata?.accessId === access.id
+        ? access
+        : null;
+
+    const isRecordedTerminalRenewalFailure =
+      isRenewal &&
+      ['failed', 'canceled', 'verification_failed'].includes(order.status);
+    if (!providerPaymentId && isRecordedTerminalRenewalFailure) {
+      const storedErrorKind = readRenewalMetadataString(
+        order.metadata,
+        'renewalErrorKind'
+      );
+      const unknownProviderOutcome =
+        storedGeneration === undefined ||
+        !storedErrorKind ||
+        storedErrorKind === 'indeterminate' ||
+        storedErrorKind === 'transient';
+      if (unknownProviderOutcome) {
+        await this.quarantineRenewalOrder(
+          order.id,
+          readRenewalMetadataString(
+            order.metadata,
+            'renewalErrorDiagnostic'
+          ) ??
+            'Исход автосписания без идентификатора платежа YooKassa неизвестен'
+        );
+      }
+      if (order.metadata?.renewalFailureHandled === true) return;
+      // Legacy-код не сохранял generation и помечал failed даже при 5xx.
+      // По тому же accessId считаем исход старого POST неизвестным и
+      // fail-close, чтобы новый key не списал дважды. updatedAt не подходит:
+      // подарок тоже меняет его, не создавая новое платёжное соглашение.
+      const accessForFailure =
+        expectedRenewalAccess ?? legacyRenewalAccess;
+      if (
+        !access ||
+        !accessForFailure ||
+        !access.autoRenew ||
+        !plan
+      ) {
+        await this.deps.repository.markRenewalFailureHandled({
+          orderId: order.id,
+          now,
+        });
+        return;
+      }
+      if (
+        !unknownProviderOutcome &&
+        !(await this.isRenewalPaymentMethodCurrent(order))
+      ) {
+        await this.deps.repository.markRenewalFailureHandled({
+          orderId: order.id,
+          now,
+        });
+        return;
+      }
+
+      const attemptedPaymentMethodId =
+        readRenewalMetadataString(
+          order.metadata,
+          'renewalFailedPaymentMethodId'
+        ) ?? renewalRequest?.paymentMethodId ?? '';
+      const invalidCurrentPaymentMethod =
+        storedErrorKind === 'invalid_payment_method'
+          ? await this.deletePaymentMethodIfCurrent(
+              order.userId,
+              attemptedPaymentMethodId
+            )
+          : false;
+      const error =
+        readRenewalMetadataString(
+          order.metadata,
+          'renewalErrorDiagnostic'
+        ) ??
+        (order.status === 'verification_failed'
+          ? 'Автосписание подтверждено, но сумма или валюта не совпадает с заказом'
+          : `Списание отклонено (${order.status})`);
+      await this.handleChargeFailure(
+        { ...accessForFailure, chargeAttempts: renewalAttemptNumber },
+        plan,
+        error,
+        now,
+        {
+          permanent:
+            unknownProviderOutcome ||
+            order.status === 'verification_failed' ||
+            invalidCurrentPaymentMethod,
+          requireNoActivePaymentMethod: invalidCurrentPaymentMethod,
+          expectedActivePaymentMethodId:
+            !unknownProviderOutcome &&
+            !invalidCurrentPaymentMethod &&
+            attemptedPaymentMethodId
+              ? attemptedPaymentMethodId
+              : undefined,
+          chargeAttemptsTo: renewalAttemptNumber,
+          handledOrderId: order.id,
+          manualReviewRequired: unknownProviderOutcome,
+        }
+      );
+      return;
+    }
+
+    if (!providerPaymentId) {
+      if (!isRenewal || !access || !plan) return;
+      const requestMatchesOrder = Boolean(
+        renewalRequest &&
+          renewalRequest.planId === order.planId &&
+          renewalRequest.amountRub === order.amountRub
+      );
+      // Kill-switch запрещает инициировать даже same-key POST. Уже созданные
+      // платежи по-прежнему можно безопасно сверять GET-запросом ниже.
+      if (!options.allowRenewalCreate) {
+        await this.scheduleRenewalOrderReconciliation(
+          order.id,
+          now,
+          AUTO_RENEW_INDETERMINATE_RETRY_AFTER_MS
+        );
+        return;
+      }
+
+      const currentPaymentMethod =
+        await this.deps.repository.findPaymentMethodByUserId(order.userId);
+      const consentStillCurrent = Boolean(
+        expectedRenewalAccess &&
+          access.autoRenew &&
+          currentPaymentMethod?.status === 'active' &&
+          currentPaymentMethod.providerPaymentMethodId ===
+            renewalRequest?.paymentMethodId
+      );
+      const requestCanBeRepeated =
+        requestMatchesOrder &&
+        consentStillCurrent &&
+        isPendingPaymentStatus(order.status) &&
+        now.getTime() - order.createdAt.getTime() <
+          YOOKASSA_IDEMPOTENCE_SAFE_WINDOW_MS;
+      if (!requestCanBeRepeated) {
+        const error =
+          consentStillCurrent
+            ? 'Небезопасно повторять незавершённое автосписание без идентификатора платежа YooKassa'
+            : 'Автосписание не возобновлено: согласие или сохранённый способ оплаты уже изменились';
+        await this.quarantineRenewalOrder(order.id, error);
+        const accessAtRisk =
+          expectedRenewalAccess ?? legacyRenewalAccess;
+        if (accessAtRisk?.autoRenew) {
+          // Исход старого POST неизвестен, а same-key повтор уже небезопасен.
+          // Новый order/key мог бы привести к двойному списанию.
+          await this.handleChargeFailure(
+            {
+              ...accessAtRisk,
+              chargeAttempts: renewalAttemptNumber,
+            },
+            plan,
+            error,
+            now,
+            {
+              permanent: true,
+              chargeAttemptsTo: renewalAttemptNumber,
+              handledOrderId: order.id,
+              manualReviewRequired: true,
+            }
+          );
+        } else {
+          await this.deps.repository.markRenewalFailureHandled({
+            orderId: order.id,
+            now,
+          });
+        }
+        await this.notifyPaymentIssueTelegram({
+          stage: 'auto_renewal_failed',
+          userId: order.userId,
+          orderId: order.id,
+          planId: order.planId,
+          message: error,
+        });
+        return;
+      }
+
+      this.requireYooKassaConfig();
+      try {
+        const payment = await retryIndeterminateYooKassaRequest(async () =>
+          await createYooKassaRecurringPayment({
+            ...this.deps.config.yookassa,
+            idempotenceKey: order.id,
+            amountRub: renewalRequest!.amountRub,
+            description: renewalRequest!.description,
+            paymentMethodId: renewalRequest!.paymentMethodId,
+            metadata: {
+              orderId: order.id,
+              userId: order.userId,
+              planId: renewalRequest!.planId,
+            },
+            receipt: renewalRequest!.receiptEmail
+              ? buildYooKassaReceipt({
+                  email: renewalRequest!.receiptEmail,
+                  amountRub: renewalRequest!.amountRub,
+                  description: renewalRequest!.description,
+                })
+              : undefined,
+          })
+        );
+        providerPaymentId = payment.id;
+        await this.deps.repository.updatePaymentOrder({
+          id: order.id,
+          providerPaymentId,
+          status: payment.status || 'pending',
+          onlyIfUnfulfilled: true,
+        });
+      } catch (error) {
+        await this.handleYooKassaChargeError({
+          claimed: {
+            ...expectedRenewalAccess!,
+            chargeAttempts: renewalAttemptNumber,
+          },
+          plan,
+          order,
+          error,
+          now,
+          requestKind: 'create',
+          paymentMethodId: renewalRequest!.paymentMethodId,
+          renewalAttemptNumber,
+        });
+        return;
+      }
+    }
+
+    this.requireYooKassaConfig();
+    let verified: Awaited<ReturnType<typeof getYooKassaPayment>>;
+    try {
+      verified = await retryIndeterminateYooKassaRequest(async () =>
+        await getYooKassaPayment(
+          this.deps.config.yookassa,
+          providerPaymentId!
+        )
+      );
+    } catch (error) {
+      if (!isRenewal || !access || !plan) throw error;
+      if (!expectedRenewalAccess || !access.autoRenew) {
+        const errorInfo = extractYooKassaApiError(error);
+        const errorKind = classifyYooKassaRecurringPaymentError(errorInfo);
+        if (errorKind !== 'indeterminate' && errorKind !== 'transient') {
+          await this.deps.repository.updatePaymentOrder({
+            id: order.id,
+            status: 'failed',
+            onlyIfUnfulfilled: true,
+            metadata: {
+              renewalErrorKind: errorKind,
+              renewalErrorDiagnostic: formatYooKassaApiError(errorInfo),
+            },
+            mergeMetadata: true,
+          });
+          await this.deps.repository.markRenewalFailureHandled({
+            orderId: order.id,
+            now,
+          });
+        }
+        return;
+      }
+      await this.handleYooKassaChargeError({
+        claimed: {
+          ...expectedRenewalAccess,
+          chargeAttempts: renewalAttemptNumber,
+        },
+        plan,
+        order,
+        error,
+        now,
+        requestKind: 'verify',
+        paymentMethodId: renewalRequest?.paymentMethodId ?? null,
+        renewalAttemptNumber,
+      });
+      return;
+    }
+
+    await this.applyVerifiedYooKassaPayment(order, verified, 'pending-sweep');
+    if (!isRenewal) return;
+
+    if (verified.status === 'succeeded' && verified.paid) {
+      await this.finalizeDeferredRenewalPayment(order, verified, now);
+      return;
+    }
+    if (!access || !plan) return;
+    if (isPendingPaymentStatus(verified.status)) {
+      await this.scheduleRenewalOrderReconciliation(
+        order.id,
+        now,
+        AUTO_RENEW_INDETERMINATE_RETRY_AFTER_MS
+      );
+      if (expectedRenewalAccess && access.autoRenew) {
+        await this.deps.repository.rescheduleAccessChargeVerification({
+          accessId: access.id,
+          chargeAttempts: Math.max(0, renewalAttemptNumber - 1),
+          retryAt: new Date(
+            now.getTime() + AUTO_RENEW_INDETERMINATE_RETRY_AFTER_MS
+          ),
+          expectedProviderPaymentId:
+            expectedRenewalAccess.providerPaymentId,
+          expectedActivePaymentMethodId:
+            renewalRequest?.paymentMethodId,
+          expectedPendingOrderId: order.id,
+          now,
+        });
+      }
+      return;
+    }
+    await this.finalizeDeferredRenewalPayment(order, verified, now);
   }
 
   async getPaymentHistory(params: {
@@ -235,35 +705,60 @@ export class BillingService {
     const autoRenew =
       !recipientEmail && plan.autoRenewable && (params.autoRenew ?? true);
 
-    const order = recipientEmail
-      ? (
-          await this.deps.repository.createGiftPaymentOrder({
-            purchaserUserId: params.userId,
-            recipientEmail,
-            senderName: senderName!,
+    let order: PaymentOrderRecord;
+    try {
+      order = recipientEmail
+        ? (
+            await this.deps.repository.createGiftPaymentOrder({
+              purchaserUserId: params.userId,
+              recipientEmail,
+              senderName: senderName!,
+              planId: plan.id,
+              amountRub: plan.priceRub,
+              currency: 'RUB',
+              metadata: {
+                userId: params.userId,
+                planId: plan.id,
+                gift: true,
+              },
+            })
+          ).order
+        : await this.deps.repository.createPaymentOrder({
+            userId: params.userId,
             planId: plan.id,
             amountRub: plan.priceRub,
             currency: 'RUB',
+            // autoRenew в metadata: выдача доступа идёт по вебхуку, который
+            // не знает параметров исходного запроса.
             metadata: {
               userId: params.userId,
               planId: plan.id,
-              gift: true,
+              autoRenew,
             },
-          })
-        ).order
-      : await this.deps.repository.createPaymentOrder({
-          userId: params.userId,
-          planId: plan.id,
-          amountRub: plan.priceRub,
-          currency: 'RUB',
-          // autoRenew в metadata: выдача доступа идёт по вебхуку, который
-          // не знает параметров исходного запроса.
-          metadata: {
-            userId: params.userId,
-            planId: plan.id,
-            autoRenew,
-          },
-        });
+            ...(plan.type === 'pass'
+              ? {
+                  accessPaymentFlow: 'checkout' as const,
+                  conflictingPassPlanIds: getPassPlans().map(
+                    (passPlan) => passPlan.id
+                  ),
+                }
+              : {}),
+          });
+    } catch (error) {
+      if (error instanceof RenewalPaymentQuarantinedError) {
+        throw apiError(
+          'E_CONFLICT',
+          'Статус предыдущего автосписания ещё проверяется. Чтобы избежать повторного списания, новая покупка временно недоступна. Обновите страницу позже; если статус не изменится, напишите в поддержку.'
+        );
+      }
+      if (error instanceof PassCheckoutInProgressError) {
+        throw apiError(
+          'E_CONFLICT',
+          'Предыдущая оплата ещё не завершена. Вернитесь к открытому окну оплаты или обновите страницу немного позже.'
+        );
+      }
+      throw error;
+    }
 
     // Чек 54-ФЗ: передаём receipt, если у пользователя указан email
     // (паттерн Mentala: без email платёж уходит без чека из кода).
@@ -274,7 +769,7 @@ export class BillingService {
     // Куда виджет вернёт пользователя после оплаты. Для embedded это
     // передаётся не в теле платежа, а фронту — он отдаёт URL виджету.
     const returnUrl = buildYooKassaReturnUrl(
-      this.deps.config.appUrl,
+      this.appUrl,
       order.id,
       params.returnPath
     );
@@ -298,8 +793,8 @@ export class BillingService {
               description,
             })
           : undefined,
-        // Автопродление: просим YooKassa сохранить карту. Плательщик видит
-        // уведомление о сохранении на платёжной странице.
+        // Автопродление: просим YooKassa сохранить выбранный способ оплаты.
+        // Плательщик видит уведомление о сохранении на платёжной странице.
         savePaymentMethod: autoRenew,
       });
       const confirmationToken = getYooKassaConfirmationToken(payment);
@@ -307,6 +802,7 @@ export class BillingService {
         id: order.id,
         providerPaymentId: payment.id,
         status: payment.status || 'pending',
+        onlyIfUnfulfilled: true,
       });
 
       return {
@@ -319,6 +815,7 @@ export class BillingService {
       await this.deps.repository.updatePaymentOrder({
         id: order.id,
         status: 'failed',
+        onlyIfUnfulfilled: true,
       });
       if (recipientEmail) {
         await this.deps.repository.cancelGiftOrder({ orderId: order.id });
@@ -368,11 +865,42 @@ export class BillingService {
 
   async handleYooKassaWebhook(payload: unknown): Promise<void> {
     const event = extractYooKassaPaymentEvent(payload);
-    const order = event.orderId
+    // Неподписанные поля используем только как дешёвый локальный prefilter:
+    // неизвестный UUID/payment id не должен провоцировать внешний GET.
+    const candidate = event.orderId
       ? await this.deps.repository.findPaymentOrderById(event.orderId)
       : await this.deps.repository.findPaymentOrderByProviderPaymentId(
           event.providerPaymentId
         );
+    if (
+      !candidate ||
+      (candidate.providerPaymentId !== null &&
+        candidate.providerPaymentId !== event.providerPaymentId)
+    ) {
+      console.warn('[billing] yookassa webhook: unknown order', {
+        providerPaymentId: event.providerPaymentId,
+        event: event.event,
+      });
+      return;
+    }
+    // orderId из тела webhook не подписан и не является источником истины.
+    // Сначала читаем платёж напрямую у YooKassa, затем используем metadata,
+    // сохранённые нашим сервером при создании платежа.
+    this.requireYooKassaConfig();
+    const verified = await getYooKassaPayment(
+      this.deps.config.yookassa,
+      event.providerPaymentId
+    );
+    const verifiedOrderId = readVerifiedMetadataString(
+      verified.metadata,
+      'orderId'
+    );
+    const order =
+      verifiedOrderId === candidate.id
+        ? candidate
+        : verifiedOrderId
+          ? await this.deps.repository.findPaymentOrderById(verifiedOrderId)
+          : null;
     if (!order) {
       // Неизвестный заказ: отвечаем 200, иначе YooKassa будет ретраить
       // вечно, а злоумышленник получит сигнал для перебора.
@@ -383,14 +911,18 @@ export class BillingService {
       return;
     }
 
-    // КРИТИЧНО: телу вебхука доверять нельзя (его может подделать кто угодно).
-    // Подтверждаем статус и сумму ОБРАТНЫМ запросом в YooKassa.
-    this.requireYooKassaConfig();
-    const verified = await getYooKassaPayment(
-      this.deps.config.yookassa,
-      event.providerPaymentId
-    );
-    await this.applyVerifiedYooKassaPayment(order, verified, event.event);
+    try {
+      await this.applyVerifiedYooKassaPayment(order, verified, event.event);
+      await this.finalizeDeferredRenewalPayment(order, verified, new Date());
+    } catch (error) {
+      if (!(error instanceof YooKassaPaymentCorrelationError)) throw error;
+      console.error('[billing] yookassa webhook correlation mismatch', {
+        eventOrderId: event.orderId,
+        verifiedOrderId,
+        providerPaymentId: verified.id,
+        localOrderId: order.id,
+      });
+    }
   }
 
   async reconcileYooKassaCheckout(params: {
@@ -464,7 +996,7 @@ export class BillingService {
       binding = await createYooKassaPaymentMethodBinding({
         ...this.deps.config.yookassa,
         idempotenceKey: `bind-${userId}-${Date.now()}`,
-        returnUrl: buildBindingReturnUrl(this.deps.config.appUrl),
+        returnUrl: buildBindingReturnUrl(this.appUrl),
       });
     } catch (err) {
       if (isYooKassaRecurringPaymentsUnavailable(err)) {
@@ -516,37 +1048,29 @@ export class BillingService {
         cardLast4: remote.card?.last4 ?? null,
         cardExpiryMonth: remote.card?.expiry_month ?? null,
         cardExpiryYear: remote.card?.expiry_year ?? null,
+        enableAutoRenewForActiveAccess: true,
       });
-      // Карта появилась — включаем автопродление активного пропуска:
-      // единственный вход в привязку без платежа — флоу «включить
-      // автопродление без карты».
-      const access = await this.deps.repository.findAccessByUserId(userId);
-      if (isAccessActive(access)) {
-        await this.deps.repository.setAccessAutoRenew({
-          userId,
-          autoRenew: true,
-        });
-      }
       return;
     }
 
     // Привязка отклонена/протухла — убираем pending-запись.
     if (remote.status === 'inactive' || remote.status === 'canceled') {
-      await this.deps.repository.deletePaymentMethodByUserId(userId);
+      await this.deps.repository.deletePaymentMethodIfMatches({
+        userId,
+        providerPaymentMethodId: method.providerPaymentMethodId,
+      });
     }
   }
 
-  // Отвязка карты = электронный отказ от сохранённых платёжных данных
+  // Отвязка способа оплаты = электронный отказ от сохранённых платёжных данных
   // (376-ФЗ): способ оплаты удаляется, автопродление выключается
   // безусловно. Текущий оплаченный период остаётся активным до конца.
   async unbindPaymentMethod(userId: string | null | undefined): Promise<void> {
     if (!userId) {
       throw apiError('E_AUTH', 'Войдите в профиль');
     }
-    await this.deps.repository.deletePaymentMethodByUserId(userId);
-    await this.deps.repository.setAccessAutoRenew({
+    await this.deps.repository.revokeRecurringPaymentConsent({
       userId,
-      autoRenew: false,
     });
   }
 
@@ -564,7 +1088,7 @@ export class BillingService {
       if (!method || method.status !== 'active') {
         throw apiError(
           'E_VALIDATION',
-          'Сначала привяжите карту — автопродление списывает оплату с неё'
+          'Сначала привяжите способ оплаты. Он нужен для автопродления.'
         );
       }
       const access = await this.deps.repository.findAccessByUserId(
@@ -577,10 +1101,16 @@ export class BillingService {
         );
       }
     }
-    await this.deps.repository.setAccessAutoRenew({
+    const updated = await this.deps.repository.setAccessAutoRenew({
       userId: params.userId,
       autoRenew: params.enabled,
     });
+    if (params.enabled && !updated) {
+      throw apiError(
+        'E_VALIDATION',
+        'Не удалось включить автопродление: проверьте активный доступ и способ оплаты.'
+      );
+    }
   }
 
   // Автопродление при обращении пользователя к биллинг-статусу (по образцу
@@ -588,6 +1118,7 @@ export class BillingService {
   // Безопасно вызывать часто: claim-паттерн не даст списать дважды.
   async maybeRunAutoRenewal(userId: string | null | undefined): Promise<void> {
     if (!userId) return;
+    if (process.env.BILLING_RENEWAL_DISABLED === 'true') return;
     const now = new Date();
     const [due] = await this.deps.repository.listAccessDueForCharge({
       userId,
@@ -619,8 +1150,12 @@ export class BillingService {
     let failed = 0;
     for (const access of due) {
       try {
-        await this.chargeAccess(access, now);
-        processed += 1;
+        const chargeProcessed = await this.chargeAccess(access, now);
+        if (chargeProcessed) {
+          processed += 1;
+        } else {
+          failed += 1;
+        }
       } catch (err) {
         failed += 1;
         console.error('[billing] renewal sweep item failed', {
@@ -691,7 +1226,7 @@ export class BillingService {
           planName: plan.name,
           amountRub: access.renewalAmountRub ?? plan.priceRub,
           chargeAt: access.nextChargeAt,
-          pricingUrl: buildPricingUrl(this.deps.config.appUrl),
+          pricingUrl: buildPricingUrl(this.appUrl),
         });
         sent += 1;
       } catch (err) {
@@ -706,6 +1241,178 @@ export class BillingService {
       console.info('[billing] renewal notice sweep done', { sent, skipped });
     }
     return { sent, skipped };
+  }
+
+  private async finalizeDeferredRenewalPayment(
+    order: PaymentOrderRecord,
+    verified: Awaited<ReturnType<typeof getYooKassaPayment>>,
+    now: Date,
+    knownAccess?: PaidAccessRecord
+  ): Promise<void> {
+    if (order.metadata?.renewal !== true) return;
+    const plan = findBillingPlan(order.planId);
+    if (!plan) return;
+
+    const amountMatched =
+      verified.amountValue === order.amountRub.toFixed(2) &&
+      verified.currency === 'RUB';
+    if (verified.status === 'succeeded' && verified.paid && amountMatched) {
+      await this.notifyRenewalChargedOnce(order, {
+        userId: order.userId,
+        planName: plan.name,
+        amountRub: order.amountRub,
+      });
+      return;
+    }
+    if (verified.status === 'succeeded' && verified.paid && !amountMatched) {
+      const error =
+        'Автосписание подтверждено, но сумма или валюта не совпадает с заказом';
+      await this.deps.repository.updatePaymentOrder({
+        id: order.id,
+        status: 'verification_failed',
+        onlyIfUnfulfilled: true,
+        metadata: {
+          renewalErrorDiagnostic: error,
+          renewalQuarantined: true,
+          renewalRetryAt: null,
+        },
+        mergeMetadata: true,
+      });
+      if (order.metadata?.renewalFailureHandled === true) return;
+      if (!(await this.isRenewalPaymentMethodCurrent(order))) {
+        await this.deps.repository.markRenewalFailureHandled({
+          orderId: order.id,
+          now,
+        });
+        return;
+      }
+
+      const access =
+        (await this.deps.repository.findAccessByUserId(order.userId)) ??
+        knownAccess ??
+        null;
+      const expectedRenewalAccess = getExpectedRenewalAccess(
+        access,
+        order.metadata
+      );
+      if (!access?.autoRenew || !expectedRenewalAccess) {
+        await this.deps.repository.markRenewalFailureHandled({
+          orderId: order.id,
+          now,
+        });
+        return;
+      }
+      const renewalAttemptNumber =
+        readRenewalAttemptNumber(order.metadata) ??
+        Math.max(1, expectedRenewalAccess.chargeAttempts);
+      await this.handleChargeFailure(
+        {
+          ...expectedRenewalAccess,
+          chargeAttempts: renewalAttemptNumber,
+        },
+        plan,
+        error,
+        now,
+        {
+          permanent: true,
+          chargeAttemptsTo: renewalAttemptNumber,
+          handledOrderId: order.id,
+          expectedActivePaymentMethodId:
+            readRenewalRequestSnapshot(order.metadata)?.paymentMethodId,
+          manualReviewRequired: true,
+        }
+      );
+      return;
+    }
+    if (!(await this.isRenewalPaymentMethodCurrent(order))) {
+      await this.deps.repository.markRenewalFailureHandled({
+        orderId: order.id,
+        now,
+      });
+      return;
+    }
+    if (
+      verified.status !== 'canceled' &&
+      verified.status !== 'failed'
+    ) {
+      return;
+    }
+    if (order.metadata.renewalFailureHandled === true) return;
+
+    const access =
+      (await this.deps.repository.findAccessByUserId(order.userId)) ??
+      knownAccess ??
+      null;
+    const expectedRenewalAccess = getExpectedRenewalAccess(
+      access,
+      order.metadata
+    );
+    if (!access?.autoRenew || !expectedRenewalAccess) {
+      await this.deps.repository.markRenewalFailureHandled({
+        orderId: order.id,
+        now,
+      });
+      return;
+    }
+
+    const cancellationDetails = [
+      verified.cancellationParty
+        ? `party=${verified.cancellationParty}`
+        : null,
+      verified.cancellationReason
+        ? `reason=${verified.cancellationReason}`
+        : null,
+    ].filter(Boolean);
+    const error =
+      cancellationDetails.length > 0
+        ? `Списание отклонено (${verified.status}; ${cancellationDetails.join('; ')})`
+        : `Списание отклонено (${verified.status})`;
+    const permanentPaymentMethodReason = Boolean(
+      verified.cancellationReason &&
+        PERMANENT_PAYMENT_METHOD_CANCELLATION_REASONS.has(
+          verified.cancellationReason
+        )
+    );
+    const attemptedPaymentMethodId =
+      verified.paymentMethod?.id ??
+      readRenewalRequestSnapshot(order.metadata)?.paymentMethodId ??
+      '';
+    const permanentPaymentMethodFailure = permanentPaymentMethodReason
+      ? await this.deletePaymentMethodIfCurrent(
+          order.userId,
+          attemptedPaymentMethodId
+        )
+      : false;
+    const renewalAttemptNumber =
+      readRenewalAttemptNumber(order.metadata) ??
+      Math.max(1, expectedRenewalAccess.chargeAttempts);
+    await this.handleChargeFailure(
+      { ...expectedRenewalAccess, chargeAttempts: renewalAttemptNumber },
+      plan,
+      error,
+      now,
+      {
+        permanent: permanentPaymentMethodFailure,
+        requireNoActivePaymentMethod: permanentPaymentMethodFailure,
+        expectedActivePaymentMethodId: permanentPaymentMethodFailure
+          ? undefined
+          : attemptedPaymentMethodId || undefined,
+        chargeAttemptsTo: renewalAttemptNumber,
+        handledOrderId: order.id,
+      }
+    );
+  }
+
+  private async notifyRenewalChargedOnce(
+    order: PaymentOrderRecord,
+    params: { userId: string; planName: string; amountRub: number }
+  ): Promise<void> {
+    const claimed =
+      await this.deps.repository.claimRenewalSuccessNotification({
+        orderId: order.id,
+      });
+    if (!claimed) return;
+    await this.notifyRenewalCharged(params);
   }
 
   // Подтверждение состоявшегося автопродления. Уходит всем, независимо от
@@ -728,7 +1435,7 @@ export class BillingService {
         planName: params.planName,
         amountRub: params.amountRub,
         accessUntil: access.currentPeriodEnd,
-        pricingUrl: buildPricingUrl(this.deps.config.appUrl),
+        pricingUrl: buildPricingUrl(this.appUrl),
       });
     } catch (err) {
       console.error('[billing] renewal charged email failed', {
@@ -753,7 +1460,7 @@ export class BillingService {
   private async chargeAccess(
     due: PaidAccessRecord,
     now: Date
-  ): Promise<void> {
+  ): Promise<boolean> {
     const userId = due.userId;
     const claimed = await this.deps.repository.claimAccessForCharge({
       accessId: due.id,
@@ -761,18 +1468,7 @@ export class BillingService {
       maxAttempts: AUTO_RENEW_MAX_ATTEMPTS,
       now,
     });
-    if (!claimed) return;
-
-    const method = await this.deps.repository.findPaymentMethodByUserId(userId);
-    if (!method || method.status !== 'active') {
-      // Карты нет (гонка с отвязкой) — списывать нечем, продление выключаем.
-      await this.deps.repository.setAccessAutoRenew({
-        userId,
-        autoRenew: false,
-        now,
-      });
-      return;
-    }
+    if (!claimed) return true;
 
     const plan = findBillingPlan(claimed.renewalPlanId ?? claimed.planId);
     if (!plan) {
@@ -780,131 +1476,745 @@ export class BillingService {
         accessId: claimed.id,
         error: 'Тариф продления не найден',
         disableAutoRenew: true,
+        expectedProviderPaymentId: claimed.providerPaymentId,
         now,
       });
-      return;
+      return false;
     }
 
     this.requireYooKassaConfig();
     // Цена продления зафиксирована при покупке: изменение каталога уже
     // обещанное продление не удорожает.
     const amountRub = claimed.renewalAmountRub ?? plan.priceRub;
-    const order = await this.deps.repository.createPaymentOrder({
-      userId,
-      planId: plan.id,
-      amountRub,
-      currency: 'RUB',
-      metadata: {
+    const unfinishedOrder =
+      await this.deps.repository.findUnfulfilledRenewalPaymentOrder({
+        userId,
+        accessId: claimed.id,
+      });
+
+    if (unfinishedOrder) {
+      const ownsOrderLease =
+        await this.deps.repository.claimPaymentOrderReconciliation({
+          orderId: unfinishedOrder.id,
+          now,
+          leaseUntil: new Date(
+            now.getTime() + PAYMENT_RECONCILIATION_LEASE_MS
+          ),
+        });
+      if (!ownsOrderLease) {
+        await this.deps.repository.rescheduleAccessChargeVerification({
+          accessId: claimed.id,
+          chargeAttempts: Math.max(0, claimed.chargeAttempts - 1),
+          retryAt: new Date(
+            now.getTime() + AUTO_RENEW_INDETERMINATE_RETRY_AFTER_MS
+          ),
+          expectedProviderPaymentId: claimed.providerPaymentId,
+          expectedPendingOrderId: unfinishedOrder.id,
+          now,
+        });
+        return true;
+      }
+    }
+
+    if (unfinishedOrder?.metadata?.renewalQuarantined === true) {
+      const error =
+        readRenewalMetadataString(
+          unfinishedOrder.metadata,
+          'renewalErrorDiagnostic'
+        ) ?? 'Исход предыдущего автосписания требует ручной сверки';
+      const quarantinedAccess = getExpectedRenewalAccess(
+        claimed,
+        unfinishedOrder.metadata
+      );
+      if (quarantinedAccess) {
+        await this.handleChargeFailure(
+          quarantinedAccess,
+          plan,
+          error,
+          now,
+          {
+            permanent: true,
+            handledOrderId: unfinishedOrder.id,
+            manualReviewRequired: true,
+          }
+        );
+      } else {
+        await this.deps.repository.markRenewalFailureHandled({
+          orderId: unfinishedOrder.id,
+          now,
+        });
+      }
+      return false;
+    }
+
+    let order: PaymentOrderRecord;
+    let renewalRequest: RenewalRequestSnapshot | null;
+    let renewalAttemptNumber: number;
+    if (unfinishedOrder) {
+      const persistedRequest = readRenewalRequestSnapshot(
+        unfinishedOrder.metadata
+      );
+      const requestMatchesOrder = Boolean(
+        persistedRequest &&
+          persistedRequest.planId === unfinishedOrder.planId &&
+          persistedRequest.amountRub === unfinishedOrder.amountRub
+      );
+      // Старый заказ с уже известным providerPaymentId безопасно проверяется
+      // GET-запросом даже без нового snapshot. Без providerPaymentId повторять
+      // legacy POST с новым ключом/телом нельзя.
+      if (!requestMatchesOrder && !unfinishedOrder.providerPaymentId) {
+        const error =
+          'Небезопасно повторять автосписание: у заказа отсутствует неизменяемый снимок запроса';
+        await this.quarantineRenewalOrder(unfinishedOrder.id, error);
+        // Без снимка нельзя доказать, что старый POST не дошёл до YooKassa.
+        // Новый order/key мог бы списать деньги второй раз, поэтому текущее
+        // соглашение безопасно останавливаем до ручной перепривязки.
+        await this.handleChargeFailure(claimed, plan, error, now, {
+          permanent: true,
+          handledOrderId: unfinishedOrder.id,
+          manualReviewRequired: true,
+        });
+        await this.notifyPaymentIssueTelegram({
+          stage: 'auto_renewal_failed',
+          userId,
+          orderId: unfinishedOrder.id,
+          planId: plan.id,
+          message: error,
+        });
+        return false;
+      }
+      order = unfinishedOrder;
+      renewalRequest = requestMatchesOrder ? persistedRequest : null;
+      // Legacy-код уже увеличивал счётчик до создания заказа. Текущий claim
+      // добавил ещё единицу только ради проверки его статуса — откатываем её.
+      renewalAttemptNumber =
+        readRenewalAttemptNumber(order.metadata) ??
+        Math.max(1, claimed.chargeAttempts - 1);
+    } else {
+      const method =
+        await this.deps.repository.findPaymentMethodByUserId(userId);
+      if (!method || method.status !== 'active') {
+        // Способа оплаты нет (гонка с отвязкой) — списывать нечем.
+        // CAS по отсутствию активного метода не даёт позднему чтению
+        // выключить только что перепривязанный новый способ.
+        await this.handleChargeFailure(
+          claimed,
+          plan,
+          'Сохранённый способ оплаты не найден',
+          now,
+          {
+            permanent: true,
+            requireNoActivePaymentMethod: true,
+          }
+        );
+        return false;
+      }
+
+      const receiptEmail = await this.deps.repository.findUserEmail(userId);
+      renewalRequest = {
+        amountRub,
+        description: `Гласно ${plan.name} (автопродление)`,
+        paymentMethodId: method.providerPaymentMethodId,
+        planId: plan.id,
+        receiptEmail,
+      };
+      const metadata = {
         userId,
         planId: plan.id,
         renewal: true,
         autoRenew: true,
         accessId: claimed.id,
-      },
-    });
+        renewalCycleEnd: claimed.currentPeriodEnd.toISOString(),
+        renewalAttemptNumber: claimed.chargeAttempts,
+        renewalAccessProviderPaymentId: claimed.providerPaymentId,
+        renewalRequest,
+      };
+      let createdOrder: PaymentOrderRecord;
+      try {
+        createdOrder = await this.deps.repository.createPaymentOrder({
+          userId,
+          planId: plan.id,
+          amountRub,
+          currency: 'RUB',
+          metadata,
+          accessPaymentFlow: 'renewal',
+          conflictingPassPlanIds: getPassPlans().map(
+            (passPlan) => passPlan.id
+          ),
+          renewalAccessGuard: {
+            accessId: claimed.id,
+            providerPaymentId: claimed.providerPaymentId,
+            currentPeriodEnd: claimed.currentPeriodEnd,
+          },
+        });
+      } catch (error) {
+        if (error instanceof RenewalAccessChangedError) {
+          const liveAccess =
+            await this.deps.repository.findAccessByUserId(userId);
+          if (liveAccess?.autoRenew) {
+            await this.deps.repository.rescheduleAccessChargeVerification({
+              accessId: liveAccess.id,
+              chargeAttempts: Math.max(0, claimed.chargeAttempts - 1),
+              retryAt: liveAccess.currentPeriodEnd,
+              expectedProviderPaymentId: liveAccess.providerPaymentId,
+              now,
+            });
+          }
+          return true;
+        }
+        if (!(error instanceof PassCheckoutInProgressError)) throw error;
+        await this.deps.repository.rescheduleAccessChargeVerification({
+          accessId: claimed.id,
+          chargeAttempts: Math.max(0, claimed.chargeAttempts - 1),
+          retryAt: new Date(
+            now.getTime() + AUTO_RENEW_INDETERMINATE_RETRY_AFTER_MS
+          ),
+          expectedProviderPaymentId: claimed.providerPaymentId,
+          expectedActivePaymentMethodId: method.providerPaymentMethodId,
+          now,
+        });
+        return true;
+      }
+      // Репозиторий возвращает те же metadata. Явное объединение также
+      // защищает application-слой от неполной тестовой/альтернативной реализации.
+      order = { ...createdOrder, providerPaymentId: null, metadata };
+      renewalAttemptNumber = claimed.chargeAttempts;
+      const ownsOrderLease =
+        await this.deps.repository.claimPaymentOrderReconciliation({
+          orderId: order.id,
+          now,
+          leaseUntil: new Date(
+            now.getTime() + PAYMENT_RECONCILIATION_LEASE_MS
+          ),
+        });
+      if (!ownsOrderLease) {
+        await this.deps.repository.rescheduleAccessChargeVerification({
+          accessId: claimed.id,
+          chargeAttempts: Math.max(0, claimed.chargeAttempts - 1),
+          retryAt: new Date(
+            now.getTime() + AUTO_RENEW_INDETERMINATE_RETRY_AFTER_MS
+          ),
+          expectedProviderPaymentId: claimed.providerPaymentId,
+          expectedActivePaymentMethodId: method.providerPaymentMethodId,
+          expectedPendingOrderId: order.id,
+          now,
+        });
+        return true;
+      }
+    }
 
-    try {
-      const email = await this.deps.repository.findUserEmail(userId);
-      const description = `Гласно ${plan.name} (автопродление)`;
-      const payment = await createYooKassaRecurringPayment({
+    const expectedRenewalAccess = getExpectedRenewalAccess(
+      claimed,
+      order.metadata
+    );
+
+    let providerPaymentId = order.providerPaymentId;
+    if (!providerPaymentId) {
+      const [liveAccess, livePaymentMethod] = await Promise.all([
+        this.deps.repository.findAccessByUserId(userId),
+        this.deps.repository.findPaymentMethodByUserId(userId),
+      ]);
+      // После успешного claim запись доступа не может исчезнуть штатно:
+      // отвязка лишь меняет autoRenew. Fallback нужен альтернативным
+      // репозиториям/тестам, а реальный opt-out всё равно вернёт живую строку.
+      const currentAccess = liveAccess ?? claimed;
+      const liveExpectedRenewalAccess = getExpectedRenewalAccess(
+        currentAccess,
+        order.metadata
+      );
+      const consentStillCurrent = Boolean(
+        currentAccess.autoRenew &&
+          liveExpectedRenewalAccess &&
+          livePaymentMethod?.status === 'active' &&
+          livePaymentMethod.providerPaymentMethodId ===
+            renewalRequest?.paymentMethodId
+      );
+      if (!consentStillCurrent) {
+        const error =
+          'Автосписание не начато: согласие или сохранённый способ оплаты уже изменились';
+        if (unfinishedOrder) {
+          await this.quarantineRenewalOrder(order.id, error);
+        } else {
+          await this.deps.repository.updatePaymentOrder({
+            id: order.id,
+            status: 'canceled',
+            onlyIfUnfulfilled: true,
+            metadata: {
+              renewalErrorKind: 'not_attempted',
+              renewalErrorDiagnostic: error,
+            },
+            mergeMetadata: true,
+          });
+        }
+        if (liveExpectedRenewalAccess && currentAccess.autoRenew) {
+          await this.handleChargeFailure(
+            {
+              ...liveExpectedRenewalAccess,
+              chargeAttempts: renewalAttemptNumber,
+            },
+            plan,
+            error,
+            now,
+            {
+              permanent: true,
+              chargeAttemptsTo: renewalAttemptNumber,
+              handledOrderId: order.id,
+              expectedActivePaymentMethodId: unfinishedOrder
+                ? undefined
+                : renewalRequest?.paymentMethodId,
+              manualReviewRequired: Boolean(unfinishedOrder),
+            }
+          );
+        } else {
+          await this.deps.repository.markRenewalFailureHandled({
+            orderId: order.id,
+            now,
+          });
+        }
+        return false;
+      }
+      if (
+        unfinishedOrder &&
+        now.getTime() - order.createdAt.getTime() >=
+          YOOKASSA_IDEMPOTENCE_SAFE_WINDOW_MS
+      ) {
+        const error =
+          'Небезопасно повторять автосписание: истекло гарантированное окно Idempotence-Key YooKassa';
+        await this.quarantineRenewalOrder(order.id, error);
+        await this.handleChargeFailure(
+          {
+            ...liveExpectedRenewalAccess!,
+            chargeAttempts: renewalAttemptNumber,
+          },
+          plan,
+          error,
+          now,
+          {
+            permanent: true,
+            chargeAttemptsTo: renewalAttemptNumber,
+            handledOrderId: order.id,
+            manualReviewRequired: true,
+          }
+        );
+        console.error('[billing] auto-renewal idempotence window expired', {
+          userId,
+          accessId: claimed.id,
+          orderId: order.id,
+        });
+        await this.notifyPaymentIssueTelegram({
+          stage: 'auto_renewal_failed',
+          userId,
+          orderId: order.id,
+          planId: plan.id,
+          message: error,
+        });
+        return false;
+      }
+
+      const recurringPaymentInput = {
         ...this.deps.config.yookassa,
         idempotenceKey: order.id,
-        amountRub,
-        description,
-        paymentMethodId: method.providerPaymentMethodId,
+        amountRub: renewalRequest!.amountRub,
+        description: renewalRequest!.description,
+        paymentMethodId: renewalRequest!.paymentMethodId,
         metadata: {
           orderId: order.id,
           userId,
-          planId: plan.id,
+          planId: renewalRequest!.planId,
         },
-        receipt: email
+        receipt: renewalRequest!.receiptEmail
           ? buildYooKassaReceipt({
-              email,
-              amountRub,
-              description,
+              email: renewalRequest!.receiptEmail,
+              amountRub: renewalRequest!.amountRub,
+              description: renewalRequest!.description,
             })
           : undefined,
-      });
+      };
 
-      await this.deps.repository.updatePaymentOrder({
-        id: order.id,
-        providerPaymentId: payment.id,
-        status: payment.status || 'pending',
-      });
-
-      // Верифицируем и выдаём продление тем же путём, что и обычные оплаты.
-      const verified = await getYooKassaPayment(
-        this.deps.config.yookassa,
-        payment.id
-      );
-      await this.applyVerifiedYooKassaPayment(order, verified, 'auto-renewal');
-
-      if (verified.status === 'canceled' || verified.status === 'failed') {
-        await this.handleChargeFailure(
-          claimed,
-          plan,
-          `Списание отклонено (${verified.status})`,
-          now
+      let payment: Awaited<ReturnType<typeof createYooKassaRecurringPayment>>;
+      try {
+        payment = await retryIndeterminateYooKassaRequest(async () =>
+          await createYooKassaRecurringPayment(recurringPaymentInput)
         );
-      } else if (verified.status === 'succeeded' && verified.paid) {
-        await this.notifyRenewalCharged({
-          userId,
-          planName: plan.name,
-          amountRub,
+      } catch (error) {
+        return await this.handleYooKassaChargeError({
+          claimed: {
+            ...liveExpectedRenewalAccess!,
+            chargeAttempts: renewalAttemptNumber,
+          },
+          plan,
+          order,
+          error,
+          now,
+          requestKind: 'create',
+          paymentMethodId: renewalRequest!.paymentMethodId,
+          renewalAttemptNumber,
         });
       }
-    } catch (err) {
+
+      providerPaymentId = payment.id;
       await this.deps.repository.updatePaymentOrder({
         id: order.id,
-        status: 'failed',
-      });
-      await this.handleChargeFailure(
-        claimed,
-        plan,
-        err instanceof Error ? err.message : 'Не удалось выполнить списание',
-        now
-      );
-      console.error('[billing] auto-renewal charge failed', {
-        userId,
-        accessId: claimed.id,
-        err,
-      });
-      await this.notifyPaymentIssueTelegram({
-        stage: 'auto_renewal_failed',
-        userId,
-        orderId: order.id,
-        planId: plan.id,
-        message: err instanceof Error ? err.message : String(err),
+        providerPaymentId,
+        status: payment.status || 'pending',
+        onlyIfUnfulfilled: true,
       });
     }
+
+    let verified: Awaited<ReturnType<typeof getYooKassaPayment>>;
+    try {
+      verified = await retryIndeterminateYooKassaRequest(async () =>
+        await getYooKassaPayment(
+          this.deps.config.yookassa,
+          providerPaymentId
+        )
+      );
+    } catch (error) {
+      if (!expectedRenewalAccess) {
+        const errorInfo = extractYooKassaApiError(error);
+        const errorKind = classifyYooKassaRecurringPaymentError(errorInfo);
+        if (errorKind !== 'indeterminate' && errorKind !== 'transient') {
+          await this.deps.repository.updatePaymentOrder({
+            id: order.id,
+            status: 'failed',
+            onlyIfUnfulfilled: true,
+            metadata: {
+              renewalErrorKind: errorKind,
+              renewalErrorDiagnostic: formatYooKassaApiError(errorInfo),
+            },
+            mergeMetadata: true,
+          });
+          await this.deps.repository.markRenewalFailureHandled({
+            orderId: order.id,
+            now,
+          });
+        }
+        return false;
+      }
+      return await this.handleYooKassaChargeError({
+        claimed: {
+          ...expectedRenewalAccess,
+          chargeAttempts: renewalAttemptNumber,
+        },
+        plan,
+        order,
+        error,
+        now,
+        requestKind: 'verify',
+        paymentMethodId: renewalRequest?.paymentMethodId ?? null,
+        renewalAttemptNumber,
+      });
+    }
+
+    // Верифицируем и выдаём продление тем же путём, что и обычные оплаты.
+    await this.applyVerifiedYooKassaPayment(order, verified, 'auto-renewal');
+
+    const amountMatched =
+      verified.amountValue === order.amountRub.toFixed(2) &&
+      verified.currency === 'RUB';
+    if (verified.status === 'succeeded' && verified.paid) {
+      await this.finalizeDeferredRenewalPayment(
+        order,
+        verified,
+        now,
+        expectedRenewalAccess ?? claimed
+      );
+      return amountMatched;
+    }
+
+    if (isPendingPaymentStatus(verified.status)) {
+      // Один provider payment может проверяться много раз. Храним номер
+      // именно платёжной попытки, а claim для очередного GET откатываем.
+      await this.scheduleRenewalOrderReconciliation(
+        order.id,
+        now,
+        AUTO_RENEW_INDETERMINATE_RETRY_AFTER_MS
+      );
+      if (expectedRenewalAccess) {
+        await this.deps.repository.rescheduleAccessChargeVerification({
+          accessId: claimed.id,
+          // Пока платёж не получил финальный статус, он не расходует лимит
+          // отказов. Metadata заказа хранит его будущий номер попытки.
+          chargeAttempts: Math.max(0, renewalAttemptNumber - 1),
+          retryAt: new Date(
+            now.getTime() + AUTO_RENEW_INDETERMINATE_RETRY_AFTER_MS
+          ),
+          expectedProviderPaymentId:
+            expectedRenewalAccess.providerPaymentId,
+          expectedActivePaymentMethodId:
+            renewalRequest?.paymentMethodId,
+          expectedPendingOrderId: order.id,
+          now,
+        });
+      }
+      return true;
+    }
+
+    if (verified.status === 'canceled' || verified.status === 'failed') {
+      await this.finalizeDeferredRenewalPayment(
+        order,
+        verified,
+        now,
+        expectedRenewalAccess ?? claimed
+      );
+      return false;
+    }
+
+    return true;
+  }
+
+  private async deletePaymentMethodIfCurrent(
+    userId: string,
+    attemptedPaymentMethodId: string
+  ): Promise<boolean> {
+    if (!attemptedPaymentMethodId) return false;
+    return await this.deps.repository.deletePaymentMethodIfMatches({
+      userId,
+      providerPaymentMethodId: attemptedPaymentMethodId,
+    });
+  }
+
+  private async scheduleRenewalOrderReconciliation(
+    orderId: string,
+    now: Date,
+    retryAfterMs: number
+  ): Promise<void> {
+    await this.deps.repository.updatePaymentOrder({
+      id: orderId,
+      onlyIfUnfulfilled: true,
+      metadata: {
+        renewalRetryAt: new Date(
+          now.getTime() + retryAfterMs
+        ).toISOString(),
+      },
+      mergeMetadata: true,
+    });
+  }
+
+  private async quarantineRenewalOrder(
+    orderId: string,
+    diagnostic: string
+  ): Promise<void> {
+    await this.deps.repository.updatePaymentOrder({
+      id: orderId,
+      status: 'indeterminate',
+      onlyIfUnfulfilled: true,
+      metadata: {
+        renewalErrorDiagnostic: diagnostic,
+        renewalQuarantined: true,
+        renewalRetryAt: null,
+      },
+      mergeMetadata: true,
+    });
+  }
+
+  private async isRenewalPaymentMethodCurrent(
+    order: PaymentOrderRecord
+  ): Promise<boolean> {
+    const snapshot = readRenewalRequestSnapshot(order.metadata);
+    // Legacy-order без снимка обрабатываем fail-close: его исход неизвестен,
+    // а доказать смену метода по старым данным невозможно.
+    if (!snapshot) return true;
+    const current = await this.deps.repository.findPaymentMethodByUserId(
+      order.userId
+    );
+    return Boolean(
+      current?.status === 'active' &&
+        current.providerPaymentMethodId === snapshot.paymentMethodId
+    );
+  }
+
+  private async handleYooKassaChargeError(params: {
+    claimed: PaidAccessRecord;
+    plan: BillingPlanConfig;
+    order: PaymentOrderRecord;
+    error: unknown;
+    now: Date;
+    requestKind: 'create' | 'verify';
+    paymentMethodId: string | null;
+    renewalAttemptNumber: number;
+  }): Promise<false> {
+    const errorInfo = extractYooKassaApiError(params.error);
+    const errorKind = classifyYooKassaRecurringPaymentError(errorInfo);
+    const diagnostic = formatYooKassaApiError(errorInfo);
+    const invalidPaymentMethod = errorKind === 'invalid_payment_method';
+    const invalidCurrentPaymentMethod =
+      invalidPaymentMethod && params.paymentMethodId
+        ? await this.deletePaymentMethodIfCurrent(
+            params.claimed.userId,
+            params.paymentMethodId
+          )
+        : false;
+
+    // При 5xx/timeout результат POST неизвестен, а 429 требует backoff:
+    // заказ и его Idempotence-Key сохраняются. Только определённый отказ
+    // переводит заказ в terminal-состояние.
+    const retryableWithoutAttempt =
+      errorKind === 'indeterminate' || errorKind === 'transient';
+    const retryAfterMs =
+      errorKind === 'transient'
+        ? AUTO_RENEW_TRANSIENT_RETRY_AFTER_MS
+        : errorKind === 'indeterminate'
+          ? AUTO_RENEW_INDETERMINATE_RETRY_AFTER_MS
+          : AUTO_RENEW_RETRY_AFTER_MS;
+    if (!retryableWithoutAttempt) {
+      await this.deps.repository.updatePaymentOrder({
+        id: params.order.id,
+        status: 'failed',
+        onlyIfUnfulfilled: true,
+        metadata: {
+          renewalErrorKind: errorKind,
+          renewalErrorDiagnostic: diagnostic,
+          renewalFailedPaymentMethodId: params.paymentMethodId,
+          renewalRetryAt: null,
+        },
+        mergeMetadata: true,
+      });
+    } else {
+      await this.deps.repository.updatePaymentOrder({
+        id: params.order.id,
+        onlyIfUnfulfilled: true,
+        metadata: {
+          renewalRetryAt: new Date(
+            params.now.getTime() + retryAfterMs
+          ).toISOString(),
+        },
+        mergeMetadata: true,
+      });
+    }
+    if (!(await this.isRenewalPaymentMethodCurrent(params.order))) {
+      if (!retryableWithoutAttempt) {
+        await this.deps.repository.markRenewalFailureHandled({
+          orderId: params.order.id,
+          now: params.now,
+        });
+      }
+      return false;
+    }
+    await this.handleChargeFailure(
+      params.claimed,
+      params.plan,
+      diagnostic,
+      params.now,
+      {
+        permanent: invalidCurrentPaymentMethod,
+        requireNoActivePaymentMethod: invalidCurrentPaymentMethod,
+        expectedActivePaymentMethodId: invalidCurrentPaymentMethod
+          ? undefined
+          : params.paymentMethodId ?? undefined,
+        consumeAttempt: !retryableWithoutAttempt,
+        chargeAttemptsTo:
+          retryableWithoutAttempt
+            ? Math.max(0, params.renewalAttemptNumber - 1)
+            : params.requestKind === 'verify'
+              ? params.renewalAttemptNumber
+              : undefined,
+        handledOrderId:
+          retryableWithoutAttempt ? undefined : params.order.id,
+        retryAfterMs,
+      }
+    );
+    console.error('[billing] auto-renewal charge failed', {
+      userId: params.claimed.userId,
+      accessId: params.claimed.id,
+      requestKind: params.requestKind,
+      diagnostic,
+    });
+    await this.notifyPaymentIssueTelegram({
+      stage: 'auto_renewal_failed',
+      userId: params.claimed.userId,
+      orderId: params.order.id,
+      planId: params.plan.id,
+      message: diagnostic,
+    });
+    return false;
   }
 
   // Неудачное списание: фиксируем ошибку; после финальной попытки выключаем
-  // автопродление и шлём письмо с CTA «обновить карту и продлить».
+  // автопродление и шлём письмо с CTA «обновить способ оплаты и продлить».
   private async handleChargeFailure(
     claimed: PaidAccessRecord,
     plan: BillingPlanConfig,
     error: string,
-    now: Date
+    now: Date,
+    options: {
+      permanent?: boolean;
+      retryAfterMs?: number;
+      consumeAttempt?: boolean;
+      chargeAttemptsTo?: number;
+      handledOrderId?: string;
+      requireNoActivePaymentMethod?: boolean;
+      expectedActivePaymentMethodId?: string;
+      manualReviewRequired?: boolean;
+    } = {}
   ): Promise<void> {
     // chargeAttempts в claimed — уже после инкремента этой попытки.
-    const finalFailure = claimed.chargeAttempts >= AUTO_RENEW_MAX_ATTEMPTS;
-    await this.deps.repository.recordAccessChargeError({
+    const consumeAttempt = options.consumeAttempt !== false;
+    const finalFailure =
+      options.permanent === true ||
+      (consumeAttempt && claimed.chargeAttempts >= AUTO_RENEW_MAX_ATTEMPTS);
+    const retryAt = finalFailure
+      ? null
+      : new Date(
+          now.getTime() +
+            (options.retryAfterMs ?? AUTO_RENEW_RETRY_AFTER_MS)
+        );
+    const recorded = await this.deps.repository.recordAccessChargeError({
       accessId: claimed.id,
       error,
       disableAutoRenew: finalFailure,
+      ...(retryAt ? { retryAt } : {}),
+      ...(options.chargeAttemptsTo !== undefined
+        ? { restoreChargeAttemptsTo: options.chargeAttemptsTo }
+        : !consumeAttempt && !finalFailure
+        ? {
+            restoreChargeAttemptsTo: Math.max(
+              0,
+              claimed.chargeAttempts - 1
+            ),
+          }
+        : {}),
+      expectedProviderPaymentId: claimed.providerPaymentId,
+      ...(options.expectedActivePaymentMethodId
+        ? {
+            expectedActivePaymentMethodId:
+              options.expectedActivePaymentMethodId,
+          }
+        : {}),
+      ...(options.requireNoActivePaymentMethod
+        ? { requireNoActivePaymentMethod: true }
+        : {}),
+      ...(consumeAttempt && retryAt
+        ? { deferRetryUntilPeriodEnd: true }
+        : {}),
       now,
     });
+    const firstFailureHandling = options.handledOrderId
+      ? await this.deps.repository.markRenewalFailureHandled({
+          orderId: options.handledOrderId,
+          now,
+        })
+      : true;
+    if (!recorded || !firstFailureHandling) return;
     if (!finalFailure) return;
     try {
       const email = await this.deps.repository.findUserEmail(claimed.userId);
       if (!email) return;
-      await sendRenewalFailedEmail({
-        to: email,
-        planName: plan.name,
-        amountRub: claimed.renewalAmountRub ?? plan.priceRub,
-        pricingUrl: buildPricingUrl(this.deps.config.appUrl),
-      });
+      if (options.manualReviewRequired) {
+        await sendRenewalManualReviewEmail({
+          to: email,
+          planName: plan.name,
+          amountRub: claimed.renewalAmountRub ?? plan.priceRub,
+          profileUrl: buildProfileUrl(this.appUrl),
+        });
+      } else {
+        await sendRenewalFailedEmail({
+          to: email,
+          planName: plan.name,
+          amountRub: claimed.renewalAmountRub ?? plan.priceRub,
+          pricingUrl: buildPricingUrl(this.appUrl),
+        });
+      }
     } catch (err) {
       console.error('[billing] renewal failure email failed', {
         accessId: claimed.id,
@@ -918,6 +2228,17 @@ export class BillingService {
     verified: Awaited<ReturnType<typeof getYooKassaPayment>>,
     source: string
   ): Promise<BillingPaymentStatusResponse> {
+    assertYooKassaPaymentMatchesOrder(order, verified);
+    const providerPaymentBound =
+      await this.deps.repository.bindPaymentOrderProviderPaymentId({
+        orderId: order.id,
+        providerPaymentId: verified.id,
+      });
+    if (!providerPaymentBound) {
+      throw new YooKassaPaymentCorrelationError(
+        'Provider payment is already bound to another order'
+      );
+    }
     const plan = findBillingPlan(order.planId);
     const expectedAmount = order.amountRub.toFixed(2);
     const amountOk =
@@ -929,14 +2250,25 @@ export class BillingService {
       id: order.id,
       providerPaymentId: verified.id,
       status: verified.status,
+      onlyIfUnfulfilled: true,
+      monotonicProviderStatus: true,
       metadata: {
-        ...(order.metadata || {}),
         paymentStatusSource: source,
         verifiedStatus: verified.status,
         verifiedAmount: verified.amountValue,
         verifiedCurrency: verified.currency,
         amountMatched: amountOk,
+        ...(order.metadata?.renewal === true &&
+        (verified.status === 'canceled' || verified.status === 'failed')
+          ? {
+              // Provider id + финальный статус атомарно устраняют
+              // неопределённость старого POST.
+              renewalQuarantined: false,
+              renewalRetryAt: null,
+            }
+          : {}),
       },
+      mergeMetadata: true,
     });
 
     const isGift = order.metadata?.gift === true;
@@ -974,6 +2306,17 @@ export class BillingService {
           priceRub: order.amountRub,
         },
         autoRenew: order.metadata?.autoRenew === true,
+        ...(order.metadata?.renewal === true
+          ? {
+              requireExistingAutoRenewConsent: true,
+              expectedPaymentMethodId:
+                readRenewalRequestSnapshot(order.metadata)?.paymentMethodId ??
+                verified.paymentMethod?.id ??
+                null,
+              expectedAccessProviderPaymentId:
+                readRenewalAccessProviderPaymentId(order.metadata),
+            }
+          : {}),
         paymentMethod: savedMethod,
       });
       // Только на реальную первую выдачу доступа — не на повторный вебхук/поллинг
@@ -983,7 +2326,25 @@ export class BillingService {
       }
     } else if (paymentOk && !plan) {
       // Заказ на несуществующий тариф (данные из старой dev-схемы):
-      // доступ не выдаём, оставляем след для разбора.
+      // доступ не выдаём и переводим в dead-letter, иначе succeeded без
+      // fulfilledAt будет бесконечно занимать очередь сверки.
+      await this.deps.repository.updatePaymentOrder({
+        id: order.id,
+        status: 'verification_failed',
+        onlyIfUnfulfilled: true,
+        metadata: {
+          billingErrorDiagnostic: `Неизвестный тариф: ${order.planId}`,
+          ...(order.metadata?.renewal === true
+            ? { renewalQuarantined: true }
+            : {}),
+        },
+        mergeMetadata: true,
+      });
+      if (order.metadata?.renewal === true) {
+        await this.deps.repository.markRenewalFailureHandled({
+          orderId: order.id,
+        });
+      }
       console.error('[billing] paid order references unknown plan', {
         orderId: order.id,
         planId: order.planId,
@@ -1162,6 +2523,45 @@ function isPendingPaymentStatus(status: string | null | undefined): boolean {
   return status === 'pending' || status === 'waiting_for_capture';
 }
 
+class YooKassaPaymentCorrelationError extends Error {}
+
+function assertYooKassaPaymentMatchesOrder(
+  order: PaymentOrderRecord,
+  verified: Awaited<ReturnType<typeof getYooKassaPayment>>
+): void {
+  const verifiedOrderId = readVerifiedMetadataString(
+    verified.metadata,
+    'orderId'
+  );
+  const verifiedUserId = readVerifiedMetadataString(
+    verified.metadata,
+    'userId'
+  );
+  const verifiedPlanId = readVerifiedMetadataString(
+    verified.metadata,
+    'planId'
+  );
+  if (
+    verifiedOrderId !== order.id ||
+    (order.providerPaymentId !== null &&
+      order.providerPaymentId !== verified.id) ||
+    (verifiedUserId !== null && verifiedUserId !== order.userId) ||
+    (verifiedPlanId !== null && verifiedPlanId !== order.planId)
+  ) {
+    throw new YooKassaPaymentCorrelationError(
+      'Verified YooKassa payment does not match the local order'
+    );
+  }
+}
+
+function readVerifiedMetadataString(
+  metadata: Record<string, unknown>,
+  key: string
+): string | null {
+  const value = metadata[key];
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
 function buildYooKassaReturnUrl(
   appUrl: string,
   orderId: string,
@@ -1189,6 +2589,10 @@ function buildBindingReturnUrl(appUrl: string): string {
 
 function buildPricingUrl(appUrl: string): string {
   return new URL('/pricing', `${appUrl.replace(/\/$/, '')}/`).toString();
+}
+
+function buildProfileUrl(appUrl: string): string {
+  return new URL('/profile', `${appUrl.replace(/\/$/, '')}/`).toString();
 }
 
 function addMonthsTo(date: Date, months: number): Date {

@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { schema } from '@/server/infrastructure/db/client';
 import { DrizzleBillingRepository } from './drizzleBillingRepository';
+import {
+  PassCheckoutInProgressError,
+  RenewalPaymentQuarantinedError,
+} from '@/server/interface/billingRepository';
 
 const database = vi.hoisted(() => ({
   getDb: vi.fn(),
@@ -173,6 +177,14 @@ describe('DrizzleBillingRepository (модель доступа v2)', () => {
         expiresAt: new Date('2026-07-31T10:00:00.000Z'),
       }),
     });
+    expect(harness.updates).toContainEqual({
+      table: schema.paymentOrders,
+      values: expect.objectContaining({
+        providerPaymentId: 'payment_1',
+        status: 'succeeded',
+        fulfilledAt: NOW,
+      }),
+    });
   });
 
   it('keeps the purchase one-off when auto-renew was requested but no card exists', async () => {
@@ -194,6 +206,411 @@ describe('DrizzleBillingRepository (модель доступа v2)', () => {
       values: expect.objectContaining({
         autoRenew: false,
         nextChargeAt: null,
+      }),
+    });
+  });
+
+  it('keeps a new purchase one-off while an earlier renewal is unresolved', async () => {
+    const harness = createDbHarness({
+      activeCard: true,
+      unresolvedRenewal: true,
+    });
+    database.getDb.mockReturnValue(harness.db);
+    const repository = new DrizzleBillingRepository();
+
+    await repository.fulfillPaidOrder({
+      orderId: 'order_1',
+      providerPaymentId: 'payment_1',
+      plan: PASS_30D,
+      autoRenew: true,
+      paymentMethod: null,
+      now: NOW,
+    });
+
+    expect(harness.inserts).toContainEqual({
+      table: schema.userSubscriptions,
+      values: expect.objectContaining({
+        autoRenew: false,
+        nextChargeAt: null,
+      }),
+    });
+  });
+
+  it('atomically blocks a new pass order while a renewal is unresolved', async () => {
+    const harness = createDbHarness({ unresolvedRenewal: true });
+    database.getDb.mockReturnValue(harness.db);
+    const repository = new DrizzleBillingRepository();
+
+    await expect(
+      repository.createPaymentOrder({
+        userId: 'user_1',
+        planId: 'pass_30d',
+        amountRub: 1190,
+        currency: 'RUB',
+        metadata: { autoRenew: true },
+        accessPaymentFlow: 'checkout',
+      })
+    ).rejects.toBeInstanceOf(RenewalPaymentQuarantinedError);
+    expect(harness.inserts).not.toContainEqual(
+      expect.objectContaining({ table: schema.paymentOrders })
+    );
+  });
+
+  it('atomically defers a renewal while a manual pass checkout is pending', async () => {
+    const harness = createDbHarness({ manualPassCheckout: true });
+    database.getDb.mockReturnValue(harness.db);
+    const repository = new DrizzleBillingRepository();
+
+    await expect(
+      repository.createPaymentOrder({
+        userId: 'user_1',
+        planId: 'pass_30d',
+        amountRub: 1190,
+        currency: 'RUB',
+        metadata: { renewal: true },
+        accessPaymentFlow: 'renewal',
+        conflictingPassPlanIds: ['pass_7d', 'pass_30d'],
+      })
+    ).rejects.toBeInstanceOf(PassCheckoutInProgressError);
+    expect(harness.inserts).not.toContainEqual(
+      expect.objectContaining({ table: schema.paymentOrders })
+    );
+  });
+
+  it('moves the next charge to the retry date after a transient failure', async () => {
+    const harness = createDbHarness({
+      access: { currentPeriodEnd: ACTIVE_END, autoRenew: true },
+    });
+    database.getDb.mockReturnValue(harness.db);
+    const repository = new DrizzleBillingRepository();
+    const retryAt = new Date('2026-07-02T10:00:00.000Z');
+
+    await repository.recordAccessChargeError({
+      accessId: 'access_1',
+      error: 'insufficient_funds',
+      disableAutoRenew: false,
+      retryAt,
+      now: NOW,
+    });
+
+    expect(harness.updates).toContainEqual({
+      table: schema.userSubscriptions,
+      values: {
+        lastChargeError: 'insufficient_funds',
+        nextChargeAt: retryAt,
+        lastChargeAttemptAt: null,
+        updatedAt: NOW,
+      },
+    });
+  });
+
+  it('revokes auto-renewal consent and the saved method atomically', async () => {
+    const harness = createDbHarness({
+      access: { currentPeriodEnd: ACTIVE_END, autoRenew: true },
+      activeCard: true,
+    });
+    database.getDb.mockReturnValue(harness.db);
+    const repository = new DrizzleBillingRepository();
+
+    await repository.revokeRecurringPaymentConsent({
+      userId: 'user_1',
+      now: NOW,
+    });
+
+    expect(harness.updates).toContainEqual({
+      table: schema.userSubscriptions,
+      values: {
+        autoRenew: false,
+        nextChargeAt: null,
+        renewalNoticeSentAt: null,
+        updatedAt: NOW,
+      },
+    });
+    expect(harness.deletes).toContain(schema.userPaymentMethods);
+  });
+
+  it('enables auto-renewal atomically only while an active method exists', async () => {
+    const withMethod = createDbHarness({
+      access: { currentPeriodEnd: ACTIVE_END, autoRenew: false },
+      activeCard: true,
+    });
+    database.getDb.mockReturnValue(withMethod.db);
+    const repository = new DrizzleBillingRepository();
+
+    await expect(
+      repository.setAccessAutoRenew({
+        userId: 'user_1',
+        autoRenew: true,
+        now: NOW,
+      })
+    ).resolves.toBe(true);
+    expect(withMethod.updates).toContainEqual({
+      table: schema.userSubscriptions,
+      values: expect.objectContaining({ autoRenew: true }),
+    });
+
+    const withoutMethod = createDbHarness({
+      access: { currentPeriodEnd: ACTIVE_END, autoRenew: false },
+    });
+    database.getDb.mockReturnValue(withoutMethod.db);
+    const repositoryWithoutMethod = new DrizzleBillingRepository();
+    await expect(
+      repositoryWithoutMethod.setAccessAutoRenew({
+        userId: 'user_1',
+        autoRenew: true,
+        now: NOW,
+      })
+    ).resolves.toBe(false);
+    expect(withoutMethod.updates).toEqual([]);
+
+    const withUnknownRenewal = createDbHarness({
+      access: { currentPeriodEnd: ACTIVE_END, autoRenew: false },
+      activeCard: true,
+      unresolvedRenewal: true,
+    });
+    database.getDb.mockReturnValue(withUnknownRenewal.db);
+    const repositoryWithUnknownRenewal = new DrizzleBillingRepository();
+    await expect(
+      repositoryWithUnknownRenewal.setAccessAutoRenew({
+        userId: 'user_1',
+        autoRenew: true,
+        now: NOW,
+      })
+    ).resolves.toBe(false);
+  });
+
+  it('activates the exact pending method and renewal under the user lock', async () => {
+    const harness = createDbHarness({
+      access: { currentPeriodEnd: ACTIVE_END, autoRenew: false },
+      activePaymentMethodId: 'pm_1',
+    });
+    database.getDb.mockReturnValue(harness.db);
+    const repository = new DrizzleBillingRepository();
+
+    await expect(
+      repository.activatePaymentMethod({
+        userId: 'user_1',
+        providerPaymentMethodId: 'pm_1',
+        methodType: 'sbp',
+        enableAutoRenewForActiveAccess: true,
+        now: NOW,
+      })
+    ).resolves.toBe(true);
+
+    expect(harness.updates).toContainEqual({
+      table: schema.userSubscriptions,
+      values: expect.objectContaining({
+        autoRenew: true,
+        chargeAttempts: 0,
+        lastChargeError: null,
+      }),
+    });
+  });
+
+  it('does not enable a new method while an old renewal outcome is unknown', async () => {
+    const harness = createDbHarness({
+      access: { currentPeriodEnd: ACTIVE_END, autoRenew: true },
+      activePaymentMethodId: 'pm_new',
+      unresolvedRenewal: true,
+    });
+    database.getDb.mockReturnValue(harness.db);
+    const repository = new DrizzleBillingRepository();
+
+    await expect(
+      repository.activatePaymentMethod({
+        userId: 'user_1',
+        providerPaymentMethodId: 'pm_new',
+        enableAutoRenewForActiveAccess: true,
+        now: NOW,
+      })
+    ).resolves.toBe(true);
+
+    expect(harness.updates).toContainEqual({
+      table: schema.userSubscriptions,
+      values: expect.objectContaining({
+        autoRenew: false,
+        nextChargeAt: null,
+      }),
+    });
+  });
+
+  it('deletes only the saved payment method that produced the provider error', async () => {
+    const harness = createDbHarness({ activeCard: true });
+    database.getDb.mockReturnValue(harness.db);
+    const repository = new DrizzleBillingRepository();
+
+    await expect(
+      repository.deletePaymentMethodIfMatches({
+        userId: 'user_1',
+        providerPaymentMethodId: 'pm_1',
+      })
+    ).resolves.toBe(true);
+
+    expect(harness.deletes).toContain(schema.userPaymentMethods);
+  });
+
+  it('restores the charge-attempt budget for an indeterminate provider result', async () => {
+    const harness = createDbHarness({
+      access: { currentPeriodEnd: ACTIVE_END, autoRenew: true },
+    });
+    database.getDb.mockReturnValue(harness.db);
+    const repository = new DrizzleBillingRepository();
+
+    await repository.recordAccessChargeError({
+      accessId: 'access_1',
+      error: 'HTTP 500',
+      disableAutoRenew: false,
+      retryAt: new Date('2026-07-01T11:00:00.000Z'),
+      restoreChargeAttemptsTo: 0,
+      now: NOW,
+    });
+
+    expect(harness.updates).toContainEqual({
+      table: schema.userSubscriptions,
+      values: expect.objectContaining({
+        chargeAttempts: 0,
+        lastChargeAttemptAt: null,
+      }),
+    });
+  });
+
+  it('finds an unhandled renewal order before creating another charge', async () => {
+    const orderRow = {
+      id: 'renewal_order_1',
+      userId: 'user_1',
+      planId: 'pass_30d',
+      provider: 'yookassa',
+      providerPaymentId: null,
+      status: 'pending',
+      amountRub: 1190,
+      currency: 'RUB',
+      confirmationUrl: null,
+      metadata: {
+        renewal: true,
+        accessId: 'access_1',
+        renewalCycleEnd: ACTIVE_END.toISOString(),
+      },
+      fulfilledAt: null,
+      createdAt: NOW,
+      updatedAt: NOW,
+    };
+    const db = createSelectDb([[orderRow]]);
+    database.getDb.mockReturnValue(db);
+    const repository = new DrizzleBillingRepository();
+
+    await expect(
+      repository.findUnfulfilledRenewalPaymentOrder({
+        userId: 'user_1',
+        accessId: 'access_1',
+      })
+    ).resolves.toMatchObject({
+      id: 'renewal_order_1',
+      status: 'pending',
+      metadata: expect.objectContaining({
+        renewalCycleEnd: ACTIVE_END.toISOString(),
+      }),
+    });
+  });
+
+  it('does not restore auto-renewal after a delayed renewal success and user opt-out', async () => {
+    const harness = createDbHarness({
+      access: { currentPeriodEnd: EXPIRED_END, autoRenew: false },
+    });
+    database.getDb.mockReturnValue(harness.db);
+    const repository = new DrizzleBillingRepository();
+
+    await repository.fulfillPaidOrder({
+      orderId: 'order_1',
+      providerPaymentId: 'payment_late',
+      plan: PASS_30D,
+      autoRenew: true,
+      requireExistingAutoRenewConsent: true,
+      paymentMethod: {
+        providerPaymentMethodId: 'pm_revoked',
+        methodType: 'sbp',
+      },
+      now: NOW,
+    });
+
+    expect(harness.updates).toContainEqual({
+      table: schema.userSubscriptions,
+      values: expect.objectContaining({
+        autoRenew: false,
+        nextChargeAt: null,
+      }),
+    });
+    expect(harness.inserts).not.toContainEqual(
+      expect.objectContaining({ table: schema.userPaymentMethods })
+    );
+  });
+
+  it('does not replace a newly bound method with the method from a late webhook', async () => {
+    const harness = createDbHarness({
+      access: { currentPeriodEnd: EXPIRED_END, autoRenew: true },
+      activePaymentMethodId: 'pm_new',
+    });
+    database.getDb.mockReturnValue(harness.db);
+    const repository = new DrizzleBillingRepository();
+
+    await repository.fulfillPaidOrder({
+      orderId: 'order_1',
+      providerPaymentId: 'payment_late_old_method',
+      plan: PASS_30D,
+      autoRenew: true,
+      requireExistingAutoRenewConsent: true,
+      expectedPaymentMethodId: 'pm_old',
+      paymentMethod: {
+        providerPaymentMethodId: 'pm_old',
+        methodType: 'sbp',
+      },
+      now: NOW,
+    });
+
+    expect(harness.updates).toContainEqual({
+      table: schema.userSubscriptions,
+      values: expect.objectContaining({
+        autoRenew: true,
+        nextChargeAt: new Date('2026-07-31T10:00:00.000Z'),
+      }),
+    });
+    expect(harness.inserts).not.toContainEqual(
+      expect.objectContaining({ table: schema.userPaymentMethods })
+    );
+  });
+
+  it('does not overwrite a newer renewal agreement with a stale success', async () => {
+    const harness = createDbHarness({
+      activePaymentMethodId: 'pm_1',
+      access: {
+        currentPeriodEnd: ACTIVE_END,
+        autoRenew: true,
+        planId: 'pass_7d',
+        renewalPlanId: 'pass_7d',
+        renewalAmountRub: 449,
+        providerPaymentId: 'payment_newer_agreement',
+      },
+    });
+    database.getDb.mockReturnValue(harness.db);
+    const repository = new DrizzleBillingRepository();
+
+    await repository.fulfillPaidOrder({
+      orderId: 'order_1',
+      providerPaymentId: 'payment_late_renewal',
+      plan: PASS_30D,
+      autoRenew: true,
+      requireExistingAutoRenewConsent: true,
+      expectedPaymentMethodId: 'pm_1',
+      expectedAccessProviderPaymentId: 'payment_old_agreement',
+      paymentMethod: null,
+      now: NOW,
+    });
+
+    expect(harness.updates).toContainEqual({
+      table: schema.userSubscriptions,
+      values: expect.objectContaining({
+        planId: 'pass_30d',
+        renewalPlanId: 'pass_7d',
+        renewalAmountRub: 449,
       }),
     });
   });
@@ -446,17 +863,58 @@ describe('DrizzleBillingRepository (модель доступа v2)', () => {
     );
     expect(harness.selectedTables).not.toContain(schema.userPaymentMethods);
   });
+
+  it('moves the next business charge to the gifted period end while a renewal stays unresolved', async () => {
+    // Незавершённый renewal-order сверяется независимо (lease/renewalRetryAt
+    // в metadata заказа); подарок переносит только следующую бизнес-попытку
+    // на новый конец доступа и не трогает сам заказ.
+    const retryAt = new Date('2026-07-01T11:00:00.000Z');
+    const harness = createDbHarness({
+      gift: true,
+      unresolvedRenewal: true,
+      access: {
+        currentPeriodEnd: EXPIRED_END,
+        nextChargeAt: retryAt,
+        autoRenew: true,
+      },
+    });
+    database.getDb.mockReturnValue(harness.db);
+    const repository = new DrizzleBillingRepository();
+
+    await repository.claimReadyGiftsByEmail({
+      recipientEmail: 'friend@example.com',
+      beneficiaryUserId: 'recipient_1',
+      plans: [PASS_30D],
+      now: NOW,
+    });
+
+    expect(harness.updates).toContainEqual({
+      table: schema.userSubscriptions,
+      values: expect.objectContaining({
+        currentPeriodEnd: new Date('2026-07-31T10:00:00.000Z'),
+        nextChargeAt: new Date('2026-07-31T10:00:00.000Z'),
+      }),
+    });
+    expect(harness.updates).not.toContainEqual(
+      expect.objectContaining({ table: schema.paymentOrders })
+    );
+  });
 });
 
 function createDbHarness(params?: {
   access?: {
     currentPeriodEnd: Date;
+    nextChargeAt?: Date | null;
     autoRenew: boolean;
     planId?: string;
     renewalPlanId?: string;
     renewalAmountRub?: number;
+    providerPaymentId?: string;
   };
   activeCard?: boolean;
+  activePaymentMethodId?: string;
+  unresolvedRenewal?: boolean;
+  manualPassCheckout?: boolean;
   savedCardWithPayment?: boolean;
   gift?: boolean;
   giftPlanId?: string;
@@ -476,12 +934,16 @@ function createDbHarness(params?: {
         planId: params.access.planId ?? 'pass_30d',
         status: 'active',
         provider: 'yookassa',
-        providerPaymentId: 'payment_first',
+        providerPaymentId:
+          params.access.providerPaymentId ?? 'payment_first',
         currentPeriodEnd: params.access.currentPeriodEnd,
         autoRenew: params.access.autoRenew,
-        nextChargeAt: params.access.autoRenew
-          ? params.access.currentPeriodEnd
-          : null,
+        nextChargeAt:
+          params.access.nextChargeAt !== undefined
+            ? params.access.nextChargeAt
+            : params.access.autoRenew
+              ? params.access.currentPeriodEnd
+              : null,
         lastChargeAttemptAt: null,
         lastChargeError: null,
         chargeAttempts: 0,
@@ -515,9 +977,12 @@ function createDbHarness(params?: {
   const selectedTables: unknown[] = [];
   const inserts: Array<{ table: unknown; values: unknown }> = [];
   const updates: Array<{ table: unknown; values: unknown }> = [];
+  const deletes: unknown[] = [];
 
   class SelectBuilder {
     private table: unknown;
+
+    constructor(private readonly selection?: unknown) {}
 
     from(table: unknown) {
       this.table = table;
@@ -542,12 +1007,26 @@ function createDbHarness(params?: {
 
     private rows() {
       if (this.table === schema.users) return [{ id: 'user_1' }];
-      if (this.table === schema.paymentOrders) return [orderRow];
+      if (this.table === schema.paymentOrders) {
+        return this.selection
+          ? params?.unresolvedRenewal || params?.manualPassCheckout
+            ? [{ id: 'renewal_order_pending' }]
+            : []
+          : [orderRow];
+      }
       if (this.table === schema.giftEntitlements) {
         return params?.gift ? [giftRow] : [];
       }
       if (this.table === schema.userPaymentMethods) {
-        return params?.activeCard ? [{ id: 'method_1' }] : [];
+        return params?.activeCard || params?.activePaymentMethodId
+          ? [
+              {
+                id: 'method_1',
+                providerPaymentMethodId:
+                  params.activePaymentMethodId ?? 'pm_1',
+              },
+            ]
+          : [];
       }
       if (this.table === schema.userSubscriptions) {
         return accessRow ? [accessRow] : [];
@@ -603,16 +1082,48 @@ function createDbHarness(params?: {
       return this;
     }
 
-    async where() {
+    where() {
       updates.push({ table: this.table, values: this.valuesInput });
-      return [];
+      return this;
+    }
+
+    async returning() {
+      return [{ id: 'updated_1' }];
+    }
+
+    then<TResult1 = unknown, TResult2 = never>(
+      onfulfilled?: ((value: unknown) => TResult1 | PromiseLike<TResult1>) | null,
+      onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null
+    ) {
+      return Promise.resolve(undefined).then(onfulfilled, onrejected);
+    }
+  }
+
+  class DeleteBuilder {
+    constructor(private readonly table: unknown) {}
+
+    where() {
+      deletes.push(this.table);
+      return this;
+    }
+
+    async returning() {
+      return [{ id: 'method_1' }];
+    }
+
+    then<TResult1 = unknown, TResult2 = never>(
+      onfulfilled?: ((value: unknown) => TResult1 | PromiseLike<TResult1>) | null,
+      onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null
+    ) {
+      return Promise.resolve(undefined).then(onfulfilled, onrejected);
     }
   }
 
   const tx = {
-    select: vi.fn(() => new SelectBuilder()),
+    select: vi.fn((selection?: unknown) => new SelectBuilder(selection)),
     insert: vi.fn((table: unknown) => new InsertBuilder(table)),
     update: vi.fn((table: unknown) => new UpdateBuilder(table)),
+    delete: vi.fn((table: unknown) => new DeleteBuilder(table)),
   };
   const db = {
     transaction: vi.fn(
@@ -620,9 +1131,10 @@ function createDbHarness(params?: {
         await run(tx)
     ),
     update: vi.fn((table: unknown) => new UpdateBuilder(table)),
+    delete: vi.fn((table: unknown) => new DeleteBuilder(table)),
   };
 
-  return { db, inserts, selectedTables, updates };
+  return { db, deletes, inserts, selectedTables, updates };
 }
 
 function toRecord(value: unknown): Record<string, unknown> {

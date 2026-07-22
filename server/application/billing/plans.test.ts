@@ -33,7 +33,7 @@ describe('billing plans v2', () => {
       expect(plan).not.toHaveProperty('requiresActivePass');
       expect(plan.isCheckoutEnabled).toBe(true);
       expect(plan.features).toContain(
-        'Интервью без ограничений — все форматы'
+        'Все форматы интервью без ограничений'
       );
       expect(plan.features).toContain(
         `${plan.realtimeVoiceMinutes} минут живого голосового интервью`
