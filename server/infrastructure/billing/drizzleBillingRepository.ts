@@ -717,7 +717,13 @@ export class DrizzleBillingRepository implements BillingRepository {
             and(
               sql`${schema.paymentOrders.metadata}->>'renewal' = 'true'`,
               sql`coalesce(${schema.paymentOrders.metadata}->>'renewalQuarantined', 'false') = 'true'`,
-              sql`coalesce(${schema.paymentOrders.metadata}->>'renewalFailureHandled', 'false') <> 'true'`
+              // Provider-less карантин перепроверяется поиском платежа даже
+              // после первичной обработки; карантин с известным id — только
+              // до неё (дальше это dead-letter для ручного разбора).
+              or(
+                isNull(schema.paymentOrders.providerPaymentId),
+                sql`coalesce(${schema.paymentOrders.metadata}->>'renewalFailureHandled', 'false') <> 'true'`
+              )
             ),
             and(
               isNotNull(schema.paymentOrders.providerPaymentId),
