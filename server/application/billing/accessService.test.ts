@@ -327,6 +327,36 @@ describe('BillingAccessService', () => {
     });
   });
 
+  it('keeps an expired pass marked as auto-renewing while a retry is scheduled', async () => {
+    const retryAt = new Date('2030-01-02T10:00:00.000Z');
+    const service = new BillingAccessService({
+      repository: createRepository({
+        sessionsUsed: 5,
+        durableTrialSessionsUsed: 1,
+        access: accessRecord({
+          currentPeriodEnd: PAST,
+          autoRenew: true,
+          nextChargeAt: retryAt,
+          lastChargeError: 'Недостаточно средств',
+          chargeAttempts: 1,
+        }),
+      }),
+    });
+
+    await expect(
+      service.getStatus({ anonymousSessionId: 'anon_1', userId: 'user_1' })
+    ).resolves.toMatchObject({
+      hasActivePaidAccess: false,
+      hasRecurringRenewal: true,
+      billing: {
+        autoRenew: true,
+        nextChargeAt: retryAt.toISOString(),
+        nextChargeAmountRub: 1190,
+        lastChargeError: 'Недостаточно средств',
+      },
+    });
+  });
+
   it('reports fixed renewal price and last charge error in billing info', async () => {
     const repository = createRepository({
       access: accessRecord({

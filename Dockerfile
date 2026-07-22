@@ -26,6 +26,7 @@ COPY . .
 
 # Сборка основного приложения (Nitro складывает сервер в .output).
 # Лендинг (apps/landing) собирается отдельно в CI и деплоится статикой.
+ENV NODE_ENV=production
 RUN NODE_OPTIONS="--max-old-space-size=4096" pnpm build
 
 # --- СТАДИЯ МИГРАЦИЙ ---

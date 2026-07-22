@@ -27,7 +27,8 @@ export interface PaidAccessRecord {
   updatedAt: Date;
 }
 
-// Сохранённый способ оплаты (карта YooKassa) для автосписаний.
+// Сохранённый способ оплаты YooKassa для автосписаний
+// (карта, СБП, SberPay, T-Pay, Alfa Pay и другие поддержанные типы).
 // status: 'pending' — привязка начата, ждём подтверждения; 'active' — готова.
 export interface PaymentMethodRecord {
   id: string;
@@ -122,6 +123,38 @@ export interface CreatePaymentOrderInput {
   amountRub: number;
   currency: 'RUB';
   metadata: Record<string, unknown>;
+  // Обычный checkout пропуска и автопродление сериализуются одной блокировкой
+  // пользователя: два конкурирующих платежа за доступ создать нельзя.
+  accessPaymentFlow?: 'checkout' | 'renewal';
+  conflictingPassPlanIds?: string[];
+  // Снимок доступа после claim. Создание renewal-order допустимо только
+  // пока подарок/отвязка/другая покупка не изменили этот цикл.
+  renewalAccessGuard?: {
+    accessId: string;
+    providerPaymentId: string | null;
+    currentPeriodEnd: Date;
+  };
+}
+
+export class RenewalPaymentQuarantinedError extends Error {
+  constructor() {
+    super('Renewal payment outcome requires manual reconciliation');
+    this.name = 'RenewalPaymentQuarantinedError';
+  }
+}
+
+export class PassCheckoutInProgressError extends Error {
+  constructor() {
+    super('A manual pass checkout is already in progress');
+    this.name = 'PassCheckoutInProgressError';
+  }
+}
+
+export class RenewalAccessChangedError extends Error {
+  constructor() {
+    super('Renewal access changed after charge claim');
+    this.name = 'RenewalAccessChangedError';
+  }
 }
 
 export interface UpdatePaymentOrderInput {
@@ -130,6 +163,14 @@ export interface UpdatePaymentOrderInput {
   status?: string;
   confirmationUrl?: string | null;
   metadata?: Record<string, unknown> | null;
+  // Служебные флаги webhook/sweep могут обновляться конкурентно; patch не
+  // должен затирать уже записанные признаки обработки.
+  mergeMetadata?: boolean;
+  // Ошибка фоновой операции не должна перезаписать уже выполненный заказ.
+  onlyIfUnfulfilled?: boolean;
+  // Ответы параллельных GET/webhook могут прийти не по порядку. Финальное
+  // состояние провайдера нельзя вернуть в pending или заменить другим.
+  monotonicProviderStatus?: boolean;
 }
 
 // Данные тарифа, нужные для выдачи доступа по оплаченному заказу.
@@ -179,12 +220,17 @@ export interface BillingRepository {
   // Идемпотентная выдача доступа: пропуск (создание/продление записи) или
   // пакет минут. Безопасна при гонке «вебхук + поллинг checkout-status».
   // autoRenew — выбор пользователя в чекауте; фактически включается, только
-  // если есть сохранённая карта (пришла с платежом или привязана ранее).
+  // если есть сохранённый способ оплаты (пришёл с платежом или привязан ранее).
   fulfillPaidOrder(params: {
     orderId: string;
     providerPaymentId: string;
     plan: FulfillPlanInput;
     autoRenew: boolean;
+    // Для запоздалого результата автосписания нельзя заново включать
+    // автопродление, если пользователь успел от него отказаться.
+    requireExistingAutoRenewConsent?: boolean;
+    expectedPaymentMethodId?: string | null;
+    expectedAccessProviderPaymentId?: string | null;
     paymentMethod?: {
       providerPaymentMethodId: string;
       methodType?: string | null;
@@ -197,12 +243,12 @@ export interface BillingRepository {
     now?: Date;
   }): Promise<FulfillPaidOrderResult>;
   findPaymentMethodByUserId(userId: string): Promise<PaymentMethodRecord | null>;
-  // Начало явной привязки карты: сохраняем pending-запись (upsert).
+  // Начало явной привязки способа оплаты: сохраняем pending-запись (upsert).
   savePendingPaymentMethod(params: {
     userId: string;
     providerPaymentMethodId: string;
   }): Promise<void>;
-  // Подтверждение привязки: presentation карты + статус active.
+  // Подтверждение привязки: presentation способа оплаты + статус active.
   activatePaymentMethod(params: {
     userId: string;
     providerPaymentMethodId: string;
@@ -212,10 +258,24 @@ export interface BillingRepository {
     cardLast4?: string | null;
     cardExpiryMonth?: string | null;
     cardExpiryYear?: string | null;
-  }): Promise<void>;
-  // Отвязка карты = электронный отказ (376-ФЗ): способ оплаты удаляется,
+    enableAutoRenewForActiveAccess?: boolean;
+    now?: Date;
+  }): Promise<boolean>;
+  // Отвязка способа = электронный отказ (376-ФЗ): запись удаляется,
   // автопродление выключает application-слой.
   deletePaymentMethodByUserId(userId: string): Promise<void>;
+  // Ошибка относится только к конкретному сохранённому идентификатору:
+  // новый способ, который пользователь успел привязать, не удаляем.
+  deletePaymentMethodIfMatches(params: {
+    userId: string;
+    providerPaymentMethodId: string;
+  }): Promise<boolean>;
+  // Пользовательский отказ выполняется одной транзакцией и сериализуется с
+  // выдачей доступа по позднему webhook, чтобы способ не появился повторно.
+  revokeRecurringPaymentConsent(params: {
+    userId: string;
+    now?: Date;
+  }): Promise<void>;
   // Запись доступа пользователя (включая истёкшую) — одна на пользователя.
   findAccessByUserId(userId: string): Promise<PaidAccessRecord | null>;
   // Включение/выключение автопродления активного доступа. При включении
@@ -224,7 +284,7 @@ export interface BillingRepository {
     userId: string;
     autoRenew: boolean;
     now?: Date;
-  }): Promise<void>;
+  }): Promise<boolean>;
   // Доступы, которым пора автосписание: active, autoRenew, nextChargeAt <=
   // now, попыток меньше maxAttempts, с учётом троттлинга повторов.
   listAccessDueForCharge(params: {
@@ -247,8 +307,37 @@ export interface BillingRepository {
     error: string;
     // Финальная неудача: автопродление выключается.
     disableAutoRenew?: boolean;
+    // Для повторяемой ошибки назначаем точную дату следующей попытки.
+    retryAt?: Date | null;
+    // Неопределённый результат провайдера не считается новой бизнес-попыткой:
+    // claim уже увеличил счётчик, поэтому возвращаем прежнее значение.
+    restoreChargeAttemptsTo?: number;
+    // CAS-защита: успешное продление/другая покупка меняет providerPaymentId,
+    // после чего запоздалая ошибка старой попытки уже не применяется.
+    expectedProviderPaymentId?: string | null;
+    // CAS по активному сохранённому методу: поздняя ошибка старого метода
+    // не должна перезаписать соглашение после перепривязки.
+    expectedActivePaymentMethodId?: string;
+    // Инвалидация старого метода не должна выключать уже привязанный новый.
+    requireNoActivePaymentMethod?: boolean;
+    // Новую бизнес-попытку нельзя выполнять раньше конца уже продлённого
+    // (например, подарком) периода. Проверочные GET/same-key POST — можно.
+    deferRetryUntilPeriodEnd?: boolean;
     now?: Date;
-  }): Promise<void>;
+  }): Promise<boolean>;
+  // Платёж уже создан, но YooKassa ещё обрабатывает его. Повторная проверка
+  // не должна считаться новой попыткой списания.
+  rescheduleAccessChargeVerification(params: {
+    accessId: string;
+    chargeAttempts: number;
+    retryAt: Date;
+    expectedProviderPaymentId?: string | null;
+    expectedActivePaymentMethodId?: string;
+    // Запоздалый pending-ответ не должен менять расписание после того, как
+    // этот заказ уже получил финальный статус или был обработан.
+    expectedPendingOrderId?: string;
+    now?: Date;
+  }): Promise<boolean>;
   // Кандидаты на предуведомление о списании: autoRenew, списание в пределах
   // горизонта, уведомление ещё не отправлялось.
   listAccessDueForRenewalNotice(params: {
@@ -331,6 +420,27 @@ export interface BillingRepository {
   listPendingPaymentOrders(params?: {
     limit?: number;
   }): Promise<PaymentOrderRecord[]>;
+  // Атомарная короткая аренда сверки не даёт нескольким репликам одновременно
+  // повторять GET/same-key POST одного заказа.
+  claimPaymentOrderReconciliation(params: {
+    orderId: string;
+    now: Date;
+    leaseUntil: Date;
+  }): Promise<boolean>;
+  // Незавершённый заказ автопродления сохраняет Idempotence-Key между
+  // повторами, если результат запроса к провайдеру остался неопределённым.
+  findUnfulfilledRenewalPaymentOrder(params: {
+    userId: string;
+    accessId: string;
+  }): Promise<PaymentOrderRecord | null>;
+  markRenewalFailureHandled(params: {
+    orderId: string;
+    now?: Date;
+  }): Promise<boolean>;
+  claimRenewalSuccessNotification(params: {
+    orderId: string;
+    now?: Date;
+  }): Promise<boolean>;
   claimGiftNotifications(params: {
     now?: Date;
     limit?: number;
@@ -348,6 +458,12 @@ export interface BillingRepository {
   findPaymentOrderByProviderPaymentId(
     providerPaymentId: string
   ): Promise<PaymentOrderRecord | null>;
+  // Атомарно связывает provider payment ровно с одним локальным заказом.
+  // false — заказ уже связан с другим payment либо этот payment занят.
+  bindPaymentOrderProviderPaymentId(params: {
+    orderId: string;
+    providerPaymentId: string;
+  }): Promise<boolean>;
   findLatestPaymentOrderByUserId(
     userId: string
   ): Promise<PaymentOrderRecord | null>;

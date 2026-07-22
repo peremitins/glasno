@@ -2,6 +2,7 @@ import type { H3Event } from 'h3';
 import { BillingService } from './billingService';
 import { DrizzleBillingRepository } from '@/server/infrastructure/billing/drizzleBillingRepository';
 import { createTelegramAlertsServiceFromConfig } from '@/server/application/telegram/serviceFactory';
+import { resolveBillingAppUrl } from './appUrl';
 
 // Минимально необходимый срез runtime-конфига: фабрику вызывают и хендлеры
 // (с event), и Nitro-плагин фонового воркера (без event).
@@ -27,9 +28,8 @@ export function createBillingServiceFromConfig(
         shopId: config.yookassaShopId as string,
         secretKey: config.yookassaSecretKey as string,
       },
-      appUrl: (config.public.appUrl || 'http://localhost:3000') as string,
+      appUrl: resolveBillingAppUrl(config.public.appUrl),
     },
     telegramAlerts: createTelegramAlertsServiceFromConfig(config),
   });
 }
-
