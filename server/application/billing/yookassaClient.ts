@@ -363,44 +363,31 @@ export function classifyYooKassaRecurringPaymentError(
   return 'definitive_failure';
 }
 
-// Обратный запрос статуса платежа. Используется для ВЕРИФИКАЦИИ вебхука:
-// телу вебхука доверять нельзя, поэтому статус подтверждаем у YooKassa.
-export async function getYooKassaPayment(
-  config: YooKassaConfig,
-  paymentId: string
-): Promise<YooKassaPaymentInfo> {
-  const response = await $fetch<{
-    id: string;
-    status: string;
-    paid?: boolean;
-    amount?: { value?: string; currency?: string };
-    cancellation_details?: {
-      party?: string;
-      reason?: string;
+interface YooKassaRawPayment {
+  id: string;
+  status: string;
+  paid?: boolean;
+  amount?: { value?: string; currency?: string };
+  cancellation_details?: {
+    party?: string;
+    reason?: string;
+  };
+  metadata?: Record<string, unknown>;
+  payment_method?: {
+    id?: string;
+    saved?: boolean;
+    type?: string;
+    title?: string;
+    card?: {
+      card_type?: string;
+      last4?: string;
+      expiry_month?: string;
+      expiry_year?: string;
     };
-    metadata?: Record<string, unknown>;
-    payment_method?: {
-      id?: string;
-      saved?: boolean;
-      type?: string;
-      title?: string;
-      card?: {
-        card_type?: string;
-        last4?: string;
-        expiry_month?: string;
-        expiry_year?: string;
-      };
-    };
-  }>(`https://api.yookassa.ru/v3/payments/${encodeURIComponent(paymentId)}`, {
-    method: 'GET',
-    timeout: 20_000,
-    headers: {
-      Authorization: `Basic ${Buffer.from(
-        `${config.shopId}:${config.secretKey}`
-      ).toString('base64')}`,
-    },
-  });
+  };
+}
 
+function mapYooKassaPayment(response: YooKassaRawPayment): YooKassaPaymentInfo {
   return {
     id: response.id,
     status: response.status,
@@ -411,6 +398,71 @@ export async function getYooKassaPayment(
     cancellationReason: asString(response.cancellation_details?.reason),
     metadata: response.metadata ?? {},
     paymentMethod: extractYooKassaPaymentMethod(response.payment_method),
+  };
+}
+
+// Обратный запрос статуса платежа. Используется для ВЕРИФИКАЦИИ вебхука:
+// телу вебхука доверять нельзя, поэтому статус подтверждаем у YooKassa.
+export async function getYooKassaPayment(
+  config: YooKassaConfig,
+  paymentId: string
+): Promise<YooKassaPaymentInfo> {
+  const response = await $fetch<YooKassaRawPayment>(
+    `https://api.yookassa.ru/v3/payments/${encodeURIComponent(paymentId)}`,
+    {
+      method: 'GET',
+      timeout: 20_000,
+      headers: {
+        Authorization: `Basic ${Buffer.from(
+          `${config.shopId}:${config.secretKey}`
+        ).toString('base64')}`,
+      },
+    }
+  );
+
+  return mapYooKassaPayment(response);
+}
+
+export interface YooKassaPaymentsPage {
+  items: YooKassaPaymentInfo[];
+  nextCursor: string | null;
+}
+
+// Поиск платежа, когда его id не сохранился локально (процесс упал между
+// POST и записью providerPaymentId). Список фильтруется датой создания,
+// совпадение с заказом ищем по metadata.orderId — их пишет наш сервер при
+// создании каждого платежа.
+export async function listYooKassaPayments(
+  config: YooKassaConfig,
+  params: {
+    createdAtGte: Date;
+    createdAtLte: Date;
+    cursor?: string | null;
+    limit?: number;
+  }
+): Promise<YooKassaPaymentsPage> {
+  const response = await $fetch<{
+    items?: YooKassaRawPayment[];
+    next_cursor?: string;
+  }>('https://api.yookassa.ru/v3/payments', {
+    method: 'GET',
+    timeout: 20_000,
+    query: {
+      'created_at.gte': params.createdAtGte.toISOString(),
+      'created_at.lte': params.createdAtLte.toISOString(),
+      limit: params.limit ?? 100,
+      ...(params.cursor ? { cursor: params.cursor } : {}),
+    },
+    headers: {
+      Authorization: `Basic ${Buffer.from(
+        `${config.shopId}:${config.secretKey}`
+      ).toString('base64')}`,
+    },
+  });
+
+  return {
+    items: (response.items ?? []).map(mapYooKassaPayment),
+    nextCursor: asString(response.next_cursor),
   };
 }
 
