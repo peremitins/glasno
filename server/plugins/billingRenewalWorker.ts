@@ -34,6 +34,13 @@ export default defineNitroPlugin((nitroApp) => {
         allowRenewalCreate:
           process.env.BILLING_RENEWAL_DISABLED !== 'true',
       })
+      .then((result) => {
+        // Пустой тик не логируем; непустой — единственный след работы
+        // авторазрешения при диагностике зависших заказов на проде.
+        if (result.checked > 0) {
+          console.log('[billing] pending payment sweep', result);
+        }
+      })
       .catch((err) => {
         console.error('[billing] pending payment sweep failed', err);
       });

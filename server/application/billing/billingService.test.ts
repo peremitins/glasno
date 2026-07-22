@@ -901,6 +901,56 @@ describe('BillingService payment reconciliation', () => {
     expect(mockedSendRenewalManualReviewEmail).not.toHaveBeenCalled();
   });
 
+  it('auto-resolves a legacy indeterminate renewal without the quarantined flag', async () => {
+    // Прод-инцидент 2026-07-22: промежуточная версия кода оставила заказ в
+    // status='indeterminate' без renewalQuarantined. Такой заказ блокировал
+    // покупку, но не попадал в очередь sweep. Инвариант: всё блокирующее
+    // без provider id обязано авторазрешаться поиском платежа.
+    const order = createOrder({
+      id: 'renewal_indeterminate_without_flag',
+      providerPaymentId: null,
+      status: 'indeterminate',
+      createdAt: new Date('2026-06-30T10:00:00.000Z'),
+      metadata: {
+        userId: 'user_1',
+        planId: 'pass_30d',
+        renewal: true,
+        autoRenew: true,
+        accessId: 'access_1',
+        renewalFailureHandled: true,
+        renewalErrorDiagnostic:
+          'Автосписание не возобновлено: согласие или сохранённый способ оплаты уже изменились',
+      },
+    });
+    const repository = createRepository(order);
+    repository.__setAccess(
+      createAccess({ autoRenew: false, nextChargeAt: null })
+    );
+    repository.listPendingPaymentOrders.mockResolvedValue([order]);
+    mockedListYooKassaPayments.mockResolvedValue({
+      items: [],
+      nextCursor: null,
+    });
+    const service = createService(repository);
+
+    await service.runPendingPaymentSweep();
+
+    expect(repository.updatePaymentOrder).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: order.id,
+        status: 'canceled',
+        onlyIfUnfulfilled: true,
+        metadata: expect.objectContaining({
+          renewalErrorKind: 'not_attempted',
+          renewalQuarantined: false,
+        }),
+      })
+    );
+    expect(mockedSendRenewalManualReviewEmail).not.toHaveBeenCalled();
+    expect(repository.recordAccessChargeError).not.toHaveBeenCalled();
+    expect(mockedCreateYooKassaRecurringPayment).not.toHaveBeenCalled();
+  });
+
   it('keeps the quarantine with backoff when the payment search is unavailable', async () => {
     // Повторный проход уже обработанного карантина: только продление backoff,
     // без новых писем, алертов и записей об ошибке списания.
