@@ -714,16 +714,40 @@ export class DrizzleBillingRepository implements BillingRepository {
           sql`coalesce((${schema.paymentOrders.metadata}->>'reconciliationLeaseUntil')::timestamptz, '-infinity'::timestamptz) <= now()`,
           sql`coalesce((${schema.paymentOrders.metadata}->>'renewalRetryAt')::timestamptz, '-infinity'::timestamptz) <= now()`,
           or(
+            // Инвариант: любой provider-less renewal-заказ, который блокирует
+            // покупку/автопродление (см. isBlockingUnknownRenewalOrder),
+            // обязан быть в очереди авторазрешения. Ключевое отличие от
+            // флагов quarantined/handled: у строк, записанных старыми
+            // версиями кода, флаги неполные, а блокировка — по статусу.
+            and(
+              sql`${schema.paymentOrders.metadata}->>'renewal' = 'true'`,
+              isNull(schema.paymentOrders.providerPaymentId),
+              or(
+                inArray(schema.paymentOrders.status, [
+                  'pending',
+                  'waiting_for_capture',
+                  'indeterminate',
+                ]),
+                and(
+                  inArray(schema.paymentOrders.status, [
+                    'failed',
+                    'canceled',
+                    'verification_failed',
+                  ]),
+                  or(
+                    sql`coalesce(${schema.paymentOrders.metadata}->>'renewalFailureHandled', 'false') <> 'true'`,
+                    sql`coalesce(${schema.paymentOrders.metadata}->>'renewalErrorKind', '') not in ('definitive_failure', 'invalid_payment_method', 'not_attempted')`
+                  )
+                )
+              )
+            ),
+            // Карантин с известным provider id — только до первичной
+            // обработки (дальше это dead-letter для ручного разбора).
             and(
               sql`${schema.paymentOrders.metadata}->>'renewal' = 'true'`,
               sql`coalesce(${schema.paymentOrders.metadata}->>'renewalQuarantined', 'false') = 'true'`,
-              // Provider-less карантин перепроверяется поиском платежа даже
-              // после первичной обработки; карантин с известным id — только
-              // до неё (дальше это dead-letter для ручного разбора).
-              or(
-                isNull(schema.paymentOrders.providerPaymentId),
-                sql`coalesce(${schema.paymentOrders.metadata}->>'renewalFailureHandled', 'false') <> 'true'`
-              )
+              isNotNull(schema.paymentOrders.providerPaymentId),
+              sql`coalesce(${schema.paymentOrders.metadata}->>'renewalFailureHandled', 'false') <> 'true'`
             ),
             and(
               isNotNull(schema.paymentOrders.providerPaymentId),
@@ -733,26 +757,6 @@ export class DrizzleBillingRepository implements BillingRepository {
                 'succeeded',
                 'indeterminate',
               ])
-            ),
-            and(
-              sql`${schema.paymentOrders.metadata}->>'renewal' = 'true'`,
-              or(
-                and(
-                  isNull(schema.paymentOrders.providerPaymentId),
-                  inArray(schema.paymentOrders.status, [
-                    'pending',
-                    'waiting_for_capture',
-                  ])
-                ),
-                and(
-                  inArray(schema.paymentOrders.status, [
-                    'failed',
-                    'canceled',
-                    'verification_failed',
-                  ]),
-                  sql`coalesce(${schema.paymentOrders.metadata}->>'renewalFailureHandled', 'false') <> 'true'`
-                )
-              )
             )
           )
         )
