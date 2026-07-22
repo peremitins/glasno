@@ -323,14 +323,21 @@
     height: 44px;
     border: 1px solid color-mix(in srgb, var(--accent) 48%, var(--glass-border));
     border-radius: 999px;
-    color: var(--button-text);
+    color: var(--on-accent);
+    /* Важно: не мешать сюда --button-bg — это градиент, а не цвет,
+       color-mix с ним невалиден и обнуляет весь background (кнопка
+       становилась прозрачной, в светлой теме — белым по белому).
+       Оба стопа затемнены, чтобы белый текст держал контраст ≥ 4.5:1. */
     background: linear-gradient(
       135deg,
-      color-mix(in srgb, var(--accent) 92%, var(--button-bg)),
-      color-mix(in srgb, var(--accent-2) 78%, var(--button-bg))
+      color-mix(in srgb, var(--accent) 92%, #05070f),
+      color-mix(
+        in srgb,
+        color-mix(in srgb, var(--accent-2) 34%, var(--accent)) 78%,
+        #05070f
+      )
     );
-    box-shadow: inset 0 1px 0
-        color-mix(in srgb, var(--glass-sheen) 22%, transparent),
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22),
       0 12px 24px -16px color-mix(in srgb, var(--accent) 70%, transparent);
     cursor: pointer;
     isolation: isolate;
@@ -349,7 +356,7 @@
     border-radius: inherit;
     background: linear-gradient(
       180deg,
-      color-mix(in srgb, var(--glass-sheen) 16%, transparent),
+      rgba(255, 255, 255, 0.16),
       transparent 44%
     );
     content: '';
@@ -363,7 +370,7 @@
     width: 24px;
     height: 24px;
     border-radius: 999px;
-    background: color-mix(in srgb, var(--glass-sheen) 16%, transparent);
+    background: rgba(255, 255, 255, 0.18);
     color: currentColor;
     flex: 0 0 auto;
   }
@@ -388,7 +395,9 @@
     min-width: 34px;
     height: 18px;
     border-radius: 999px;
-    background: color-mix(in srgb, var(--glass-sheen) 18%, transparent);
+    padding: 0 6px;
+    background: rgba(255, 255, 255, 0.22);
+    color: var(--on-accent);
     font-family: var(--font-mono);
     font-size: 9px;
     font-weight: 900;
@@ -402,8 +411,7 @@
       var(--accent) 65%,
       var(--glass-border-strong)
     );
-    box-shadow: inset 0 1px 0
-        color-mix(in srgb, var(--glass-sheen) 28%, transparent),
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28),
       0 14px 28px -15px color-mix(in srgb, var(--accent) 78%, transparent);
     transform: translateY(-1px);
   }
@@ -439,11 +447,11 @@
   /* Идёт разговор — акцентная подсветка + пульс. */
   .rt-icon--active {
     border-color: color-mix(in srgb, var(--accent) 55%, transparent);
-    color: var(--button-text);
+    color: var(--on-accent);
     background: linear-gradient(
       135deg,
-      color-mix(in srgb, var(--danger) 72%, var(--button-bg)),
-      color-mix(in srgb, var(--accent) 76%, var(--button-bg))
+      color-mix(in srgb, var(--danger) 82%, #05070f),
+      color-mix(in srgb, var(--accent) 88%, #05070f)
     );
     animation: rt-pulse 1.4s ease-in-out infinite;
   }
