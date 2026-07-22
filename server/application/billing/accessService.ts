@@ -111,8 +111,8 @@ export class BillingAccessService {
     });
 
     // Admin — безлимит, лимиты не считаем. Но реальный billing-блок
-    // (карта, автопродление) возвращаем: админ должен видеть и тестировать
-    // привязку карты и автосписания как обычный пользователь.
+    // (способ оплаты, автопродление) возвращаем: админ должен видеть и
+    // тестировать привязку и автосписания как обычный пользователь.
     if (owner.role === 'admin') {
       return {
         freeSessionsLimit: FREE_SESSIONS_LIMIT,
@@ -121,7 +121,7 @@ export class BillingAccessService {
         trialResume: null,
         allowedSessionGoals: ALL_SESSION_GOALS,
         hasActivePaidAccess: view.active,
-        hasRecurringRenewal: view.active && Boolean(view.access?.autoRenew),
+        hasRecurringRenewal: Boolean(view.access?.autoRenew),
         unlimited: true,
         activeAccess: view.activeAccess,
         lastAccessEndedAt: view.lastAccessEndedAt,
@@ -171,7 +171,7 @@ export class BillingAccessService {
       trialResume,
       allowedSessionGoals,
       hasActivePaidAccess: view.active,
-      hasRecurringRenewal: view.active && Boolean(view.access?.autoRenew),
+      hasRecurringRenewal: Boolean(view.access?.autoRenew),
       unlimited: false,
       activeAccess: view.activeAccess,
       lastAccessEndedAt: view.lastAccessEndedAt,
@@ -294,10 +294,10 @@ function buildAccessView(
   };
 }
 
-// Информация об автопродлении: когда и сколько спишется, с какой карты,
+// Информация об автопродлении: когда и сколько спишется, каким способом,
 // была ли ошибка последнего списания. Блок возвращается ЛЮБОМУ
-// авторизованному пользователю — UI показывает «Привязать карту», когда
-// карты нет. Сумма — зафиксированная при покупке, не из каталога.
+// авторизованному пользователю — UI показывает действие привязки, когда
+// способа оплаты нет. Сумма — зафиксированная при покупке, не из каталога.
 function buildBillingInfo(params: {
   userId: string | null | undefined;
   view: AccessView;
@@ -305,7 +305,9 @@ function buildBillingInfo(params: {
 }): BillingStatusResponse['billing'] {
   if (!params.userId) return null;
   const { view } = params;
-  const renewalOn = view.active && Boolean(view.access?.autoRenew);
+  // После неуспешного списания доступ уже может истечь, но автопродление
+  // остаётся включённым до назначенного retry. Не скрываем это состояние.
+  const renewalOn = Boolean(view.access?.autoRenew);
   const activePaymentMethod =
     params.paymentMethod?.status === 'active' ? params.paymentMethod : null;
   return {

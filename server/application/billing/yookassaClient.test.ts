@@ -1,11 +1,160 @@
-import { describe, expect, it } from 'vitest';
+import { $fetch } from 'ofetch';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import * as yookassaClient from './yookassaClient';
 import {
   buildYooKassaCreatePaymentRequest,
   buildYooKassaRecurringPaymentRequest,
+  classifyYooKassaRecurringPaymentError,
+  extractYooKassaApiError,
   extractYooKassaPaymentEvent,
+  formatYooKassaApiError,
+  getYooKassaPayment,
 } from './yookassaClient';
 
+vi.mock('ofetch', () => ({
+  $fetch: vi.fn(),
+}));
+
+const mockedFetch = vi.mocked($fetch);
+
 describe('yookassaClient helpers', () => {
+  beforeEach(() => {
+    mockedFetch.mockReset();
+  });
+
+  it('exports helpers for safe YooKassa error diagnostics', () => {
+    expect(yookassaClient).toMatchObject({
+      extractYooKassaApiError: expect.any(Function),
+      formatYooKassaApiError: expect.any(Function),
+      classifyYooKassaRecurringPaymentError: expect.any(Function),
+    });
+  });
+
+  it('extracts structured YooKassa fields from an ofetch error', () => {
+    const error = extractYooKassaApiError({
+      name: 'FetchError',
+      statusCode: 400,
+      data: {
+        id: 'error-id-1',
+        code: 'invalid_request',
+        description: 'Incorrect payment method ID',
+        parameter: 'payment_method_id',
+      },
+    });
+
+    expect(error).toEqual({
+      httpStatus: 400,
+      id: 'error-id-1',
+      code: 'invalid_request',
+      description: 'Incorrect payment method ID',
+      parameter: 'payment_method_id',
+      transportFailure: null,
+    });
+  });
+
+  it('formats only safe structured diagnostics without URL or credentials', () => {
+    const error = extractYooKassaApiError({
+      name: 'FetchError',
+      statusCode: 400,
+      request:
+        'https://123456:test_secret@api.yookassa.ru/v3/payments?token=secret',
+      message:
+        '[POST] https://123456:test_secret@api.yookassa.ru/v3/payments: 400',
+      options: {
+        headers: { Authorization: 'Basic MTIzNDU2OnRlc3Rfc2VjcmV0' },
+      },
+      data: {
+        id: 'error-id-1',
+        code: 'invalid_request',
+        description:
+          'Incorrect payment method. https://api.yookassa.ru/debug Authorization: Basic MTIzNDU2OnRlc3Rfc2VjcmV0',
+        parameter: 'payment_method_id',
+      },
+    });
+
+    const message = formatYooKassaApiError(error);
+
+    expect(message).toContain('HTTP 400');
+    expect(message).toContain('id=error-id-1');
+    expect(message).toContain('code=invalid_request');
+    expect(message).toContain('parameter=payment_method_id');
+    expect(message).toContain('description=Incorrect payment method.');
+    expect(message).not.toContain('https://');
+    expect(message).not.toContain('test_secret');
+    expect(message).not.toContain('MTIzNDU2OnRlc3Rfc2VjcmV0');
+  });
+
+  it('classifies only a payment_method_id API error as an invalid saved method', () => {
+    const invalidMethod = extractYooKassaApiError({
+      statusCode: 400,
+      data: {
+        code: 'invalid_request',
+        parameter: 'payment_method_id',
+      },
+    });
+    const missingMethod = extractYooKassaApiError({
+      statusCode: 404,
+      data: {
+        code: 'not_found',
+        parameter: 'payment_method_id',
+      },
+    });
+    const missingPayment = extractYooKassaApiError({
+      statusCode: 404,
+      data: {
+        code: 'not_found',
+        parameter: 'payment_id',
+      },
+    });
+
+    expect(classifyYooKassaRecurringPaymentError(invalidMethod)).toBe(
+      'invalid_payment_method'
+    );
+    expect(classifyYooKassaRecurringPaymentError(missingMethod)).toBe(
+      'invalid_payment_method'
+    );
+    expect(classifyYooKassaRecurringPaymentError(missingPayment)).toBe(
+      'definitive_failure'
+    );
+  });
+
+  it('classifies transport errors, timeouts, and HTTP 5xx as indeterminate', () => {
+    const networkError = extractYooKassaApiError(
+      new TypeError('fetch failed')
+    );
+    const timeoutError = extractYooKassaApiError({
+      name: 'FetchError',
+      cause: { name: 'AbortError' },
+    });
+    const upstreamError = extractYooKassaApiError({
+      statusCode: 503,
+      data: { code: 'internal_server_error' },
+    });
+
+    expect(networkError.transportFailure).toBe('network');
+    expect(timeoutError.transportFailure).toBe('timeout');
+    expect(classifyYooKassaRecurringPaymentError(networkError)).toBe(
+      'indeterminate'
+    );
+    expect(classifyYooKassaRecurringPaymentError(timeoutError)).toBe(
+      'indeterminate'
+    );
+    expect(classifyYooKassaRecurringPaymentError(upstreamError)).toBe(
+      'indeterminate'
+    );
+  });
+
+  it('classifies YooKassa rate limiting as transient, not a payment refusal', () => {
+    const rateLimited = extractYooKassaApiError({
+      statusCode: 429,
+      data: { code: 'too_many_requests' },
+    });
+
+    expect(classifyYooKassaRecurringPaymentError(rateLimited)).toBe(
+      'transient'
+    );
+  });
+
   it('builds an embedded-widget payment request with idempotence key and metadata', () => {
     const request = buildYooKassaCreatePaymentRequest({
       shopId: '123456',
@@ -80,6 +229,9 @@ describe('yookassaClient helpers', () => {
       capture: true,
       payment_method_id: 'pm_saved_1',
     });
+    // Тип сохранённого способа (карта, СБП, SberPay, T-Pay, Alfa Pay)
+    // повторно не задаётся: YooKassa определяет его по payment_method_id.
+    expect(request.body).not.toHaveProperty('payment_method_data');
     expect(request.body).not.toHaveProperty('confirmation');
   });
 
@@ -107,6 +259,29 @@ describe('yookassaClient helpers', () => {
       orderId: 'order_1',
       userId: 'user_1',
       planId: 'pro_monthly',
+    });
+  });
+
+  it('extracts cancellation details from the verified YooKassa payment', async () => {
+    mockedFetch.mockResolvedValueOnce({
+      id: 'payment_canceled_1',
+      status: 'canceled',
+      paid: false,
+      amount: { value: '990.00', currency: 'RUB' },
+      cancellation_details: {
+        party: 'payment_network',
+        reason: 'insufficient_funds',
+      },
+    });
+
+    const payment = await getYooKassaPayment(
+      { shopId: '123456', secretKey: 'test_secret' },
+      'payment_canceled_1'
+    );
+
+    expect(payment).toMatchObject({
+      cancellationParty: 'payment_network',
+      cancellationReason: 'insufficient_funds',
     });
   });
 });

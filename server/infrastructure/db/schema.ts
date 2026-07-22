@@ -268,6 +268,9 @@ export const paymentOrders = pgTable(
       .notNull(),
   },
   (table) => [
+    uniqueIndex('payment_orders_provider_payment_id_uq').on(
+      table.providerPaymentId
+    ),
     index('payment_orders_user_id_created_at_idx').on(
       table.userId,
       table.createdAt,

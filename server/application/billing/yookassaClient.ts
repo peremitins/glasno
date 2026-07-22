@@ -24,11 +24,11 @@ export interface BuildYooKassaPaymentRequestInput extends YooKassaConfig {
   description: string;
   metadata: Record<string, string>;
   receipt?: YooKassaReceipt;
-  // Сохранить карту для будущих автосписаний (первый платёж подписки).
+  // Сохранить выбранный способ для будущих автосписаний (первый платёж).
   savePaymentMethod?: boolean;
 }
 
-// Server-to-server списание с сохранённой карты (автопродление).
+// Server-to-server списание с сохранённого способа оплаты (автопродление).
 // Без confirmation: YooKassa проводит платёж по payment_method_id.
 export interface BuildYooKassaRecurringPaymentInput extends YooKassaConfig {
   idempotenceKey: string;
@@ -258,8 +258,109 @@ export interface YooKassaPaymentInfo {
   paid: boolean;
   amountValue: string | null;
   currency: string | null;
+  cancellationParty?: string | null;
+  cancellationReason?: string | null;
   metadata: Record<string, unknown>;
   paymentMethod: YooKassaPaymentMethodPresentation | null;
+}
+
+export interface YooKassaApiErrorInfo {
+  httpStatus: number | null;
+  id: string | null;
+  code: string | null;
+  description: string | null;
+  parameter: string | null;
+  transportFailure: 'network' | 'timeout' | null;
+}
+
+export type YooKassaRecurringPaymentErrorKind =
+  | 'invalid_payment_method'
+  | 'transient'
+  | 'indeterminate'
+  | 'definitive_failure';
+
+export function extractYooKassaApiError(
+  error: unknown
+): YooKassaApiErrorInfo {
+  const errorRecord = asRecord(error);
+  const responseRecord = asRecord(errorRecord?.response);
+  const dataRecord =
+    asRecord(errorRecord?.data) ?? asRecord(responseRecord?._data);
+  const httpStatus =
+    asHttpStatus(errorRecord?.statusCode) ??
+    asHttpStatus(errorRecord?.status) ??
+    asHttpStatus(responseRecord?.status);
+
+  return {
+    httpStatus,
+    id: asString(dataRecord?.id),
+    code: asString(dataRecord?.code),
+    description: asString(dataRecord?.description),
+    parameter: asString(dataRecord?.parameter),
+    transportFailure:
+      httpStatus === null && error !== null && error !== undefined
+        ? isTimeoutError(error)
+          ? 'timeout'
+          : 'network'
+        : null,
+  };
+}
+
+export function formatYooKassaApiError(error: YooKassaApiErrorInfo): string {
+  const details: string[] = [];
+  if (error.httpStatus !== null) {
+    details.push(`HTTP ${error.httpStatus}`);
+  }
+  if (error.transportFailure) {
+    details.push(`transport=${error.transportFailure}`);
+  }
+  if (error.id) {
+    details.push(`id=${sanitizeDiagnosticValue(error.id)}`);
+  }
+  if (error.code) {
+    details.push(`code=${sanitizeDiagnosticValue(error.code)}`);
+  }
+  if (error.parameter) {
+    details.push(`parameter=${sanitizeDiagnosticValue(error.parameter)}`);
+  }
+  if (error.description) {
+    details.push(
+      `description=${sanitizeDiagnosticValue(error.description)}`
+    );
+  }
+
+  return details.length > 0
+    ? `YooKassa API error: ${details.join('; ')}`
+    : 'YooKassa API error';
+}
+
+export function classifyYooKassaRecurringPaymentError(
+  error: YooKassaApiErrorInfo
+): YooKassaRecurringPaymentErrorKind {
+  // 429 означает ограничение частоты запросов, а не отказ платёжного метода.
+  // Повторяем тот же запрос позже, не расходуя бизнес-попытку списания.
+  if (error.httpStatus === 429 || error.code === 'too_many_requests') {
+    return 'transient';
+  }
+
+  if (
+    error.transportFailure !== null ||
+    error.httpStatus === 408 ||
+    (error.httpStatus !== null && error.httpStatus >= 500)
+  ) {
+    return 'indeterminate';
+  }
+
+  if (
+    error.parameter === 'payment_method_id' &&
+    (error.httpStatus === 400 ||
+      error.httpStatus === 404 ||
+      error.code === 'not_found')
+  ) {
+    return 'invalid_payment_method';
+  }
+
+  return 'definitive_failure';
 }
 
 // Обратный запрос статуса платежа. Используется для ВЕРИФИКАЦИИ вебхука:
@@ -273,6 +374,10 @@ export async function getYooKassaPayment(
     status: string;
     paid?: boolean;
     amount?: { value?: string; currency?: string };
+    cancellation_details?: {
+      party?: string;
+      reason?: string;
+    };
     metadata?: Record<string, unknown>;
     payment_method?: {
       id?: string;
@@ -302,6 +407,8 @@ export async function getYooKassaPayment(
     paid: response.paid === true,
     amountValue: response.amount?.value ?? null,
     currency: response.amount?.currency ?? null,
+    cancellationParty: asString(response.cancellation_details?.party),
+    cancellationReason: asString(response.cancellation_details?.reason),
     metadata: response.metadata ?? {},
     paymentMethod: extractYooKassaPaymentMethod(response.payment_method),
   };
@@ -389,3 +496,53 @@ function asString(value: unknown): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null;
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === 'object' && value !== null
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function asHttpStatus(value: unknown): number | null {
+  return typeof value === 'number' &&
+    Number.isInteger(value) &&
+    value >= 100 &&
+    value <= 599
+    ? value
+    : null;
+}
+
+function isTimeoutError(error: unknown): boolean {
+  let current = asRecord(error);
+  for (let depth = 0; current && depth < 4; depth += 1) {
+    const signals = [current.name, current.code, current.message];
+    if (
+      signals.some(
+        (signal) =>
+          typeof signal === 'string' &&
+          /(?:timeout|timed out|abort)/iu.test(signal)
+      )
+    ) {
+      return true;
+    }
+    current = asRecord(current.cause);
+  }
+  return false;
+}
+
+function sanitizeDiagnosticValue(value: string): string {
+  return value
+    .replace(/\b(?:https?|ftp):\/\/\S+/giu, '[URL удалён]')
+    .replace(/\bwww\.\S+/giu, '[URL удалён]')
+    .replace(
+      /\bAuthorization\s*:\s*(?:Basic|Bearer)\s+\S+/giu,
+      'Authorization: [учётные данные удалены]'
+    )
+    .replace(
+      /\b(?:Basic|Bearer)\s+\S+/giu,
+      '[учётные данные удалены]'
+    )
+    .replace(/\p{Cc}+/gu, ' ')
+    .replace(/\s+/gu, ' ')
+    .trim()
+    .slice(0, 500);
+}

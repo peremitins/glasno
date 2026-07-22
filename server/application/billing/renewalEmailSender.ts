@@ -25,7 +25,7 @@ export async function sendRenewalNoticeEmail(input: {
   const subject = `Гласно: доступ продлится ${date}`;
   const text = `Доступ продлится автоматически
 
-${date} мы продлим «${input.planName}» и спишем ${amount} ₽ с привязанной карты.
+${date} мы продлим «${input.planName}» и спишем ${amount} ₽ с сохранённого способа оплаты.
 
 Интервью, разборы и PDF-отчёты останутся доступны без перерыва. Делать ничего не нужно.
 
@@ -33,7 +33,7 @@ ${date} мы продлим «${input.planName}» и спишем ${amount} ₽ 
   const html = renewalEmailHtml({
     title: 'Доступ продлится автоматически',
     paragraphs: [
-      `${escapeHtml(date)} мы продлим «${escapeHtml(input.planName)}» и спишем <strong style="color:#191b2e;">${escapeHtml(amount)} ₽</strong> с привязанной карты.`,
+      `${escapeHtml(date)} мы продлим «${escapeHtml(input.planName)}» и спишем <strong style="color:#191b2e;">${escapeHtml(amount)} ₽</strong> с сохранённого способа оплаты.`,
       'Интервью, разборы и PDF-отчёты останутся доступны без перерыва. Делать ничего не нужно.',
     ],
     ctaLabel: 'Открыть Гласно',
@@ -59,7 +59,7 @@ export async function sendRenewalChargedEmail(input: {
   const subject = `Гласно: доступ продлён до ${until}`;
   const text = `Доступ продлён
 
-Мы продлили «${input.planName}» и списали ${amount} ₽ с привязанной карты. Доступ активен до ${until}.
+Мы продлили «${input.planName}» и списали ${amount} ₽ с сохранённого способа оплаты. Доступ активен до ${until}.
 
 Фискальный чек придёт отдельным письмом от платёжного сервиса.
 
@@ -67,7 +67,7 @@ export async function sendRenewalChargedEmail(input: {
   const html = renewalEmailHtml({
     title: 'Доступ продлён',
     paragraphs: [
-      `Мы продлили «${escapeHtml(input.planName)}» и списали <strong style="color:#191b2e;">${escapeHtml(amount)} ₽</strong> с привязанной карты.`,
+      `Мы продлили «${escapeHtml(input.planName)}» и списали <strong style="color:#191b2e;">${escapeHtml(amount)} ₽</strong> с сохранённого способа оплаты.`,
       `Доступ активен до <strong style="color:#191b2e;">${escapeHtml(until)}</strong>.`,
     ],
     ctaLabel: 'Продолжить тренировки',
@@ -79,7 +79,7 @@ export async function sendRenewalChargedEmail(input: {
 }
 
 // Финальная неудача автосписания: автопродление выключено, пользователю
-// нужен явный CTA обновить карту и продлить вручную.
+// нужен явный CTA обновить способ оплаты и продлить вручную.
 export async function sendRenewalFailedEmail(input: {
   to: string;
   planName: string;
@@ -90,18 +90,47 @@ export async function sendRenewalFailedEmail(input: {
   const subject = 'Гласно: не удалось продлить доступ';
   const text = `Не удалось продлить доступ в Гласно
 
-Мы не смогли списать ${amount} ₽ за продление «${input.planName}» с привязанной карты, поэтому автопродление выключено. Доступ сохранится до конца оплаченного срока.
+Мы не смогли списать ${amount} ₽ за продление «${input.planName}» с сохранённого способа оплаты, поэтому автопродление выключено. Доступ сохранится до конца оплаченного срока.
 
-Чтобы продолжить тренировки без перерыва, обновите карту и продлите доступ: ${input.pricingUrl}`;
+Чтобы продолжить тренировки без перерыва, обновите способ оплаты и продлите доступ: ${input.pricingUrl}`;
   const html = renewalEmailHtml({
     title: 'Не удалось продлить доступ',
     paragraphs: [
-      `Мы не смогли списать <strong style="color:#191b2e;">${escapeHtml(amount)} ₽</strong> за продление «${escapeHtml(input.planName)}» с привязанной карты, поэтому автопродление выключено.`,
+      `Мы не смогли списать <strong style="color:#191b2e;">${escapeHtml(amount)} ₽</strong> за продление «${escapeHtml(input.planName)}» с сохранённого способа оплаты, поэтому автопродление выключено.`,
       'Доступ сохранится до конца оплаченного срока.',
-      'Чтобы продолжить тренировки без перерыва, обновите карту и продлите доступ.',
+      'Чтобы продолжить тренировки без перерыва, обновите способ оплаты и продлите доступ.',
     ],
     ctaLabel: 'Продлить доступ',
     ctaUrl: input.pricingUrl,
+  });
+  return await sendSmtpEmail({ to: input.to, subject, text, html });
+}
+
+// Исход запроса к YooKassa неизвестен: предлагать ещё одну оплату опасно.
+// Ведём пользователя в профиль к форме поддержки, а заказ оставляем в
+// карантине до ручной сверки.
+export async function sendRenewalManualReviewEmail(input: {
+  to: string;
+  planName: string;
+  amountRub: number;
+  profileUrl: string;
+}): Promise<boolean> {
+  const amount = PRICE_FORMAT.format(input.amountRub);
+  const subject = 'Гласно: нужно проверить автосписание';
+  const text = `Нужно проверить автосписание
+
+Мы пока не смогли подтвердить, прошло ли списание ${amount} ₽ за продление «${input.planName}».
+
+Чтобы не списать деньги повторно, мы остановили автопродление и временно закрыли новую покупку полного доступа. Напишите в поддержку в профиле — мы сверим платёж: ${input.profileUrl}`;
+  const html = renewalEmailHtml({
+    title: 'Нужно проверить автосписание',
+    paragraphs: [
+      `Мы пока не смогли подтвердить, прошло ли списание <strong style="color:#191b2e;">${escapeHtml(amount)} ₽</strong> за продление «${escapeHtml(input.planName)}».`,
+      'Чтобы не списать деньги повторно, мы остановили автопродление и временно закрыли новую покупку полного доступа.',
+      'Напишите в поддержку в профиле — мы сверим платёж.',
+    ],
+    ctaLabel: 'Открыть профиль',
+    ctaUrl: input.profileUrl,
   });
   return await sendSmtpEmail({ to: input.to, subject, text, html });
 }
