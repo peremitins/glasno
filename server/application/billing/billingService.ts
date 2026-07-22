@@ -284,13 +284,17 @@ export class BillingService {
         return true;
       })
     );
-    const failed = results.filter((result) => result.status === 'rejected').length;
-    if (failed > 0) {
-      console.warn('[billing] pending payment sweep completed with errors', {
-        checked: orders.length,
-        failed,
+    // Причина каждого падения обязана попадать в логи: молчаливый счётчик
+    // failed уже дважды прятал прод-инциденты (см. 42P18 в claim 22.07).
+    let failed = 0;
+    results.forEach((result, index) => {
+      if (result.status !== 'rejected') return;
+      failed += 1;
+      console.error('[billing] pending payment reconciliation failed', {
+        orderId: orders[index]?.id,
+        error: result.reason,
       });
-    }
+    });
     return {
       checked: orders.length,
       reconciled: results.filter(

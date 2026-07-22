@@ -774,7 +774,9 @@ export class DrizzleBillingRepository implements BillingRepository {
     const rows = await this.db
       .update(schema.paymentOrders)
       .set({
-        metadata: sql`coalesce(${schema.paymentOrders.metadata}, '{}'::jsonb) || jsonb_build_object('reconciliationLeaseUntil', ${params.leaseUntil.toISOString()})`,
+        // ::text обязателен: jsonb_build_object принимает "any", и без каста
+        // Postgres не может вывести тип параметра (42P18) в prepared statement.
+        metadata: sql`coalesce(${schema.paymentOrders.metadata}, '{}'::jsonb) || jsonb_build_object('reconciliationLeaseUntil', ${params.leaseUntil.toISOString()}::text)`,
       })
       .where(
         and(
@@ -1593,7 +1595,7 @@ export class DrizzleBillingRepository implements BillingRepository {
       .update(schema.userSubscriptions)
       .set({
         lastChargeAttemptAt: now,
-        chargeAttempts: sql`least(${schema.userSubscriptions.chargeAttempts} + 1, ${params.maxAttempts})`,
+        chargeAttempts: sql`least(${schema.userSubscriptions.chargeAttempts} + 1, ${params.maxAttempts}::int)`,
         updatedAt: now,
       })
       .where(
@@ -1656,7 +1658,7 @@ export class DrizzleBillingRepository implements BillingRepository {
               ? {
                   nextChargeAt:
                     params.deferRetryUntilPeriodEnd && params.retryAt
-                      ? sql`greatest(${schema.userSubscriptions.currentPeriodEnd}, ${params.retryAt})`
+                      ? sql`greatest(${schema.userSubscriptions.currentPeriodEnd}, ${params.retryAt}::timestamptz)`
                       : params.retryAt,
                   // Дата повтора уже ограничивает выборку. Снимаем общий
                   // 24-часовой троттлинг, чтобы короткий retry сработал вовремя.
