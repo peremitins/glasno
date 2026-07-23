@@ -181,18 +181,27 @@ export interface YooKassaPaymentMethodResponse {
   confirmation?: {
     type?: string;
     confirmation_url?: string;
+    // Привязка счёта СБП подтверждается ссылкой НСПК: на мобильном она
+    // открывает выбор банка, на десктопе её показывают QR-кодом.
+    confirmation_data?: string;
   };
 }
 
-// Привязка карты БЕЗ платежа (по образцу Mentala): YooKassa возвращает
-// confirmation_url, пользователь подтверждает карту на стороне банка.
+export type YooKassaBindablePaymentMethodType = 'bank_card' | 'sbp';
+
+// Привязка способа оплаты БЕЗ платежа («привязка на нулевую сумму»).
+// Единственный способ получить идентификатор, пригодный для автосписаний:
+// payment_method.id из обычного платежа таким идентификатором может НЕ быть
+// (по СБП YooKassa возвращает там id самого платежа).
 // Требует включённую опцию «Сохранение платёжных методов» в ЛК YooKassa.
 export async function createYooKassaPaymentMethodBinding(params: {
   shopId: string;
   secretKey: string;
   idempotenceKey: string;
   returnUrl: string;
+  methodType?: YooKassaBindablePaymentMethodType;
 }): Promise<YooKassaPaymentMethodResponse> {
+  const methodType = params.methodType ?? 'bank_card';
   return await $fetch<YooKassaPaymentMethodResponse>(
     'https://api.yookassa.ru/v3/payment_methods',
     {
@@ -200,14 +209,19 @@ export async function createYooKassaPaymentMethodBinding(params: {
       timeout: 15_000,
       headers: yookassaHeaders(params, params.idempotenceKey),
       body: {
-        type: 'bank_card',
-        confirmation: {
-          type: 'redirect',
-          return_url: params.returnUrl,
-        },
+        type: methodType,
+        confirmation:
+          methodType === 'sbp'
+            ? { type: 'qr', return_url: params.returnUrl }
+            : { type: 'redirect', return_url: params.returnUrl },
       },
     }
   );
+}
+
+export function isYooKassaNotFound(error: unknown): boolean {
+  const info = extractYooKassaApiError(error);
+  return info.httpStatus === 404 || info.code === 'not_found';
 }
 
 export async function getYooKassaPaymentMethod(

@@ -58,6 +58,8 @@ interface GrantAccessPaymentMethod {
   cardLast4?: string | null;
   cardExpiryMonth?: string | null;
   cardExpiryYear?: string | null;
+  // 'pending' — провайдер не подтвердил пригодность способа для автосписаний.
+  status?: 'active' | 'pending';
 }
 
 type GrantAccessSource =
@@ -1109,6 +1111,7 @@ export class DrizzleBillingRepository implements BillingRepository {
       cardLast4?: string | null;
       cardExpiryMonth?: string | null;
       cardExpiryYear?: string | null;
+      status?: 'active' | 'pending';
     } | null;
     now?: Date;
   }): Promise<FulfillPaidOrderResult> {
@@ -1322,6 +1325,7 @@ export class DrizzleBillingRepository implements BillingRepository {
   async savePendingPaymentMethod(params: {
     userId: string;
     providerPaymentMethodId: string;
+    methodType?: string | null;
   }): Promise<void> {
     const now = new Date();
     await this.db.transaction(async (tx) => {
@@ -1337,6 +1341,10 @@ export class DrizzleBillingRepository implements BillingRepository {
           provider: 'yookassa',
           providerPaymentMethodId: params.providerPaymentMethodId,
           status: 'pending',
+          methodType: params.methodType ?? null,
+          // createdAt задаёт окно ожидания подтверждения привязки, поэтому
+          // новая привязка начинает отсчёт заново.
+          createdAt: now,
           updatedAt: now,
         })
         .onConflictDoUpdate({
@@ -1344,12 +1352,13 @@ export class DrizzleBillingRepository implements BillingRepository {
           set: {
             providerPaymentMethodId: params.providerPaymentMethodId,
             status: 'pending',
-            methodType: null,
+            methodType: params.methodType ?? null,
             title: null,
             cardBrand: null,
             cardLast4: null,
             cardExpiryMonth: null,
             cardExpiryYear: null,
+            createdAt: now,
             updatedAt: now,
           },
         });
@@ -2054,9 +2063,15 @@ async function grantPaidAccess(
     // Автопродление может включить только собственная покупка получателя.
     // Подарочный платёж принципиально не читает и не меняет его способ
     // оплаты или настройки будущих списаний.
+    // Списывать можно только с подтверждённого способа. Неподтверждённый
+    // (pending) автопродление не включает: иначе мы обещали бы продление,
+    // которое провайдер исполнить не сможет.
+    const savedMethodChargeable =
+      savedPaymentMethod !== null &&
+      (savedPaymentMethod.status ?? 'active') === 'active';
     const hasChargeableMethod =
       renewalConsentActive &&
-      (Boolean(savedPaymentMethod) || Boolean(currentPaymentMethod));
+      (savedMethodChargeable || Boolean(currentPaymentMethod));
     // Повторная покупка со снятой галочкой не выключает уже включённое
     // автопродление — выключение только явным действием пользователя.
     const autoRenewOn =
@@ -2150,32 +2165,38 @@ async function grantPaidAccess(
     );
 
   if (savedPaymentMethod) {
+    // Способ, пригодность которого провайдер не подтвердил, сохраняем как
+    // pending: он виден пользователю как «проверяется», но автопродление
+    // на него не опирается.
+    const savedStatus = savedPaymentMethod.status ?? 'active';
     await tx
       .insert(schema.userPaymentMethods)
       .values({
         userId: beneficiaryUserId,
         provider: 'yookassa',
         providerPaymentMethodId: savedPaymentMethod.providerPaymentMethodId,
-        status: 'active',
+        status: savedStatus,
         methodType: savedPaymentMethod.methodType ?? null,
         title: savedPaymentMethod.title ?? null,
         cardBrand: savedPaymentMethod.cardBrand ?? null,
         cardLast4: savedPaymentMethod.cardLast4 ?? null,
         cardExpiryMonth: savedPaymentMethod.cardExpiryMonth ?? null,
         cardExpiryYear: savedPaymentMethod.cardExpiryYear ?? null,
+        createdAt: now,
         updatedAt: now,
       })
       .onConflictDoUpdate({
         target: schema.userPaymentMethods.userId,
         set: {
           providerPaymentMethodId: savedPaymentMethod.providerPaymentMethodId,
-          status: 'active',
+          status: savedStatus,
           methodType: savedPaymentMethod.methodType ?? null,
           title: savedPaymentMethod.title ?? null,
           cardBrand: savedPaymentMethod.cardBrand ?? null,
           cardLast4: savedPaymentMethod.cardLast4 ?? null,
           cardExpiryMonth: savedPaymentMethod.cardExpiryMonth ?? null,
           cardExpiryYear: savedPaymentMethod.cardExpiryYear ?? null,
+          createdAt: now,
           updatedAt: now,
         },
       });

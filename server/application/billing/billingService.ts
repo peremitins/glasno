@@ -40,9 +40,11 @@ import {
   formatYooKassaApiError,
   getYooKassaConfirmationToken,
   getYooKassaPayment,
+  isYooKassaNotFound,
   listYooKassaPayments,
   getYooKassaPaymentMethod,
   type YooKassaConfig,
+  type YooKassaBindablePaymentMethodType,
 } from './yookassaClient';
 import { GiftNotificationService } from './giftNotificationService';
 import { sendGiftNotificationEmail } from './giftEmailSender';
@@ -80,6 +82,10 @@ const PROVIDERLESS_PAYMENT_SEARCH_SKEW_MS = 15 * 60 * 1000;
 // свежесозданный платёж мог ещё не попасть в выдачу списка.
 const PROVIDERLESS_PAYMENT_ABSENCE_MIN_AGE_MS = 30 * 60 * 1000;
 const PROVIDERLESS_PAYMENT_SEARCH_MAX_PAGES = 25;
+// Сколько ждём, пока способ оплаты «дозреет» у провайдера. У карты объект
+// может появиться с задержкой; фантомный id из платежа по СБП не появится
+// никогда — после этого окна pending-запись удаляется как мусор.
+const PENDING_PAYMENT_METHOD_GRACE_MS = 24 * 60 * 60 * 1000;
 
 const PERMANENT_PAYMENT_METHOD_CANCELLATION_REASONS = new Set([
   'card_expired',
@@ -1095,8 +1101,12 @@ export class BillingService {
   // payment_method в YooKassa, сохраняем pending-запись и отправляем
   // пользователя на страницу подтверждения банка.
   async startPaymentMethodBinding(
-    userId: string | null | undefined
-  ): Promise<{ confirmationUrl: string }> {
+    userId: string | null | undefined,
+    methodType: YooKassaBindablePaymentMethodType = 'bank_card'
+  ): Promise<{
+    methodType: YooKassaBindablePaymentMethodType;
+    confirmationUrl: string;
+  }> {
     if (!userId) {
       throw apiError('E_AUTH', 'Войдите в профиль');
     }
@@ -1110,30 +1120,48 @@ export class BillingService {
         ...this.deps.config.yookassa,
         idempotenceKey: `bind-${userId}-${Date.now()}`,
         returnUrl: buildBindingReturnUrl(this.appUrl),
+        methodType,
       });
     } catch (err) {
+      // Без диагностики провайдера отказ выглядит одинаково для «магазин не
+      // умеет автоплатежи» и «этот способ недоступен именно здесь».
+      console.error('[billing] payment method binding failed', {
+        methodType,
+        diagnostic: formatYooKassaApiError(extractYooKassaApiError(err)),
+      });
       if (isYooKassaRecurringPaymentsUnavailable(err)) {
         throw apiError(
           'E_FORBIDDEN',
-          'Автопродление ещё не подключено для магазина. Обратитесь в поддержку YooKassa.'
+          methodType === 'sbp'
+            ? 'Автопродление по СБП недоступно для этого магазина YooKassa. Привяжите карту или напишите в поддержку.'
+            : 'Автопродление ещё не подключено для магазина. Обратитесь в поддержку YooKassa.'
         );
       }
-      throw apiError('E_UPSTREAM', 'Не удалось начать привязку карты в YooKassa');
+      throw apiError(
+        'E_UPSTREAM',
+        'Не удалось начать привязку способа оплаты в YooKassa'
+      );
     }
-    const confirmationUrl = binding.confirmation?.confirmation_url;
+    // Карту подтверждают редиректом на страницу банка, счёт СБП — ссылкой
+    // НСПК: на телефоне она открывает выбор банка, на десктопе показывается
+    // QR-кодом. Для приложения это одинаковый «адрес подтверждения».
+    const confirmationUrl =
+      binding.confirmation?.confirmation_url ??
+      binding.confirmation?.confirmation_data;
     if (!binding.id || !confirmationUrl) {
       throw apiError(
         'E_UPSTREAM',
-        'YooKassa не вернула ссылку для привязки карты. Проверьте, что для магазина включено сохранение платёжных методов.'
+        'YooKassa не вернула ссылку для привязки способа оплаты. Проверьте, что для магазина включено сохранение платёжных методов.'
       );
     }
 
     await this.deps.repository.savePendingPaymentMethod({
       userId,
       providerPaymentMethodId: binding.id,
+      methodType,
     });
 
-    return { confirmationUrl };
+    return { methodType, confirmationUrl };
   }
 
   // Синхронизация pending-привязки (вызывается опортунистически из
@@ -1146,10 +1174,28 @@ export class BillingService {
     if (!method || method.status !== 'pending') return;
 
     this.requireYooKassaConfig();
-    const remote = await getYooKassaPaymentMethod(
-      this.deps.config.yookassa,
-      method.providerPaymentMethodId
-    );
+    let remote: Awaited<ReturnType<typeof getYooKassaPaymentMethod>>;
+    try {
+      remote = await getYooKassaPaymentMethod(
+        this.deps.config.yookassa,
+        method.providerPaymentMethodId
+      );
+    } catch (error) {
+      if (!isYooKassaNotFound(error)) throw error;
+      // Способа с таким идентификатором у провайдера нет. У карты он может
+      // появиться с задержкой, поэтому даём окно на дозревание; после него
+      // запись — мусор (так выглядит фантомный id из платежа по СБП).
+      if (
+        Date.now() - method.createdAt.getTime() >=
+        PENDING_PAYMENT_METHOD_GRACE_MS
+      ) {
+        await this.deps.repository.deletePaymentMethodIfMatches({
+          userId,
+          providerPaymentMethodId: method.providerPaymentMethodId,
+        });
+      }
+      return;
+    }
 
     if (remote.saved === true || remote.status === 'active') {
       await this.deps.repository.activatePaymentMethod({
@@ -2215,6 +2261,33 @@ export class BillingService {
     return true;
   }
 
+  // Пригоден ли сохранённый провайдером способ для автосписаний. При сетевой
+  // ошибке не гадаем: оставляем pending, следующая синхронизация перепроверит.
+  private async resolveSavedPaymentMethodStatus(
+    providerPaymentMethodId: string
+  ): Promise<'active' | 'pending'> {
+    try {
+      const method = await getYooKassaPaymentMethod(
+        this.deps.config.yookassa,
+        providerPaymentMethodId
+      );
+      return method.status === 'active' || method.saved === true
+        ? 'active'
+        : 'pending';
+    } catch (error) {
+      // 404 — способа не существует (так выглядит фантомный id по СБП).
+      // Сетевую ошибку тоже не считаем подтверждением: в обоих случаях
+      // способ остаётся pending и будет перепроверен синхронизацией.
+      if (!isYooKassaNotFound(error)) {
+        console.error('[billing] payment method verification failed', {
+          providerPaymentMethodId,
+          error,
+        });
+      }
+      return 'pending';
+    }
+  }
+
   private async isRenewalPaymentMethodCurrent(
     order: PaymentOrderRecord
   ): Promise<boolean> {
@@ -2289,7 +2362,16 @@ export class BillingService {
         mergeMetadata: true,
       });
     }
-    if (!(await this.isRenewalPaymentMethodCurrent(params.order))) {
+    // Guard защищает от того, что запоздалая ошибка старого способа затрёт
+    // только что перепривязанный новый. Но если негодный способ удалили мы
+    // сами парой строк выше, guard сработал бы на собственное удаление и
+    // проглотил бы обработку отказа целиком: автопродление осталось бы
+    // включённым, без ошибки, письма, лога и алерта. В этой ветке гарантию
+    // даёт CAS requireNoActivePaymentMethod внутри handleChargeFailure.
+    if (
+      !invalidCurrentPaymentMethod &&
+      !(await this.isRenewalPaymentMethodCurrent(params.order))
+    ) {
       if (!retryableWithoutAttempt) {
         await this.deps.repository.markRenewalFailureHandled({
           orderId: params.order.id,
@@ -2501,6 +2583,13 @@ export class BillingService {
               cardLast4: verified.paymentMethod.cardLast4,
               cardExpiryMonth: verified.paymentMethod.cardExpiryMonth,
               cardExpiryYear: verified.paymentMethod.cardExpiryYear,
+              // Флаг saved у платежа — обещание, а не факт. Способ считается
+              // пригодным для автосписаний только после подтверждения в
+              // /v3/payment_methods; иначе он остаётся pending и не включает
+              // автопродление, которое мы не смогли бы исполнить.
+              status: (await this.resolveSavedPaymentMethodStatus(
+                verified.paymentMethod.id
+              )) satisfies 'active' | 'pending',
             }
           : null;
       const fulfillResult = await this.deps.repository.fulfillPaidOrder({
