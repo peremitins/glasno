@@ -173,6 +173,9 @@ function createRepository(order = createOrder()) {
     findLatestPaymentOrderByUserId: vi.fn().mockResolvedValue(order),
     updatePaymentOrder: vi.fn().mockResolvedValue(order),
     findPaymentMethodByUserId: vi.fn().mockResolvedValue(null),
+    findPaymentMethodByProviderPaymentMethodId: vi
+      .fn()
+      .mockResolvedValue(null),
     savePendingPaymentMethod: vi.fn().mockResolvedValue(undefined),
     activatePaymentMethod: vi.fn().mockResolvedValue(true),
     deletePaymentMethodByUserId: vi.fn().mockResolvedValue(undefined),
@@ -2118,8 +2121,11 @@ describe('BillingService saved payment method verification', () => {
     vi.setSystemTime(new Date('2026-07-01T10:00:00.000Z'));
   });
 
-  it('stores the method as active only when the provider confirms it', async () => {
+  it('does not save a payment method the payer chose not to save', async () => {
+    // saved=false — плательщик не согласился сохранить способ (или банк не
+    // поддерживает автоплатежи). Автопродление на такой способ не заводим.
     const repository = createRepository();
+    mockedGetYooKassaPaymentMethod.mockReset();
     mockedGetYooKassaPayment.mockResolvedValue({
       id: 'payment_1',
       status: 'succeeded',
@@ -2129,7 +2135,7 @@ describe('BillingService saved payment method verification', () => {
       metadata: { orderId: 'order_1' },
       paymentMethod: {
         id: 'pm_1',
-        saved: true,
+        saved: false,
         methodType: 'bank_card',
         title: 'Bank card *1111',
         cardBrand: 'Visa',
@@ -2137,12 +2143,6 @@ describe('BillingService saved payment method verification', () => {
         cardExpiryMonth: '12',
         cardExpiryYear: '30',
       },
-    });
-    mockedGetYooKassaPaymentMethod.mockResolvedValue({
-      id: 'pm_1',
-      type: 'bank_card',
-      saved: true,
-      status: 'active',
     });
     const service = createService(repository);
 
@@ -2152,20 +2152,17 @@ describe('BillingService saved payment method verification', () => {
     });
 
     expect(repository.fulfillPaidOrder).toHaveBeenCalledWith(
-      expect.objectContaining({
-        paymentMethod: expect.objectContaining({
-          providerPaymentMethodId: 'pm_1',
-          status: 'active',
-        }),
-      })
+      expect.objectContaining({ paymentMethod: null })
     );
   });
 
-  it('never trusts saved=true when the provider has no such payment method', async () => {
-    // Прод-инцидент 23.07: по СБП YooKassa вернула saved=true с id самого
-    // платежа. Такой способ не существует, автосписание им невозможно —
-    // сохраняем его как pending, автопродление на него не опирается.
+  it('does not save an SBP method whose id equals the payment id', async () => {
+    // По СБП привязка счёта асинхронная: в платеже YooKassa возвращает id
+    // самой операции (равный id платежа), а не идентификатор способа —
+    // автосписание им невозможно. Такой способ из платежа не заводим;
+    // настоящий счёт приходит событием payment_method.active.
     const repository = createRepository();
+    mockedGetYooKassaPaymentMethod.mockReset();
     mockedGetYooKassaPayment.mockResolvedValue({
       id: 'payment_1',
       status: 'succeeded',
@@ -2184,9 +2181,44 @@ describe('BillingService saved payment method verification', () => {
         cardExpiryYear: null,
       },
     });
-    mockedGetYooKassaPaymentMethod.mockRejectedValue({
-      statusCode: 404,
-      data: { code: 'not_found', parameter: 'payment_method_id' },
+    const service = createService(repository);
+
+    await service.reconcileYooKassaCheckout({
+      userId: 'user_1',
+      orderId: 'order_1',
+    });
+
+    expect(repository.fulfillPaidOrder).toHaveBeenCalledWith(
+      expect.objectContaining({ paymentMethod: null })
+    );
+    // Пригодность способа не должна зависеть от отдельного запроса к провайдеру.
+    expect(mockedGetYooKassaPaymentMethod).not.toHaveBeenCalled();
+  });
+
+  it('stores a card saved during payment without a second provider lookup', async () => {
+    // У карты payment_method.id — самостоятельный идентификатор способа,
+    // отличный от id платежа. Флаг saved=true в самом платеже — достаточное
+    // подтверждение (док «Автоплатежи. Основы»); отдельный GET не нужен и не
+    // должен блокировать включение автопродления.
+    const repository = createRepository();
+    mockedGetYooKassaPaymentMethod.mockReset();
+    mockedGetYooKassaPayment.mockResolvedValue({
+      id: 'payment_1',
+      status: 'succeeded',
+      paid: true,
+      amountValue: '1190.00',
+      currency: 'RUB',
+      metadata: { orderId: 'order_1' },
+      paymentMethod: {
+        id: 'pm_card_1',
+        saved: true,
+        methodType: 'bank_card',
+        title: 'Bank card *1111',
+        cardBrand: 'Visa',
+        cardLast4: '1111',
+        cardExpiryMonth: '12',
+        cardExpiryYear: '30',
+      },
     });
     const service = createService(repository);
 
@@ -2198,48 +2230,12 @@ describe('BillingService saved payment method verification', () => {
     expect(repository.fulfillPaidOrder).toHaveBeenCalledWith(
       expect.objectContaining({
         paymentMethod: expect.objectContaining({
-          providerPaymentMethodId: 'payment_1',
-          status: 'pending',
+          providerPaymentMethodId: 'pm_card_1',
+          status: 'active',
         }),
       })
     );
-  });
-
-  it('keeps an unverifiable method pending when the provider is unreachable', async () => {
-    const repository = createRepository();
-    mockedGetYooKassaPayment.mockResolvedValue({
-      id: 'payment_1',
-      status: 'succeeded',
-      paid: true,
-      amountValue: '1190.00',
-      currency: 'RUB',
-      metadata: { orderId: 'order_1' },
-      paymentMethod: {
-        id: 'pm_1',
-        saved: true,
-        methodType: 'bank_card',
-        title: null,
-        cardBrand: null,
-        cardLast4: null,
-        cardExpiryMonth: null,
-        cardExpiryYear: null,
-      },
-    });
-    mockedGetYooKassaPaymentMethod.mockRejectedValue({ statusCode: 503 });
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const service = createService(repository);
-
-    await service.reconcileYooKassaCheckout({
-      userId: 'user_1',
-      orderId: 'order_1',
-    });
-    errorSpy.mockRestore();
-
-    expect(repository.fulfillPaidOrder).toHaveBeenCalledWith(
-      expect.objectContaining({
-        paymentMethod: expect.objectContaining({ status: 'pending' }),
-      })
-    );
+    expect(mockedGetYooKassaPaymentMethod).not.toHaveBeenCalled();
   });
 
   it('drops a phantom pending method only after the grace window', async () => {
@@ -2326,6 +2322,52 @@ describe('BillingService saved payment method verification', () => {
       providerPaymentMethodId: 'sbp_binding_1',
       methodType: 'sbp',
     });
+  });
+
+  it('activates a pending SBP binding on a payment_method.active webhook', async () => {
+    // Привязка счёта СБП подтверждается асинхронно: банк сообщает YooKassa,
+    // а та шлёт payment_method.active. По этому событию активируем pending без
+    // ожидания, пока пользователь снова откроет страницу профиля.
+    const repository = createRepository();
+    repository.findPaymentOrderById.mockResolvedValue(null);
+    repository.findPaymentOrderByProviderPaymentId.mockResolvedValue(null);
+    repository.findPaymentMethodByProviderPaymentMethodId.mockResolvedValue({
+      ...activePaymentMethod,
+      status: 'pending',
+      methodType: 'sbp',
+      providerPaymentMethodId: 'sbp_binding_1',
+    });
+    mockedGetYooKassaPaymentMethod.mockResolvedValue({
+      id: 'sbp_binding_1',
+      type: 'sbp',
+      saved: true,
+      status: 'active',
+    });
+    const service = createService(repository);
+
+    await service.handleYooKassaWebhook({
+      type: 'notification',
+      event: 'payment_method.active',
+      object: {
+        id: 'sbp_binding_1',
+        type: 'sbp',
+        status: 'active',
+        saved: true,
+      },
+    });
+
+    expect(
+      repository.findPaymentMethodByProviderPaymentMethodId
+    ).toHaveBeenCalledWith('sbp_binding_1');
+    expect(repository.activatePaymentMethod).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 'user_1',
+        providerPaymentMethodId: 'sbp_binding_1',
+        enableAutoRenewForActiveAccess: true,
+      })
+    );
+    // Событие способа оплаты не должно идти по платёжному пути (GET /payments).
+    expect(mockedGetYooKassaPayment).not.toHaveBeenCalled();
   });
 });
 

@@ -14,6 +14,7 @@ import type {
   BillingRepository,
   FulfillPlanInput,
   PaidAccessRecord,
+  PaymentMethodRecord,
   PaymentOrderRecord,
 } from '@/server/interface/billingRepository';
 import {
@@ -36,7 +37,9 @@ import {
   createYooKassaPaymentMethodBinding,
   createYooKassaRecurringPayment,
   extractYooKassaApiError,
+  extractYooKassaEventType,
   extractYooKassaPaymentEvent,
+  extractYooKassaPaymentMethodEvent,
   formatYooKassaApiError,
   getYooKassaConfirmationToken,
   getYooKassaPayment,
@@ -986,6 +989,13 @@ export class BillingService {
   }
 
   async handleYooKassaWebhook(payload: unknown): Promise<void> {
+    // Уведомления о способах оплаты (payment_method.active и т.п.) несут не
+    // платёж, а способ оплаты — их разбираем и подтверждаем отдельно.
+    const eventType = extractYooKassaEventType(payload);
+    if (eventType?.startsWith('payment_method.')) {
+      await this.handleYooKassaPaymentMethodWebhook(payload);
+      return;
+    }
     const event = extractYooKassaPaymentEvent(payload);
     // Неподписанные поля используем только как дешёвый локальный prefilter:
     // неизвестный UUID/payment id не должен провоцировать внешний GET.
@@ -1175,7 +1185,42 @@ export class BillingService {
     if (!userId) return;
     const method = await this.deps.repository.findPaymentMethodByUserId(userId);
     if (!method || method.status !== 'pending') return;
+    await this.reconcilePendingPaymentMethod(method);
+  }
 
+  // Push-подтверждение привязки: YooKassa шлёт payment_method.active, когда
+  // способ (в том числе счёт СБП) становится активным после подтверждения в
+  // приложении банка. Это убирает задержку опроса — пользователю не нужно
+  // повторно открывать профиль или заново нажимать «Привязать», чтобы
+  // автопродление включилось.
+  private async handleYooKassaPaymentMethodWebhook(
+    payload: unknown
+  ): Promise<void> {
+    const event = extractYooKassaPaymentMethodEvent(payload);
+    const method =
+      await this.deps.repository.findPaymentMethodByProviderPaymentMethodId(
+        event.paymentMethodId
+      );
+    if (!method) {
+      // Способ не наш (или уже удалён/заменён) — тихо игнорируем и отвечаем
+      // 200, иначе YooKassa будет бесконечно ретраить.
+      console.warn('[billing] payment_method webhook: unknown method', {
+        event: event.event,
+        providerPaymentMethodId: event.paymentMethodId,
+      });
+      return;
+    }
+    await this.reconcilePendingPaymentMethod(method);
+  }
+
+  // Сверка pending-привязки с провайдером. Телу webhook не доверяем так же,
+  // как и опросу: источник истины — GET /payment_methods. Общий код для
+  // syncPendingPaymentMethod (оппортунистический опрос) и payment_method.active
+  // (push-уведомление).
+  private async reconcilePendingPaymentMethod(
+    method: PaymentMethodRecord
+  ): Promise<void> {
+    if (method.status !== 'pending') return;
     this.requireYooKassaConfig();
     let remote: Awaited<ReturnType<typeof getYooKassaPaymentMethod>>;
     try {
@@ -1187,13 +1232,13 @@ export class BillingService {
       if (!isYooKassaNotFound(error)) throw error;
       // Способа с таким идентификатором у провайдера нет. У карты он может
       // появиться с задержкой, поэтому даём окно на дозревание; после него
-      // запись — мусор (так выглядит фантомный id из платежа по СБП).
+      // запись — мусор (например, неподтверждённая или протухшая привязка).
       if (
         Date.now() - method.createdAt.getTime() >=
         PENDING_PAYMENT_METHOD_GRACE_MS
       ) {
         await this.deps.repository.deletePaymentMethodIfMatches({
-          userId,
+          userId: method.userId,
           providerPaymentMethodId: method.providerPaymentMethodId,
         });
       }
@@ -1202,7 +1247,7 @@ export class BillingService {
 
     if (remote.saved === true || remote.status === 'active') {
       await this.deps.repository.activatePaymentMethod({
-        userId,
+        userId: method.userId,
         providerPaymentMethodId: remote.id,
         methodType: remote.type ?? null,
         title: remote.title ?? null,
@@ -1218,7 +1263,7 @@ export class BillingService {
     // Привязка отклонена/протухла — убираем pending-запись.
     if (remote.status === 'inactive' || remote.status === 'canceled') {
       await this.deps.repository.deletePaymentMethodIfMatches({
-        userId,
+        userId: method.userId,
         providerPaymentMethodId: method.providerPaymentMethodId,
       });
     }
@@ -2264,33 +2309,6 @@ export class BillingService {
     return true;
   }
 
-  // Пригоден ли сохранённый провайдером способ для автосписаний. При сетевой
-  // ошибке не гадаем: оставляем pending, следующая синхронизация перепроверит.
-  private async resolveSavedPaymentMethodStatus(
-    providerPaymentMethodId: string
-  ): Promise<'active' | 'pending'> {
-    try {
-      const method = await getYooKassaPaymentMethod(
-        this.deps.config.yookassa,
-        providerPaymentMethodId
-      );
-      return method.status === 'active' || method.saved === true
-        ? 'active'
-        : 'pending';
-    } catch (error) {
-      // 404 — способа не существует (так выглядит фантомный id по СБП).
-      // Сетевую ошибку тоже не считаем подтверждением: в обоих случаях
-      // способ остаётся pending и будет перепроверен синхронизацией.
-      if (!isYooKassaNotFound(error)) {
-        console.error('[billing] payment method verification failed', {
-          providerPaymentMethodId,
-          error,
-        });
-      }
-      return 'pending';
-    }
-  }
-
   private async isRenewalPaymentMethodCurrent(
     order: PaymentOrderRecord
   ): Promise<boolean> {
@@ -2576,23 +2594,30 @@ export class BillingService {
     } else if (paymentOk && plan) {
       // Идемпотентно: заказ блокируется в транзакции, повторный вызов
       // (вебхук + поллинг) доступ второй раз не выдаст.
+      //
+      // Способ, сохранённый во время платежа, YooKassa подтверждает флагом
+      // payment_method.saved в самом платеже (док «Автоплатежи. Основы») —
+      // отдельный GET не нужен и не должен блокировать автопродление. У карты
+      // payment_method.id — самостоятельный идентификатор способа, пригодный
+      // для автосписаний. У СБП привязка счёта асинхронная: в платеже
+      // возвращается id самой операции (равный id платежа), а готовый счёт
+      // приходит отдельным событием payment_method.active и заводится через
+      // привязку. Поэтому из платежа берём способ, только если у него
+      // собственный id, отличный от id платежа.
+      const paymentMethod = verified.paymentMethod;
       const savedMethod =
-        verified.paymentMethod?.saved && verified.paymentMethod.id
+        paymentMethod?.saved === true &&
+        paymentMethod.id &&
+        paymentMethod.id !== verified.id
           ? {
-              providerPaymentMethodId: verified.paymentMethod.id,
-              methodType: verified.paymentMethod.methodType,
-              title: verified.paymentMethod.title,
-              cardBrand: verified.paymentMethod.cardBrand,
-              cardLast4: verified.paymentMethod.cardLast4,
-              cardExpiryMonth: verified.paymentMethod.cardExpiryMonth,
-              cardExpiryYear: verified.paymentMethod.cardExpiryYear,
-              // Флаг saved у платежа — обещание, а не факт. Способ считается
-              // пригодным для автосписаний только после подтверждения в
-              // /v3/payment_methods; иначе он остаётся pending и не включает
-              // автопродление, которое мы не смогли бы исполнить.
-              status: (await this.resolveSavedPaymentMethodStatus(
-                verified.paymentMethod.id
-              )) satisfies 'active' | 'pending',
+              providerPaymentMethodId: paymentMethod.id,
+              methodType: paymentMethod.methodType,
+              title: paymentMethod.title,
+              cardBrand: paymentMethod.cardBrand,
+              cardLast4: paymentMethod.cardLast4,
+              cardExpiryMonth: paymentMethod.cardExpiryMonth,
+              cardExpiryYear: paymentMethod.cardExpiryYear,
+              status: 'active' as const,
             }
           : null;
       const fulfillResult = await this.deps.repository.fulfillPaidOrder({

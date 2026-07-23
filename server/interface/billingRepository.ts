@@ -257,6 +257,12 @@ export interface BillingRepository {
     now?: Date;
   }): Promise<FulfillPaidOrderResult>;
   findPaymentMethodByUserId(userId: string): Promise<PaymentMethodRecord | null>;
+  // Поиск способа по идентификатору провайдера. Нужен для вебхука
+  // payment_method.active: событие приходит без нашего userId, поэтому
+  // pending-привязку находим по providerPaymentMethodId.
+  findPaymentMethodByProviderPaymentMethodId(
+    providerPaymentMethodId: string
+  ): Promise<PaymentMethodRecord | null>;
   // Начало явной привязки способа оплаты: сохраняем pending-запись (upsert).
   savePendingPaymentMethod(params: {
     userId: string;
