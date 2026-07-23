@@ -1509,7 +1509,6 @@
                   class="goal-card__lock"
                 >
                   <LockClosedIcon aria-hidden="true" />
-                  {{ t('interview.goal.lockedBadge') }}
                 </span>
                 <span
                   v-tooltip="optionTooltip(option.description, option.meta)"
@@ -2864,7 +2863,6 @@
     align-items: center;
     gap: 5px;
     justify-self: start;
-    margin-top: 4px;
     border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--glass-border));
     border-radius: 999px;
     background: color-mix(in srgb, var(--accent) 12%, var(--surface-soft));
