@@ -915,6 +915,9 @@ export class BillingService {
         // Автопродление: просим YooKassa сохранить выбранный способ оплаты.
         // Плательщик видит уведомление о сохранении на платёжной странице.
         savePaymentMethod: autoRenew,
+        // Требование документации виджета: без идентификатора покупателя
+        // виджет не запоминает карту и не предложит её при следующей оплате.
+        merchantCustomerId: email ?? params.userId,
       });
       const confirmationToken = getYooKassaConfirmationToken(payment);
       await this.deps.repository.updatePaymentOrder({
