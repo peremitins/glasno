@@ -155,8 +155,9 @@
   const paymentMethodLabel = computed(() => {
     const method = billingInfo.value?.paymentMethod;
     if (!method) return '';
-    // Привязка ещё не подтверждена — списывать с такого способа нельзя,
-    // и пользователь должен видеть именно это, а не «способа нет».
+    // Привязка начата, но не подтверждена в банке. Списывать с такого
+    // способа нельзя, и пользователь должен видеть именно это, а не
+    // «способа нет» и не «всё готово».
     if (method.status === 'pending') {
       return t('pricing.paymentMethodPending');
     }
@@ -183,8 +184,11 @@
     if (!billingInfo.value) return '';
     if (billingInfo.value.autoRenew) return '';
     if (!status.value?.hasActivePaidAccess) return '';
-    return hasChargeablePaymentMethod.value
-      ? ''
+    if (hasChargeablePaymentMethod.value) return '';
+    // Привязка уже начата — просить «привязать способ» бессмысленно, нужно
+    // подтвердить её в приложении банка.
+    return billingInfo.value.paymentMethod?.status === 'pending'
+      ? t('pricing.autoRenewConfirmBinding')
       : t('pricing.autoRenewNeedsMethod');
   });
   const showMinutes = computed(
@@ -574,13 +578,20 @@
           >
             {{ t('pricing.enableAutoRenew') }}
           </button>
+          <!-- Отвязка имеет смысл только когда есть что отвязывать:
+               подтверждённый способ или начатая привязка. -->
           <button
+            v-if="billingInfo.paymentMethod"
             type="button"
             class="secondary-action secondary-action--compact"
-            :disabled="cardActionPending || !billingInfo.paymentMethod"
+            :disabled="cardActionPending"
             @click="confirmAction = 'unbind'"
           >
-            {{ t('pricing.unbindCard') }}
+            {{
+              hasChargeablePaymentMethod
+                ? t('pricing.unbindCard')
+                : t('pricing.cancelBinding')
+            }}
           </button>
         </div>
       </div>

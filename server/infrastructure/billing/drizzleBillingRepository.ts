@@ -1322,6 +1322,22 @@ export class DrizzleBillingRepository implements BillingRepository {
     return row ? mapPaymentMethod(row) : null;
   }
 
+  async findPaymentMethodByProviderPaymentMethodId(
+    providerPaymentMethodId: string
+  ): Promise<PaymentMethodRecord | null> {
+    const [row] = await this.db
+      .select()
+      .from(schema.userPaymentMethods)
+      .where(
+        eq(
+          schema.userPaymentMethods.providerPaymentMethodId,
+          providerPaymentMethodId
+        )
+      )
+      .limit(1);
+    return row ? mapPaymentMethod(row) : null;
+  }
+
   async savePendingPaymentMethod(params: {
     userId: string;
     providerPaymentMethodId: string;
