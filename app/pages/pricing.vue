@@ -155,6 +155,11 @@
   const paymentMethodLabel = computed(() => {
     const method = billingInfo.value?.paymentMethod;
     if (!method) return '';
+    // Привязка ещё не подтверждена — списывать с такого способа нельзя,
+    // и пользователь должен видеть именно это, а не «способа нет».
+    if (method.status === 'pending') {
+      return t('pricing.paymentMethodPending');
+    }
     if (method.methodType === 'sbp') {
       return t('pricing.paymentMethodSbp');
     }
@@ -164,11 +169,24 @@
     }
     return method.title || t('pricing.paymentMethodLinked');
   });
+  const hasChargeablePaymentMethod = computed(
+    () => billingInfo.value?.paymentMethod?.status === 'active'
+  );
   const paymentMethodActionLabel = computed(() =>
-    billingInfo.value?.paymentMethod
+    hasChargeablePaymentMethod.value
       ? t('pricing.replacePaymentMethod')
       : t('pricing.bindCard')
   );
+  // Доступ оплачен, но автосписание работать не с чем: объясняем, что нужно
+  // сделать, вместо противоречивого «автопродление выключено».
+  const autoRenewSetupHint = computed(() => {
+    if (!billingInfo.value) return '';
+    if (billingInfo.value.autoRenew) return '';
+    if (!status.value?.hasActivePaidAccess) return '';
+    return hasChargeablePaymentMethod.value
+      ? ''
+      : t('pricing.autoRenewNeedsMethod');
+  });
   const showMinutes = computed(
     () =>
       Boolean(status.value) &&
@@ -312,14 +330,18 @@
 
   // Привязка карты без платежа: бэкенд создаёт payment_method в YooKassa
   // и отдаёт confirmationUrl — редиректим пользователя на подтверждение.
-  async function bindCard() {
+  // Привязка без платежа — единственный способ получить идентификатор,
+  // пригодный для автосписаний. Для карты confirmationUrl ведёт на страницу
+  // банка, для СБП — на страницу НСПК (телефон открывает приложение банка,
+  // десктоп показывает QR-код).
+  async function bindPaymentMethod(methodType: 'bank_card' | 'sbp') {
     if (cardActionPending.value) return;
     cardActionPending.value = true;
     errorMessage.value = '';
     try {
       const response = await api<z.infer<typeof BillingBindCardResponseDto>>(
         '/api/billing/payment-method/bind',
-        { method: 'POST' }
+        { method: 'POST', body: { methodType } }
       );
       window.location.href = response.confirmationUrl;
     } catch (err) {
@@ -512,14 +534,27 @@
         <p v-else class="status-line">
           {{ t('pricing.noCard') }}
         </p>
+        <!-- Автопродление невозможно, пока способ не подтверждён провайдером:
+             объясняем это прямо, а не молчим о невыполнимом обещании. -->
+        <p v-if="autoRenewSetupHint" class="status-line status-line--hint">
+          {{ autoRenewSetupHint }}
+        </p>
         <div class="status-actions">
           <button
             type="button"
             class="secondary-action secondary-action--compact"
             :disabled="cardActionPending"
-            @click="bindCard"
+            @click="bindPaymentMethod('bank_card')"
           >
             {{ paymentMethodActionLabel }}
+          </button>
+          <button
+            type="button"
+            class="secondary-action secondary-action--compact"
+            :disabled="cardActionPending"
+            @click="bindPaymentMethod('sbp')"
+          >
+            {{ t('pricing.bindSbp') }}
           </button>
           <button
             v-if="billingInfo.autoRenew"
@@ -531,7 +566,7 @@
             {{ t('pricing.disableAutoRenew') }}
           </button>
           <button
-            v-else-if="billingInfo.paymentMethod && status?.hasActivePaidAccess"
+            v-else-if="hasChargeablePaymentMethod && status?.hasActivePaidAccess"
             type="button"
             class="secondary-action secondary-action--compact"
             :disabled="cardActionPending"

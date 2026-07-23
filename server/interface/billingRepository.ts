@@ -250,6 +250,9 @@ export interface BillingRepository {
       cardLast4?: string | null;
       cardExpiryMonth?: string | null;
       cardExpiryYear?: string | null;
+      // 'pending' — провайдер не подтвердил, что способ пригоден для
+      // автосписаний. Такой способ не включает автопродление.
+      status?: 'active' | 'pending';
     } | null;
     now?: Date;
   }): Promise<FulfillPaidOrderResult>;
@@ -258,6 +261,9 @@ export interface BillingRepository {
   savePendingPaymentMethod(params: {
     userId: string;
     providerPaymentMethodId: string;
+    // Тип известен уже при создании привязки (bank_card | sbp) — сохраняем,
+    // чтобы UI мог назвать способ до подтверждения.
+    methodType?: string | null;
   }): Promise<void>;
   // Подтверждение привязки: presentation способа оплаты + статус active.
   activatePaymentMethod(params: {

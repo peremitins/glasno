@@ -308,8 +308,13 @@ function buildBillingInfo(params: {
   // После неуспешного списания доступ уже может истечь, но автопродление
   // остаётся включённым до назначенного retry. Не скрываем это состояние.
   const renewalOn = Boolean(view.access?.autoRenew);
-  const activePaymentMethod =
-    params.paymentMethod?.status === 'active' ? params.paymentMethod : null;
+  // Отдаём и неподтверждённую привязку: клиенту нужно отличать «способ
+  // проверяется» от «способа нет», иначе UI противоречит сам себе.
+  const knownPaymentMethod =
+    params.paymentMethod?.status === 'active' ||
+    params.paymentMethod?.status === 'pending'
+      ? params.paymentMethod
+      : null;
   return {
     autoRenew: renewalOn,
     nextChargeAt:
@@ -322,14 +327,16 @@ function buildBillingInfo(params: {
         null
       : null,
     lastChargeError: view.access?.lastChargeError ?? null,
-    paymentMethod: activePaymentMethod
+    paymentMethod: knownPaymentMethod
       ? {
-          methodType: activePaymentMethod.methodType,
-          title: activePaymentMethod.title,
-          cardBrand: activePaymentMethod.cardBrand,
-          cardLast4: activePaymentMethod.cardLast4,
-          cardExpiryMonth: activePaymentMethod.cardExpiryMonth,
-          cardExpiryYear: activePaymentMethod.cardExpiryYear,
+          methodType: knownPaymentMethod.methodType,
+          title: knownPaymentMethod.title,
+          cardBrand: knownPaymentMethod.cardBrand,
+          cardLast4: knownPaymentMethod.cardLast4,
+          cardExpiryMonth: knownPaymentMethod.cardExpiryMonth,
+          cardExpiryYear: knownPaymentMethod.cardExpiryYear,
+          status:
+            knownPaymentMethod.status === 'active' ? 'active' : 'pending',
         }
       : null,
   };

@@ -34,6 +34,10 @@ export const BillingPaymentMethodDto = z.object({
   cardLast4: z.string().nullable(),
   cardExpiryMonth: z.string().nullable(),
   cardExpiryYear: z.string().nullable(),
+  // 'pending' — привязка начата или пригодность способа ещё не подтверждена
+  // провайдером. Списывать с него нельзя, и UI обязан отличать это
+  // состояние от «способа нет вовсе».
+  status: z.enum(['active', 'pending']).default('active'),
 });
 
 // Автопродление: когда и сколько спишется. Сумма фиксируется в момент
@@ -210,7 +214,16 @@ export const BillingAutoRenewRequestDto = z.object({
   enabled: z.boolean(),
 });
 
+export const BillingBindPaymentMethodTypeDto = z.enum(['bank_card', 'sbp']);
+
+export const BillingBindCardRequestDto = z.object({
+  methodType: BillingBindPaymentMethodTypeDto.default('bank_card'),
+});
+
 export const BillingBindCardResponseDto = z.object({
+  methodType: BillingBindPaymentMethodTypeDto,
+  // Для карты — страница подтверждения банка, для СБП — ссылка НСПК
+  // (на телефоне открывает выбор банка, на десктопе показывается QR-кодом).
   confirmationUrl: z.string().url(),
 });
 
