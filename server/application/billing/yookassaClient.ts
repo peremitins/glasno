@@ -560,6 +560,55 @@ export function extractYooKassaPaymentEvent(
   };
 }
 
+// Тип события верхнего уровня без разбора object. Нужен, чтобы отличить
+// уведомления о способах оплаты (payment_method.*) от платёжных до того, как
+// пытаться разбирать object как платёж.
+export function extractYooKassaEventType(payload: unknown): string | null {
+  const event = (payload as { event?: unknown } | null)?.event;
+  return typeof event === 'string' ? event : null;
+}
+
+export interface YooKassaPaymentMethodEvent {
+  event: string;
+  paymentMethodId: string;
+  saved: boolean;
+  status: string | null;
+  methodType: string | null;
+}
+
+// Уведомление о способе оплаты (payment_method.active и др.). object здесь —
+// не платёж, а способ оплаты; телу webhook не доверяем, поэтому забираем
+// только идентификатор, а пригодность подтверждаем обратным запросом.
+export function extractYooKassaPaymentMethodEvent(
+  payload: unknown
+): YooKassaPaymentMethodEvent {
+  const data = payload as {
+    event?: unknown;
+    object?: {
+      id?: unknown;
+      saved?: unknown;
+      status?: unknown;
+      type?: unknown;
+    };
+  };
+  const event = typeof data.event === 'string' ? data.event : null;
+  const paymentMethodId =
+    typeof data.object?.id === 'string' ? data.object.id : null;
+  if (!event || !paymentMethodId) {
+    throw apiError(
+      'E_VALIDATION',
+      'Некорректный webhook способа оплаты YooKassa'
+    );
+  }
+  return {
+    event,
+    paymentMethodId,
+    saved: data.object?.saved === true,
+    status: asString(data.object?.status),
+    methodType: asString(data.object?.type),
+  };
+}
+
 function formatRub(value: number): string {
   return `${value.toFixed(2)}`;
 }
