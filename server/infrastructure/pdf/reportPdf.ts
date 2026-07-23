@@ -50,19 +50,10 @@ async function loadReportFont(): Promise<Buffer> {
 }
 
 async function loadFontFromServerAssets(): Promise<Buffer | null> {
-  const storage = (
-    globalThis as {
-      useStorage?: (base: string) => {
-        getItemRaw: (key: string) => Promise<unknown>;
-      };
-    }
-  ).useStorage;
-  if (typeof storage !== 'function') {
-    return null;
-  }
-
   try {
-    const raw = await storage('assets:server').getItemRaw(FONT_ASSET_KEY);
+    // useStorage — auto-import Nitro (резолвится по имени при сборке, не глобал),
+    // поэтому вызываем напрямую. Вне Nitro (юнит-тесты) падает в фолбэк с диска.
+    const raw = await useStorage('assets:server').getItemRaw(FONT_ASSET_KEY);
     if (!raw) {
       return null;
     }
