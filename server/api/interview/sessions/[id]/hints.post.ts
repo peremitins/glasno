@@ -5,14 +5,12 @@ import {
 import { createInterviewService } from '@/server/application/interview/serviceFactory';
 import { apiError } from '@/server/utils/errors';
 import { defineApiHandler } from '@/server/utils/handler';
+import { requireAuthenticatedSession } from '@/server/utils/session';
 import { readDto } from '@/server/utils/validate';
 
 // Генерирует детальные подсказки к конкретному вопросу по запросу пользователя.
 export default defineApiHandler(async (event) => {
-  const session = event.context.session;
-  if (!session) {
-    throw apiError('E_AUTH', 'Сессия не инициализирована');
-  }
+  const session = requireAuthenticatedSession(event);
 
   const id = getRouterParam(event, 'id');
   if (!id) {

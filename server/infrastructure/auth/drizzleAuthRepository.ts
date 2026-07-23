@@ -1,6 +1,7 @@
 import { and, desc, eq, gt, inArray, isNull, or, sql } from 'drizzle-orm';
 import type { UserRole } from '@/shared/dto';
 import { getDb, schema } from '@/server/infrastructure/db/client';
+import { canonicalizeEmailForTrial } from '@/server/application/auth/authCrypto';
 import { apiError } from '@/server/utils/errors';
 import type {
   AuthRepository,
@@ -277,7 +278,13 @@ export class DrizzleAuthRepository implements AuthRepository {
         if (email || telegramId) {
           await tx
             .insert(schema.trialInterviewHistory)
-            .values({ userId, email, telegramId, completedAt: now })
+            .values({
+              userId,
+              email,
+              emailCanonical: email ? canonicalizeEmailForTrial(email) : null,
+              telegramId,
+              completedAt: now,
+            })
             .onConflictDoNothing();
         }
       }
@@ -436,7 +443,12 @@ export class DrizzleAuthRepository implements AuthRepository {
         if (email || telegramId) {
           await tx
             .insert(schema.trialInterviewHistory)
-            .values({ userId, email, telegramId })
+            .values({
+              userId,
+              email,
+              emailCanonical: email ? canonicalizeEmailForTrial(email) : null,
+              telegramId,
+            })
             .onConflictDoNothing();
         }
       }

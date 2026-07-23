@@ -1,5 +1,6 @@
 import { and, count, eq, isNull, or, sql } from 'drizzle-orm';
 import { schema } from '@/server/infrastructure/db/client';
+import { canonicalizeEmailForTrial } from '@/server/application/auth/authCrypto';
 import type { getDb } from '@/server/infrastructure/db/client';
 import type { BillingOwner } from '@/server/interface/billingRepository';
 
@@ -44,12 +45,18 @@ export async function countOwnerFreeSessionsUsed(
   const telegramId = user?.telegramId || null;
   if (!email && !telegramId) return createdSessions;
 
+  // Сверяем и по каноническому адресу (ivan+2@gmail.com → ivan@gmail.com),
+  // и по исходному — второе нужно для строк, записанных до канонизации.
+  const emailCanonical = email ? canonicalizeEmailForTrial(email) : null;
   const [history] = await db
     .select({ id: schema.trialInterviewHistory.id })
     .from(schema.trialInterviewHistory)
     .where(
       or(
         email ? eq(schema.trialInterviewHistory.email, email) : sql`false`,
+        emailCanonical
+          ? eq(schema.trialInterviewHistory.emailCanonical, emailCanonical)
+          : sql`false`,
         telegramId
           ? eq(schema.trialInterviewHistory.telegramId, telegramId)
           : sql`false`

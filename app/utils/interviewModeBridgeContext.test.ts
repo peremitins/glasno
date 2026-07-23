@@ -223,7 +223,10 @@ describe('interview mode bridge context', () => {
 
     const context = buildInterviewModeBridgeContext(state);
 
-    expect(context).toContain('Текущий этап: Начните знакомство с кандидатом.');
+    // Интервью непрерывное: этапов и «текущего этапа» у интервьюера нет.
+    expect(context).toContain('Идёт непрерывное интервью');
+    expect(context).not.toContain('Текущий этап');
+    expect(context).not.toContain('Предыдущие основные этапы');
     expect(context).toContain('Интервьюер: Расскажите немного о себе.');
     expect(context).toContain(
       'AI-кандидат: Я frontend-разработчик с четырьмя годами опыта.'

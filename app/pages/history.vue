@@ -79,11 +79,11 @@
   }
 
   function historyProgressLabel(item: HistoryItem) {
-    if (
-      item.trainingMode === 'interviewer' &&
-      item.questionSourceMode === 'free'
-    ) {
-      return t('history.freeInterview');
+    // Интервьюер ведёт непрерывный разговор: счётчика «N из M» у него нет.
+    if (item.trainingMode === 'interviewer') {
+      return item.questionSourceMode === 'free'
+        ? t('history.freeInterview')
+        : t('history.plannedInterview');
     }
     return t('history.progress', {
       answered: item.answeredQuestions,

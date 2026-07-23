@@ -34,8 +34,8 @@ export default defineEventHandler(async (event) => {
 
   try {
     const session = event.context.session;
-    if (!session) {
-      writeError('E_AUTH', 'Сессия не инициализирована');
+    if (!session?.userId) {
+      writeError('E_AUTH', 'Требуется вход в аккаунт');
       return;
     }
 

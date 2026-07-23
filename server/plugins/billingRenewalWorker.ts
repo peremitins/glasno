@@ -6,6 +6,8 @@ import {
   resolveRenewalRedisUrl,
 } from '@/server/application/billing/renewalQueue';
 import { createBillingServiceFromConfig } from '@/server/application/billing/serviceFactory';
+import { CREATOR_IP_HASH_TTL_DAYS } from '@/server/application/billing/trialAbuseMonitor';
+import { DrizzleBillingRepository } from '@/server/infrastructure/billing/drizzleBillingRepository';
 
 // Фоновое автопродление подписок. Без него списания срабатывали бы только
 // при заходе пользователя на /api/billing/status — «уснувший» подписчик
@@ -47,11 +49,26 @@ export default defineNitroPlugin((nitroApp) => {
   };
   const pendingPaymentInitialTimer = setTimeout(pendingPaymentSweep, 45 * 1000);
   const pendingPaymentTimer = setInterval(pendingPaymentSweep, 5 * 60 * 1000);
+  // Отпечатки IP нужны только для окна наблюдения в сутки — храним 30 дней
+  // и обнуляем, чтобы не копить псевдонимные данные бессрочно.
+  const ipHashCleanup = () => {
+    void new DrizzleBillingRepository()
+      .clearCreatorIpHashesOlderThan(
+        new Date(Date.now() - CREATOR_IP_HASH_TTL_DAYS * 24 * 60 * 60 * 1000)
+      )
+      .catch((err) => {
+        console.error('[trial] creator ip hash cleanup failed', err);
+      });
+  };
+  const ipHashInitialTimer = setTimeout(ipHashCleanup, 60 * 1000);
+  const ipHashTimer = setInterval(ipHashCleanup, 12 * 60 * 60 * 1000);
   nitroApp.hooks.hook('close', () => {
     clearTimeout(giftInitialTimer);
     clearInterval(giftTimer);
     clearTimeout(pendingPaymentInitialTimer);
     clearInterval(pendingPaymentTimer);
+    clearTimeout(ipHashInitialTimer);
+    clearInterval(ipHashTimer);
   });
 
   // Kill-switch автосписаний не должен останавливать письма о подарках.

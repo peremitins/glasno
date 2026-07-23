@@ -70,16 +70,144 @@ describe('realtimeConfig', () => {
     expect(instructions).toContain('не раскрывай противоречия добровольно');
   });
 
-  it('does not reserve transition phrases for the app in free interviews', () => {
+  it('does not reserve transition phrases for the app in interviewer training', () => {
     const instructions = buildRealtimeInstructions({
       ...context,
       trainingMode: 'interviewer',
       questionSourceMode: 'free',
     });
 
-    expect(instructions).toContain('Свободное интервью');
+    expect(instructions).toContain('одним непрерывным разговором');
     expect(instructions).toContain('считай обычной частью разговора');
     expect(instructions).not.toContain('это команда приложению');
+  });
+
+  it('keeps transition phrases conversational even when the interviewer has a plan', () => {
+    const instructions = buildRealtimeInstructions({
+      ...context,
+      trainingMode: 'interviewer',
+      questionSourceMode: 'glasno',
+      planQuestions: ['Расскажите про запуск продукта.', 'Как вы работаете с рисками?'],
+    });
+
+    expect(instructions).toContain('считай обычной частью разговора');
+    expect(instructions).not.toContain('это команда приложению');
+    expect(instructions).not.toContain('Текущий этап:');
+  });
+
+  it('gives the AI candidate the uploaded resume to play from', () => {
+    const instructions = buildRealtimeInstructions({
+      ...context,
+      trainingMode: 'interviewer',
+      resumeRaw: 'Иван, 10 лет во фронтенде: Vue, Nuxt, дизайн-система.',
+      vacancyRaw: 'Ищем senior frontend с опытом Vue.',
+    });
+
+    // Без этого AI-кандидат выдумывал биографию, не связанную с файлом.
+    expect(instructions).toContain('Твоё резюме');
+    expect(instructions).toContain('10 лет во фронтенде');
+    expect(instructions).toContain('не выдумывай фактов сверх него');
+    expect(instructions).toContain('Описание вакансии: Ищем senior frontend');
+  });
+
+  it('tells the AI candidate not to invent facts when no resume was uploaded', () => {
+    const instructions = buildRealtimeInstructions({
+      ...context,
+      trainingMode: 'interviewer',
+      resumeRaw: null,
+    });
+
+    expect(instructions).toContain('Резюме кандидата не загружено');
+    expect(instructions).not.toContain('Твоё резюме');
+    // Пустое описание вакансии не должно оставлять пустых строк.
+    expect(instructions).not.toContain('\n\n');
+  });
+
+  it('gives the AI interviewer the candidate resume in candidate training', () => {
+    const instructions = buildRealtimeInstructions({
+      ...context,
+      trainingMode: 'candidate',
+      resumeRaw: 'Пётр, 5 лет в B2B-продажах, CRM.',
+    });
+
+    expect(instructions).toContain('Резюме кандидата');
+    expect(instructions).toContain('5 лет в B2B-продажах');
+    expect(instructions).toContain('опирайся на него в вопросах');
+    // В режиме кандидата AI — интервьюер, резюме не его биография.
+    expect(instructions).not.toContain('Твоё резюме');
+  });
+
+  it('keeps a full-size resume instead of cutting it after the latest job', () => {
+    // Резюме идут от свежего к старому: короткий лимит оставлял модели только
+    // последнее место работы, и остальной опыт для неё не существовал.
+    const resume = Array.from(
+      { length: 40 },
+      (_, index) => `Место работы ${index + 1}: подробное описание задач.`
+    ).join(' ');
+    const instructions = buildRealtimeInstructions({
+      ...context,
+      trainingMode: 'interviewer',
+      resumeRaw: resume,
+    });
+
+    expect(resume.length).toBeGreaterThan(1500);
+    expect(instructions).toContain('Место работы 1:');
+    expect(instructions).toContain('Место работы 40:');
+    expect(instructions).not.toContain('…');
+  });
+
+  it('truncates an oversized resume on a sentence boundary', () => {
+    const resume = Array.from(
+      { length: 400 },
+      (_, index) => `Проект ${index + 1} с описанием результата.`
+    ).join(' ');
+    const instructions = buildRealtimeInstructions({
+      ...context,
+      trainingMode: 'interviewer',
+      resumeRaw: resume,
+    });
+
+    expect(resume.length).toBeGreaterThan(6000);
+    expect(instructions).toContain('…');
+    // Обрыв не должен приходиться на середину слова.
+    expect(instructions).not.toMatch(/[А-Яа-я]…/u);
+  });
+
+  it('keeps the vacancy description on a tighter budget than the resume', () => {
+    const long = 'Требование к кандидату номер один. '.repeat(300);
+    const instructions = buildRealtimeInstructions({
+      ...context,
+      trainingMode: 'interviewer',
+      resumeRaw: null,
+      vacancyRaw: long,
+    });
+
+    const vacancyLine = instructions
+      .split('\n')
+      .find((line) => line.startsWith('Описание вакансии:'));
+    expect(vacancyLine!.length).toBeLessThan(1800);
+  });
+
+  it('passes the interviewer plan as a read-only reference', () => {
+    const instructions = buildRealtimeInstructions({
+      ...context,
+      trainingMode: 'interviewer',
+      planQuestions: ['Расскажите про запуск продукта.'],
+    });
+
+    expect(instructions).toContain('по своему плану');
+    expect(instructions).toContain('1) Расскажите про запуск продукта.');
+    expect(instructions).toContain('Не управляй порядком');
+  });
+
+  it('tells the AI candidate there is no plan when the interviewer has none', () => {
+    const instructions = buildRealtimeInstructions({
+      ...context,
+      trainingMode: 'interviewer',
+      planQuestions: [],
+    });
+
+    expect(instructions).toContain('нет заранее составленного плана');
   });
 
   it('includes interviewer gender grammar instruction', () => {
@@ -160,7 +288,30 @@ describe('realtimeConfig', () => {
       vacancyTitle: 'Senior Product Manager',
       companyName: 'Glasno',
       currentQuestion: 'Расскажите о запуске сложного продукта.',
+      planQuestions: [],
+      resumeRaw: null,
+      vacancyRaw: null,
     });
+  });
+
+  it('carries the interview background into the realtime context', () => {
+    const context = buildRealtimeContextFromState(
+      {
+        session: {
+          id: 'session_bg',
+          trainingMode: 'interviewer',
+          role: 'Frontend-разработчик',
+          interviewerMode: 'neutral',
+          vacancyTitle: 'Senior Frontend',
+          companyName: 'Glasno',
+        },
+        currentTurn: { question: 'Интервью по плану' },
+      },
+      { resumeRaw: '10 лет во фронтенде, Vue и Nuxt.', vacancyRaw: 'Нужен Vue.' }
+    );
+
+    expect(context.resumeRaw).toBe('10 лет во фронтенде, Vue и Nuxt.');
+    expect(context.vacancyRaw).toBe('Нужен Vue.');
   });
 
   it('falls back to an empty current question when there is no active turn', () => {

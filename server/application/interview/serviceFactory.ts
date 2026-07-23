@@ -7,6 +7,8 @@ import { OpenAiInterviewEngine } from '@/server/infrastructure/llm/openaiIntervi
 import { recordAiUsageSafe } from '@/server/application/aiUsage/serviceFactory';
 import { DrizzleQuestionPreferenceRepository } from '@/server/infrastructure/questionPreferences/drizzleQuestionPreferenceRepository';
 import { DrizzleCanonicalQuestionRepository } from '@/server/infrastructure/questionBank/drizzleCanonicalQuestionRepository';
+import { BillingAccessService } from '@/server/application/billing/accessService';
+import { DrizzleBillingRepository } from '@/server/infrastructure/billing/drizzleBillingRepository';
 
 export function createInterviewService(event: H3Event): InterviewService {
   const config = useRuntimeConfig(event);
@@ -30,5 +32,17 @@ export function createInterviewService(event: H3Event): InterviewService {
         process.env.NUXT_OPENAI_PROJECT_ID || process.env.OPENAI_PROJECT_ID || null,
       recordUsage: recordAiUsageSafe,
     }),
+    // Дёргается только в момент исчерпания бюджета триала: пользователь мог
+    // оформить доступ прямо во время интервью.
+    hasPaidAccess: async (owner) => {
+      const status = await new BillingAccessService({
+        repository: new DrizzleBillingRepository(),
+      }).getStatus({
+        anonymousSessionId: owner.anonymousSessionId,
+        userId: owner.userId,
+        role: null,
+      });
+      return status.unlimited || status.hasActivePaidAccess;
+    },
   });
 }

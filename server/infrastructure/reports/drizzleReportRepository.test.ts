@@ -99,6 +99,9 @@ describe('DrizzleReportRepository', () => {
       values: {
         userId: 'user_1',
         email: 'hello@mentala.app',
+        // Ключ попытки — канонический адрес: он не даёт получить новый
+        // триал через плюс-адресацию.
+        emailCanonical: 'hello@mentala.app',
         telegramId: null,
       },
     });

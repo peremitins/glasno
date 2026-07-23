@@ -76,6 +76,9 @@ export interface GenerateQuestionHintsParams {
   turn: InterviewTurnRecord;
   turns: InterviewTurnRecord[];
   dialogue: Array<{ role: 'user' | 'interviewer'; content: string }>;
+  // Контекст актуальности подсказок: в непрерывном интервьюерском режиме —
+  // последняя реплика AI-кандидата, от которой отталкивается весь блок.
+  exampleContext?: string;
 }
 
 export interface GenerateHintExampleParams {

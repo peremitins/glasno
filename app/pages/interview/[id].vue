@@ -334,14 +334,12 @@
     if (!session || isDone.value) return false;
     return session.currentQuestionIndex >= session.totalQuestions;
   });
+  // Кнопка перехода есть только в режиме кандидата: интервьюер ведёт
+  // непрерывный разговор и завершает интервью отдельной кнопкой.
   const nextActionLabel = computed(() =>
     isLastQuestion.value
       ? t('interview.session.finishInterview')
-      : t(
-          isInterviewerTraining.value
-            ? 'interview.session.nextPlanItem'
-            : 'interview.session.nextQuestion'
-        )
+      : t('interview.session.nextQuestion')
   );
   const isTtsEnabled = computed(
     () => runtimeConfig.public.featureTtsEnabled === true
@@ -349,7 +347,9 @@
   const progressText = computed(() => {
     const session = state.value?.session;
     if (!session) return '';
-    if (isFreeInterviewerTraining.value) {
+    // Интервьюер ведёт разговор свободно, поэтому номера текущего пункта у него
+    // нет: показываем нейтральный статус вместо «N из M».
+    if (isInterviewerTraining.value) {
       return t('interview.session.freeProgress');
     }
     return t('interview.session.progress', {
@@ -357,6 +357,20 @@
       total: session.totalQuestions,
     });
   });
+  // План интервьюера — пассивный ориентир: он виден целиком, без отметок
+  // пройденного и без счётчика прогресса.
+  const hasVisiblePlan = computed(() =>
+    isInterviewerTraining.value
+      ? (state.value?.session.plan.items.length ?? 0) > 0
+      : !isFreeInterviewerTraining.value
+  );
+  const planSummaryLabel = computed(() =>
+    isInterviewerTraining.value
+      ? t('interview.session.planOverview', {
+          count: state.value?.session.plan.items.length ?? 0,
+        })
+      : t('interview.session.planProgress', planProgress.value)
+  );
 
   const currentHintPack = computed<QuestionHintPack | null>(() => {
     return currentTurn.value?.hintPack ?? null;
@@ -738,8 +752,9 @@
     if (!normalized) return;
     // В realtime реплики кандидата уже попадают в чат через адаптер.
     // В поле ответа ничего НЕ пишем. По голосовой команде — переходим дальше.
+    // У интервьюера перехода нет: «следующий вопрос» — обычная реплика.
     if (
-      !isFreeInterviewerTraining.value &&
+      !isInterviewerTraining.value &&
       isNextQuestionVoiceCommand(normalized)
     ) {
       // Команда адресована приложению, а не интервьюеру. Реагируем сразу,
@@ -936,10 +951,8 @@
 
     // Команда перехода в текстовом поле адресована приложению, а не модели.
     // Не добавляем её в диалог и не создаём лишний запрос к интервьюеру.
-    if (
-      !isFreeInterviewerTraining.value &&
-      isNextQuestionVoiceCommand(message)
-    ) {
+    // У интервьюера такой команды нет — фраза уходит в разговор как есть.
+    if (!isInterviewerTraining.value && isNextQuestionVoiceCommand(message)) {
       answer.value = '';
       await goToNextQuestion();
       return;
@@ -963,6 +976,11 @@
             body: { turnId: turn.id, message },
           }
         );
+      }
+      // Ответ на реплику никогда не завершает интервью сам по себе — значит,
+      // сессию закрыл сервер, потому что вышло время бесплатной тренировки.
+      if (isDone.value) {
+        autoFinishNotice.value = t('interview.session.trialTimeUp');
       }
     } catch (err) {
       errorMessage.value = extractApiError(err);
@@ -1330,6 +1348,9 @@
   }
 
   const reportGenerationAutoStarted = ref(false);
+  // Интервью завершилось само (закончилось время бесплатной сессии), а не по
+  // кнопке — объясняем это на экране генерации отчёта.
+  const autoFinishNotice = ref('');
 
   function startReportGenerationOnce() {
     if (!isDone.value || reportGenerationAutoStarted.value) return;
@@ -1428,6 +1449,11 @@
   );
   const hintsSampleRefreshing = computed(
     () => hintsLoading.value && Boolean(currentHintDetails.value)
+  );
+  // У интервьюера обновляется весь блок, а не только пример вопроса,
+  // поэтому подсвечиваем и рекомендации «что проверить дальше».
+  const hintsBlockRefreshing = computed(
+    () => hintsSampleRefreshing.value && isInterviewerTraining.value
   );
 
   function toggleFullscreen() {
@@ -1554,15 +1580,31 @@
     void generateHintsForCurrentTurn(true);
   }
 
+  // Контекст подсказок меняется по ходу реплики AI-кандидата, поэтому ждём
+  // паузу: иначе на один ответ уйдёт несколько запросов подряд.
+  const HINTS_REFRESH_DEBOUNCE_MS = 800;
+  let hintsRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function cancelHintsRefreshTimer() {
+    if (!hintsRefreshTimer) return;
+    clearTimeout(hintsRefreshTimer);
+    hintsRefreshTimer = null;
+  }
+
   watch(
     () => currentHintsRequestKey.value,
     () => {
-      if (hintsOpen.value) {
-        scrollHintsToTop('auto');
+      cancelHintsRefreshTimer();
+      if (!hintsOpen.value) return;
+      scrollHintsToTop('auto');
+      hintsRefreshTimer = setTimeout(() => {
+        hintsRefreshTimer = null;
         void generateHintsForCurrentTurn();
-      }
+      }, HINTS_REFRESH_DEBOUNCE_MS);
     }
   );
+
+  onBeforeUnmount(cancelHintsRefreshTimer);
 
   // «Завершить интервью» — сначала атомарно закрываем текущий диалог,
   // затем формируем отчёт. Это обязательно для свободного сценария.
@@ -1616,6 +1658,7 @@
         v-if="isDone"
         :training-mode="state.session.trainingMode"
         :error-message="errorMessage"
+        :notice-message="autoFinishNotice"
         :retry-loading="sessionAction === 'report'"
         @retry="generateReport"
       />
@@ -1916,7 +1959,7 @@
             </ol>
 
             <button
-              v-if="!isFreeInterviewerTraining"
+              v-if="!isInterviewerTraining"
               class="next-btn button-loader-host"
               type="button"
               :disabled="isSending || isGeneratingReport"
@@ -1998,7 +2041,11 @@
               </button>
             </header>
 
-            <div ref="hintsPane" class="hints-pane">
+            <div
+              ref="hintsPane"
+              class="hints-pane"
+              :aria-busy="hintsLoading ? 'true' : 'false'"
+            >
               <template v-if="hintsInitialLoading">
                 <p class="sr-only">
                   {{ t('interview.session.hintsPanel.loading') }}
@@ -2030,7 +2077,12 @@
                   </summary>
 
                   <div class="hint-body">
-                    <h3 v-if="currentHintDetails?.focus">
+                    <h3
+                      v-if="currentHintDetails?.focus"
+                      :class="{
+                        'hint-sample--refreshing': hintsBlockRefreshing,
+                      }"
+                    >
                       <TextWithInterviewTerms
                         :text="currentHintDetails.focus"
                         :context="learningTermContext('interview_hint')"
@@ -2182,23 +2234,24 @@
                 </details>
               </template>
 
-              <template v-if="!isFreeInterviewerTraining">
+              <template v-if="hasVisiblePlan">
                 <details class="plan-disclosure">
                   <summary>
                     <span>
                       <em class="coach-label">{{
                         t('interview.session.plan')
                       }}</em>
-                      <strong>{{
-                        t('interview.session.planProgress', planProgress)
-                      }}</strong>
+                      <strong>{{ planSummaryLabel }}</strong>
                     </span>
                   </summary>
                   <ol class="plan-list">
                     <li
                       v-for="item in state.session.plan.items"
                       :key="item.id"
-                      :class="{ 'plan-item--asked': item.status === 'asked' }"
+                      :class="{
+                        'plan-item--asked':
+                          !isInterviewerTraining && item.status === 'asked',
+                      }"
                     >
                       <span>{{ item.index }}</span>
                       <p>
