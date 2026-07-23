@@ -5,11 +5,15 @@ import { resolveTtsConfig } from '@/server/application/tts/ttsConfig';
 import { apiError } from '@/server/utils/errors';
 import { assertDirectOpenAiAccessAllowed } from '@/server/infrastructure/llm/openaiResponsesClient';
 import { defineApiHandler } from '@/server/utils/handler';
+import { requireAuthenticatedSession } from '@/server/utils/session';
 import { readDto } from '@/server/utils/validate';
 
 const OPENAI_TTS_URL = 'https://api.openai.com/v1/audio/speech';
 
 export default defineApiHandler(async (event) => {
+  // Озвучка идёт через платный OpenAI TTS — анонимный доступ закрыт.
+  requireAuthenticatedSession(event);
+
   const runtimeConfig = useRuntimeConfig(event);
   const ttsConfig = resolveTtsConfig(runtimeConfig);
   if (!ttsConfig.enabled) {

@@ -130,6 +130,8 @@ function createRepository(order = createOrder()) {
     countOwnerFreeSessionsUsed: vi.fn().mockResolvedValue(1),
     findOwnerUnfinishedSession: vi.fn().mockResolvedValue(null),
     countOwnerSessionsSince: vi.fn().mockResolvedValue(0),
+    countTrialSessionsByIpHashSince: vi.fn().mockResolvedValue(0),
+    clearCreatorIpHashesOlderThan: vi.fn().mockResolvedValue(0),
     findUserEmail: vi.fn().mockResolvedValue('user@example.com'),
     findAccessByUserId: vi.fn().mockImplementation(async () => access),
     setAccessAutoRenew: vi.fn().mockResolvedValue(true),

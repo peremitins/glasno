@@ -4,6 +4,10 @@ import type {
   InterviewTrainingMode,
 } from '@/shared/dto';
 import { buildAskedQuestionsReminder } from '@/shared/interviewAskedQuestions';
+import {
+  interviewDialogueSkipMarker,
+  windowInterviewDialogue,
+} from '@/shared/interviewDialogueWindow';
 
 export function buildInterviewModeBridgeContext(
   state: InterviewStateResponse | null | undefined
@@ -24,18 +28,27 @@ export function buildInterviewModeBridgeContext(
 
   const session = state.session;
   const isInterviewerTraining = session.trainingMode === 'interviewer';
-  const dialogue = currentTurn.messages
-    .map((message) =>
+  // Bridge-контекст уходит модели на каждый response.create, а в непрерывном
+  // интервью разговор не обнуляется — без окна он растёт без предела.
+  const dialogueWindow = windowInterviewDialogue(currentTurn.messages);
+  const dialogue = [
+    ...dialogueWindow.head.map((message) =>
       formatBridgeDialogueMessage(message, session.trainingMode)
-    )
-    .filter(Boolean);
+    ),
+    ...(dialogueWindow.skipped
+      ? [interviewDialogueSkipMarker(dialogueWindow.skipped)]
+      : []),
+    ...dialogueWindow.tail.map((message) =>
+      formatBridgeDialogueMessage(message, session.trainingMode)
+    ),
+  ].filter(Boolean);
   // Явный список уже заданных уточнений — только когда AI играет интервьюера:
   // в тренировке интервьюера вопросы задаёт пользователь.
   const askedQuestionsReminder = isInterviewerTraining
     ? ''
     : buildAskedQuestionsReminder(currentTurn.messages, currentTurn.question);
 
-  return [
+  const header = [
     'Краткий контекст перехода между текстовым и голосовым режимом.',
     'Используй его только как память текущего интервью; не считай это новой репликой пользователя.',
     '',
@@ -43,27 +56,40 @@ export function buildInterviewModeBridgeContext(
     `Уровень: ${session.level || 'не указан'}.`,
     `Компания: ${session.companyName || 'не указана'}.`,
     `Вакансия: ${session.vacancyTitle || 'не указана'}.`,
+  ];
+
+  // У интервьюера интервью идёт одним непрерывным разговором: этапов нет,
+  // поэтому и списка «предыдущих этапов», и «текущего этапа» тоже нет.
+  if (isInterviewerTraining) {
+    return [
+      ...header,
+      '',
+      'Идёт непрерывное интервью: пользователь сам ведёт разговор и выбирает следующий вопрос.',
+      '',
+      'Диалог интервью:',
+      dialogue.length ? dialogue.join('\n') : 'В интервью ещё нет реплик.',
+      '',
+      'Продолжай только как AI-кандидат и отвечай на реплику пользователя-интервьюера. Не задавай вопросы от имени интервьюера и не управляй ходом интервью.',
+    ].join('\n');
+  }
+
+  return [
+    ...header,
     '',
-    isInterviewerTraining
-      ? 'Предыдущие основные этапы (без реплик):'
-      : 'Предыдущие основные вопросы (без ответов):',
+    'Предыдущие основные вопросы (без ответов):',
     previousQuestions.length
       ? previousQuestions
           .map((question, index) => `${index + 1}. ${question}`)
           .join('\n')
       : 'Пока нет предыдущих основных вопросов.',
     '',
-    `${isInterviewerTraining ? 'Текущий этап' : 'Текущий вопрос'}: ${compactLine(currentTurn.question)}`,
+    `Текущий вопрос: ${compactLine(currentTurn.question)}`,
     '',
-    isInterviewerTraining
-      ? 'Диалог по текущему этапу:'
-      : 'Диалог по текущему вопросу:',
+    'Диалог по текущему вопросу:',
     dialogue.length ? dialogue.join('\n') : 'По текущему вопросу ещё нет реплик.',
     ...(askedQuestionsReminder ? ['', askedQuestionsReminder] : []),
     '',
-    isInterviewerTraining
-      ? 'Продолжай только как AI-кандидат и отвечай на реплику пользователя-интервьюера. Не задавай вопросы от имени интервьюера и не управляй ходом интервью. Прошлые этапы нужны только для памяти.'
-      : 'Продолжай только как интервьюер по текущему вопросу. Не объясняй тему и не отвечай вместо кандидата. Прошлые вопросы нужны только для ориентации в ходе интервью.',
+    'Продолжай только как интервьюер по текущему вопросу. Не объясняй тему и не отвечай вместо кандидата. Прошлые вопросы нужны только для ориентации в ходе интервью.',
   ].join('\n');
 }
 

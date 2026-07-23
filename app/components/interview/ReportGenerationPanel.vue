@@ -7,11 +7,15 @@ import ButtonLoader from '@/app/components/design/ButtonLoader.vue';
 const props = withDefaults(
   defineProps<{
     errorMessage?: string | null;
+    // Причина завершения интервью, если оно закрылось само (например,
+    // закончилось время бесплатной сессии). Это не ошибка.
+    noticeMessage?: string | null;
     retryLoading?: boolean;
     trainingMode?: InterviewTrainingMode;
   }>(),
   {
     errorMessage: null,
+    noticeMessage: null,
     retryLoading: false,
     trainingMode: 'candidate',
   }
@@ -82,6 +86,10 @@ const generationSteps = computed(() =>
             ? t('interview.session.reportGeneration.errorSubtitle')
             : generationSubtitle
         }}
+      </p>
+
+      <p v-if="noticeMessage && !errorMessage" class="report-generation__notice">
+        {{ noticeMessage }}
       </p>
 
       <ol class="report-generation__steps">
@@ -259,6 +267,11 @@ const generationSteps = computed(() =>
 .error {
   color: var(--danger);
   font-weight: 800;
+}
+
+.report-generation__notice {
+  color: var(--text-secondary);
+  font-weight: 600;
 }
 
 @keyframes report-orbit {

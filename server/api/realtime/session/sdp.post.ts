@@ -12,8 +12,8 @@ import { createInterviewService } from '@/server/application/interview/serviceFa
 import { endRealtimeVoiceSession } from '@/server/application/realtime/realtimeVoiceSessionService';
 import { sendOpenAiRealtimeCallRequest } from '@/server/infrastructure/llm/openaiResponsesClient';
 import { resolveRealtimeVoiceForFace } from '@/shared/interviewerVoice';
-import { apiError } from '@/server/utils/errors';
 import { defineApiHandler } from '@/server/utils/handler';
+import { requireAuthenticatedSession } from '@/server/utils/session';
 import { readDto } from '@/server/utils/validate';
 
 // WebRTC-транспорт realtime-voice: SDP-обмен идёт не напрямую в OpenAI (это
@@ -22,10 +22,7 @@ import { readDto } from '@/server/utils/validate';
 // из interview state сами, а не берём от клиента, — чтобы нельзя было
 // подменить модель/инструкции в обход серверной валидации.
 export default defineApiHandler(async (event) => {
-  const session = event.context.session;
-  if (!session) {
-    throw apiError('E_AUTH', 'Сессия не инициализирована');
-  }
+  const session = requireAuthenticatedSession(event);
 
   const input = await readDto(event, RealtimeSessionSdpRequestDto);
   const runtimeConfig = useRuntimeConfig(event);
@@ -42,8 +39,15 @@ export default defineApiHandler(async (event) => {
     ...resolveRealtimeConfig(runtimeConfig),
     voice: resolveRealtimeVoiceForFace(state.session.interviewerFaceId),
   };
+  // Тот же контекст, что и в /api/realtime/session: сервер восстанавливает
+  // инструкции сам, поэтому фактуру интервью нужно приложить и здесь.
+  const background = await interviewService.getSessionBackground({
+    anonymousSessionId: session.id,
+    userId: session.userId ?? null,
+    sessionId: input.sessionId,
+  });
   const payload = buildRealtimeSessionPayload(
-    buildRealtimeContextFromState(state),
+    buildRealtimeContextFromState(state, background),
     realtimeConfig
   );
 

@@ -219,9 +219,37 @@ describe('interview session hints panel', () => {
     expect(source).toContain('if (isInterviewerTraining.value) return;');
   });
 
-  it('hides plan navigation in free interviewer-training mode', () => {
-    expect(source).toContain('isFreeInterviewerTraining');
-    expect(source).toContain('v-if="!isFreeInterviewerTraining"');
+  it('hides the next-item button for every interviewer-training session', () => {
+    expect(source).toContain('v-if="!isInterviewerTraining"');
+    expect(source).not.toContain('v-if="!isFreeInterviewerTraining"');
+    expect(source).not.toContain('nextPlanItem');
+  });
+
+  it('shows the interviewer plan passively, without progress or asked marks', () => {
+    expect(source).toContain('hasVisiblePlan');
+    expect(source).toContain('planSummaryLabel');
+    expect(source).toContain('interview.session.planOverview');
+    // Отметка пройденного пункта остаётся только у кандидата.
+    expect(source).toContain(
+      "!isInterviewerTraining && item.status === 'asked'"
+    );
+  });
+
+  it('treats transition phrases as ordinary speech in interviewer training', () => {
+    const voiceGuard = source.indexOf(
+      '!isInterviewerTraining.value &&\n      isNextQuestionVoiceCommand(normalized)'
+    );
+    expect(voiceGuard).toBeGreaterThan(-1);
+    expect(source).toContain(
+      '!isInterviewerTraining.value && isNextQuestionVoiceCommand(message)'
+    );
+  });
+
+  it('debounces hint refreshes and marks the panel busy while updating', () => {
+    expect(source).toContain('HINTS_REFRESH_DEBOUNCE_MS');
+    expect(source).toContain('cancelHintsRefreshTimer');
+    expect(source).toContain(":aria-busy=\"hintsLoading ? 'true' : 'false'\"");
+    expect(source).toContain('hintsBlockRefreshing');
   });
 
   it('uses text-only shimmer on the sample answer while follow-up hints refresh', () => {

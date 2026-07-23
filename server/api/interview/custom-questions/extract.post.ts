@@ -9,9 +9,10 @@ import {
 import { OpenAiInterviewEngine } from '@/server/infrastructure/llm/openaiInterviewEngine';
 import { apiError } from '@/server/utils/errors';
 import { defineApiHandler } from '@/server/utils/handler';
+import { requireAuthenticatedSession } from '@/server/utils/session';
 
 export default defineApiHandler(async (event) => {
-  const session = event.context.session;
+  const session = requireAuthenticatedSession(event);
   const parts = await readMultipartFormData(event);
   const file = parts?.find((part) => part.name === 'file' && part.data);
 

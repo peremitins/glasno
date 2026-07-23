@@ -1,0 +1,1 @@
+ALTER TABLE "interview_sessions" ADD COLUMN "creator_ip_hash" text;

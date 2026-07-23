@@ -32,6 +32,14 @@ interface RuntimeRealtimeContext {
   vacancyTitle?: string | null;
   companyName?: string | null;
   currentQuestion?: string | null;
+  // План интервьюера — только справка для модели: она не должна вести по нему
+  // разговор, порядок и выбор тем остаются за пользователем.
+  planQuestions?: string[] | null;
+  // Фактура интервью. В режиме интервьюера это резюме, по которому играет
+  // AI-кандидат; в режиме кандидата — резюме пользователя, по которому
+  // AI-интервьюер задаёт релевантные вопросы.
+  resumeRaw?: string | null;
+  vacancyRaw?: string | null;
 }
 
 interface RealtimeContextSource {
@@ -48,15 +56,24 @@ interface RealtimeContextSource {
     candidateNotes?: string | null;
     vacancyTitle?: string | null;
     companyName?: string | null;
+    plan?: { items?: Array<{ question?: string | null }> | null } | null;
   };
   currentTurn?: { question?: string | null } | null;
+}
+
+// Фактура интервью хранится отдельно от DTO состояния — см.
+// InterviewService.getSessionBackground.
+export interface RealtimeBackground {
+  resumeRaw?: string | null;
+  vacancyRaw?: string | null;
 }
 
 // Общий контекст для создания сессии (/api/realtime/session) и SDP-обмена
 // (/api/realtime/session/sdp): второй эндпоинт восстанавливает те же
 // инструкции по interview state сам, не доверяя конфигу от клиента.
 export function buildRealtimeContextFromState(
-  state: RealtimeContextSource
+  state: RealtimeContextSource,
+  background: RealtimeBackground = {}
 ): RuntimeRealtimeContext {
   return {
     sessionId: state.session.id,
@@ -72,7 +89,96 @@ export function buildRealtimeContextFromState(
     vacancyTitle: state.session.vacancyTitle,
     companyName: state.session.companyName,
     currentQuestion: state.currentTurn?.question ?? '',
+    planQuestions: (state.session.plan?.items ?? [])
+      .map((item) => item?.question?.trim())
+      .filter((question): question is string => Boolean(question)),
+    resumeRaw: background.resumeRaw ?? null,
+    vacancyRaw: background.vacancyRaw ?? null,
   };
+}
+
+// Инструкции сессии дописываются к КАЖДОМУ response.create (иначе модель
+// теряет роль), поэтому длинные тексты режем: иначе резюме на 10 000 знаков
+// уходило бы провайдеру на каждую реплику.
+// Резюме — биография, по которой AI-кандидат играет: обрезать его жёстко
+// нельзя, иначе модель знает только последнее место работы (резюме идут от
+// свежего к старому, и срез оставлял шапку с последней должностью). 6000
+// символов покрывают резюме на одну-две страницы вместе с историей опыта.
+const REALTIME_RESUME_LIMIT = 6000;
+// Описание вакансии для AI-кандидата второстепенно, а тексты с hh.ru бывают
+// очень длинными — ему хватает более скромного лимита.
+const REALTIME_VACANCY_LIMIT = 1500;
+
+function compactRealtimeBackground(
+  value: string | null | undefined,
+  limit: number
+): string {
+  const text = (value ?? '').replace(/\s+/g, ' ').trim();
+  if (!text) return '';
+  if (text.length <= limit) return text;
+
+  // Обрываем по границе предложения, а не посреди слова: модель получает
+  // связный текст, а не обрубок фразы.
+  const head = text.slice(0, limit);
+  const sentenceEnd = Math.max(
+    head.lastIndexOf('. '),
+    head.lastIndexOf('! '),
+    head.lastIndexOf('? '),
+    head.lastIndexOf('; ')
+  );
+  // Слишком ранняя граница означала бы, что мы выбросили половину лимита,
+  // поэтому откатываемся к границе слова.
+  if (sentenceEnd > limit * 0.6) {
+    return `${head.slice(0, sentenceEnd + 1)} …`;
+  }
+  const wordEnd = head.lastIndexOf(' ');
+  return `${(wordEnd > 0 ? head.slice(0, wordEnd) : head).trimEnd()} …`;
+}
+
+// Резюме — главный источник фактуры о кандидате. В режиме интервьюера это
+// биография, которую AI-кандидат обязан играть как свою: без неё он выдумывал
+// опыт, не связанный с загруженным файлом.
+function buildCandidateResumeInstruction(
+  resumeRaw: string | null | undefined,
+  trainingMode: InterviewTrainingMode = 'interviewer'
+): string {
+  const resume = compactRealtimeBackground(resumeRaw, REALTIME_RESUME_LIMIT);
+  if (trainingMode === 'interviewer') {
+    if (!resume) {
+      return 'Резюме кандидата не загружено: придерживайся роли и уровня, не выдумывай конкретных работодателей и метрик.';
+    }
+    return `Твоё резюме (играй строго по нему, это твой опыт; не выдумывай фактов сверх него): ${resume}`;
+  }
+
+  if (!resume) {
+    return 'Резюме кандидата не загружено: задавай вопросы по роли и вакансии.';
+  }
+  return `Резюме кандидата (опирайся на него в вопросах и уточнениях): ${resume}`;
+}
+
+function buildVacancyDetailsInstruction(
+  vacancyRaw: string | null | undefined
+): string {
+  const vacancy = compactRealtimeBackground(vacancyRaw, REALTIME_VACANCY_LIMIT);
+  return vacancy ? `Описание вакансии: ${vacancy}` : '';
+}
+
+// План показываем модели как ориентир по темам, а не как сценарий: вести
+// разговор и выбирать порядок должен пользователь-интервьюер.
+function buildInterviewerPlanReference(
+  planQuestions?: string[] | null
+): string {
+  const questions = (planQuestions ?? []).filter((question) =>
+    question.trim()
+  );
+  if (!questions.length) {
+    return 'У пользователя нет заранее составленного плана: он ведёт разговор свободно.';
+  }
+
+  const list = questions
+    .map((question, index) => `${index + 1}) ${question}`)
+    .join(' ');
+  return `Пользователь ведёт интервью по своему плану (справочно, только чтобы понимать возможные темы): ${list}. Не управляй порядком, не переключай темы сам и не напоминай про план.`;
 }
 
 interface RealtimeOptions {
@@ -91,9 +197,7 @@ export function buildRealtimeInstructions(
       'Пользователь проводит интервью и тренирует навык интервьюера.',
       'Отвечай как кандидат по роли, вакансии, резюме и заданному профилю. Не помогай пользователю проводить интервью.',
       'Если вопрос общий, отвечай естественно, но не раскрывай всё сам: оставляй место для уточнений.',
-      context.questionSourceMode === 'free'
-        ? 'Свободное интервью не имеет плана и команд перехода. Фразы «следующий вопрос», «другой вопрос», «дальше» и «переходим» считай обычной частью разговора и отвечай на них в контексте реплики пользователя.'
-        : 'Если пользователь произнёс команду перехода («следующий вопрос», «другой вопрос», «дальше», «переходим») — это команда приложению. Не спорь и не управляй переходом.',
+      'Интервью идёт одним непрерывным разговором: пользователь сам решает, о чём спросить дальше, и сам завершает встречу. Команд перехода в приложении нет. Фразы «следующий вопрос», «другой вопрос», «дальше» и «переходим» считай обычной частью разговора и отвечай на них в контексте реплики пользователя.',
       'Не утверждай, что интервью завершено, и не давай оценку интервьюеру во время разговора.',
       `ID сессии: ${context.sessionId}.`,
       `Роль кандидата: ${context.role || 'не указана'}.`,
@@ -105,8 +209,12 @@ export function buildRealtimeInstructions(
       }),
       `Вакансия: ${context.vacancyTitle || 'не указана'}.`,
       `Компания: ${context.companyName || 'не указана'}.`,
-      `Текущий этап: ${context.currentQuestion || 'нет активного этапа'}.`,
-    ].join('\n');
+      buildCandidateResumeInstruction(context.resumeRaw),
+      buildVacancyDetailsInstruction(context.vacancyRaw),
+      buildInterviewerPlanReference(context.planQuestions),
+    ]
+      .filter(Boolean)
+      .join('\n');
   }
 
   return [
@@ -126,8 +234,12 @@ export function buildRealtimeInstructions(
     `Уровень: ${context.level || 'middle'}.`,
     `Вакансия: ${context.vacancyTitle || 'не указана'}.`,
     `Компания: ${context.companyName || 'не указана'}.`,
+    buildCandidateResumeInstruction(context.resumeRaw, 'candidate'),
+    buildVacancyDetailsInstruction(context.vacancyRaw),
     `Текущий вопрос: ${context.currentQuestion || 'нет активного вопроса'}.`,
-  ].join('\n');
+  ]
+    .filter(Boolean)
+    .join('\n');
 }
 
 export function buildRealtimeSessionPayload(

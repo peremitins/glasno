@@ -3,12 +3,10 @@ import { enqueueOrRunReport } from '@/server/application/reports/reportQueue';
 import { createReportService } from '@/server/application/reports/serviceFactory';
 import { apiError } from '@/server/utils/errors';
 import { defineApiHandler } from '@/server/utils/handler';
+import { requireAuthenticatedSession } from '@/server/utils/session';
 
 export default defineApiHandler(async (event) => {
-  const session = event.context.session;
-  if (!session) {
-    throw apiError('E_AUTH', 'Сессия не инициализирована');
-  }
+  const session = requireAuthenticatedSession(event);
 
   const id = getRouterParam(event, 'id');
   if (!id) {

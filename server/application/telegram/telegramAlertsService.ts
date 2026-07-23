@@ -4,6 +4,7 @@ import {
   formatCriticalErrorAlert,
   formatPaymentIssueAlert,
   formatSubscriptionPurchasedAlert,
+  formatTrialAbuseSuspectedAlert,
   formatUserDeletedAlert,
   formatUserRegisteredAlert,
   formatVoiceMinutesPurchasedAlert,
@@ -50,6 +51,14 @@ export class TelegramAlertsService {
     message?: string | null;
   }): Promise<void> {
     await this.safeSend(formatPaymentIssueAlert(params));
+  }
+
+  async notifyTrialAbuseSuspected(params: {
+    trialCount: number;
+    windowHours: number;
+    ipHashPrefix: string;
+  }): Promise<void> {
+    await this.safeSend(formatTrialAbuseSuspectedAlert(params));
   }
 
   async notifyCriticalError(params: {

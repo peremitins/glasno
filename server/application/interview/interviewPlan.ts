@@ -34,6 +34,10 @@ import {
 
 export interface InterviewSessionMetadata {
   trainingMode: InterviewTrainingMode;
+  // Сессия создана без платного доступа: на неё действует бюджет активного
+  // времени. Флаг фиксируется в момент создания — у платных сессий его нет
+  // и никаких проверок по ходу диалога не выполняется.
+  trialSession?: boolean;
   sessionGoal: InterviewSessionGoal;
   expectedDurationMinutes: number;
   questionSourceMode: InterviewQuestionSourceMode;
@@ -102,6 +106,7 @@ export function buildInterviewPlanMetadata(params: {
   input: CreateInterviewSessionRequestInput;
   role?: string | null;
   vacancyTitle?: string | null;
+  isTrialSession?: boolean;
 }): InterviewSessionMetadata {
   const sessionGoal = params.input.sessionGoal ?? goalFromLegacyQuestionCount(
     params.input.questionCount
@@ -113,6 +118,7 @@ export function buildInterviewPlanMetadata(params: {
   const customQuestions = normalizeCustomQuestions(
     params.input.customQuestionsText
   );
+  const trainingMode = params.input.trainingMode ?? 'candidate';
 
   const requiredUserItems = (
     questionSourceMode === 'free' ? [] : customQuestions
@@ -129,6 +135,7 @@ export function buildInterviewPlanMetadata(params: {
         question,
         role: params.role,
         vacancyTitle: params.vacancyTitle,
+        trainingMode,
       }),
     }));
 
@@ -153,7 +160,8 @@ export function buildInterviewPlanMetadata(params: {
         });
 
   return {
-    trainingMode: params.input.trainingMode ?? 'candidate',
+    trainingMode,
+    ...(params.isTrialSession ? { trialSession: true } : {}),
     sessionGoal,
     expectedDurationMinutes: config.expectedDurationMinutes,
     questionSourceMode,
@@ -219,6 +227,9 @@ export function parseInterviewSessionMetadata(
     trainingMode: isTrainingMode(raw.trainingMode)
       ? raw.trainingMode
       : 'candidate',
+    // Отсутствие флага = сессия не триальная, лимит активного времени не
+    // применяется. Так старые сессии и платные не получают ограничений.
+    ...(raw.trialSession === true ? { trialSession: true } : {}),
     sessionGoal,
     expectedDurationMinutes:
       numberOrNull(raw.expectedDurationMinutes) ?? config.expectedDurationMinutes,
@@ -333,6 +344,7 @@ export function populateGeneratedPlanQuestions(
         question,
         role: context.role,
         vacancyTitle: context.vacancyTitle,
+        trainingMode: metadata.trainingMode,
       }),
     };
   });
@@ -436,11 +448,32 @@ export function buildHintPack(params: {
   question: string;
   role?: string | null;
   vacancyTitle?: string | null;
+  trainingMode?: InterviewTrainingMode;
 }): QuestionHintPack {
   const question = normalizeInterviewQuestionText(
     params.question || 'текущий вопрос'
   );
   const roleContext = params.vacancyTitle || params.role || 'выбранной роли';
+  if (params.trainingMode === 'interviewer') {
+    return {
+      structure:
+        'Ведите разговор по шагам: открытый вопрос → уточнение личного вклада → решение и результат.',
+      bullets: [
+        `Привязывайте вопросы к контексту ${roleContext}.`,
+        'Задавайте открытые вопросы, а не закрытые «да/нет».',
+        'Уточняйте личную роль кандидата, а не заслуги команды.',
+        'Просите конкретику: цифры, сроки, результат.',
+      ],
+      terms: [roleContext, 'личный вклад', 'уточняющий вопрос'],
+      avoid: [
+        'Не задавайте наводящие вопросы с готовым ответом внутри.',
+        'Не задавайте несколько вопросов одной репликой.',
+        'Избегайте дискриминационных и рискованных формулировок.',
+      ],
+      strongDirection:
+        'Проверяйте по одной компетенции за раз: открытый вопрос, затем одно-два уточнения по вкладу и результату.',
+    };
+  }
   return {
     structure:
       'Отвечайте по шагам: ситуация → ваша задача → конкретные действия → измеримый результат.',

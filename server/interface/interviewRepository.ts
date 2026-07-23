@@ -63,6 +63,8 @@ export interface CreateInterviewSessionRecordInput {
   interviewerAvatarId: InterviewerAvatarId;
   status: InterviewSessionStatus;
   metadata?: Record<string, unknown> | null;
+  // HMAC от IP — только для наблюдения за накруткой бесплатных попыток.
+  creatorIpHash?: string | null;
 }
 
 export interface CreateInterviewTurnRecordInput {
@@ -105,6 +107,10 @@ export interface InterviewRepository {
       interviewerAvatarId: InterviewerAvatarId;
       metadata: Record<string, unknown>;
     }
+  ): Promise<InterviewSessionRecord | null>;
+  updateSessionMetadata(
+    id: string,
+    metadata: Record<string, unknown>
   ): Promise<InterviewSessionRecord | null>;
   listCanonicalQuestionIdsForOwner(owner: InterviewOwner): Promise<string[]>;
   listTurns(sessionId: string): Promise<InterviewTurnRecord[]>;

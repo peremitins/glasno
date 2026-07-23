@@ -25,6 +25,10 @@ import {
   AI_INTERVIEWER_ROLE_CONTRACT,
 } from '@/shared/interviewRoleContract';
 import { buildAskedQuestionsReminder } from '@/shared/interviewAskedQuestions';
+import {
+  interviewDialogueSkipMarker,
+  windowInterviewDialogue,
+} from '@/shared/interviewDialogueWindow';
 import type {
   CandidateDifficulty,
   CandidatePersona,
@@ -413,7 +417,11 @@ function sessionContextForConverse(session: InterviewSessionRecord) {
     `Компания: ${session.companyName || 'не указана'}`,
     `Вакансия: ${session.vacancyTitle || 'не указана'}`,
     `Описание вакансии: ${session.vacancyRaw || 'нет'}`,
-    `Резюме кандидата: ${session.resumeRaw || 'нет'}`,
+    // В тренировке интервьюера это биография самого AI-кандидата: без явной
+    // формулировки модель принимает резюме за чужое и играет мимо него.
+    trainingMode === 'interviewer'
+      ? `Твоё резюме как AI-кандидата (играй строго по нему, не выдумывай фактов сверх него): ${session.resumeRaw || 'не загружено, не выдумывай работодателей и метрики'}`
+      : `Резюме кандидата: ${session.resumeRaw || 'нет'}`,
     `Фокус интервью: ${describeInterviewFocus(focus)}`,
   ].join('\n');
 }
@@ -524,22 +532,27 @@ function formatConverseDialogue(params: ConverseParams): string {
   return formatDialogue(params.dialogue, readTrainingMode(params.session));
 }
 
-function formatDialogue(
+export function formatDialogue(
   dialogue: Array<{ role: 'user' | 'interviewer'; content: string }>,
   trainingMode: InterviewTrainingMode = 'candidate'
 ): string {
   const userLabel = trainingMode === 'interviewer' ? 'Интервьюер' : 'Кандидат';
   const aiLabel = trainingMode === 'interviewer' ? 'AI-кандидат' : 'Интервьюер';
-  return dialogue.length
-    ? dialogue
-        .map(
-          (message) =>
-            `${message.role === 'user' ? userLabel : aiLabel}: ${message.content}`
-        )
-        .join('\n')
-    : trainingMode === 'interviewer'
+  if (!dialogue.length) {
+    return trainingMode === 'interviewer'
       ? 'Интервьюер ещё ничего не сказал.'
       : 'Кандидат ещё ничего не сказал.';
+  }
+
+  const line = (message: { role: 'user' | 'interviewer'; content: string }) =>
+    `${message.role === 'user' ? userLabel : aiLabel}: ${message.content}`;
+  // Длинный разговор отдаём окном, иначе контекст растёт без предела.
+  const { head, skipped, tail } = windowInterviewDialogue(dialogue);
+  return [
+    ...head.map(line),
+    ...(skipped ? [interviewDialogueSkipMarker(skipped)] : []),
+    ...tail.map(line),
+  ].join('\n');
 }
 
 export function buildConverseUserText(params: ConverseParams): string {
@@ -938,7 +951,7 @@ export class OpenAiInterviewEngine implements InterviewEngine {
     params: GenerateQuestionHintsParams
   ): Promise<QuestionHintDetails> {
     const exampleContext = compactGeneratedText(
-      params.turn.question,
+      params.exampleContext || params.turn.question,
       'Текущий этап интервью.',
       1_200
     );
@@ -950,8 +963,8 @@ export class OpenAiInterviewEngine implements InterviewEngine {
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const raw = await this.requestJson({
         instruction:
-          'Ты тренер интервьюеров Гласно. Сгенерируй подсказки к текущему этапу интервью, чтобы пользователь лучше провёл разговор с AI-кандидатом. ' +
-          'Пиши по-русски, конкретно и кратко. Подсказывай, что проверить дальше, какие уточнения задать и каких рискованных формулировок избегать. ' +
+          'Ты тренер интервьюеров Гласно. Сгенерируй подсказки к текущему моменту интервью, чтобы пользователь лучше провёл разговор с AI-кандидатом. ' +
+          'Пиши по-русски, конкретно и кратко. Отталкивайся от последнего ответа AI-кандидата: подсказывай, что проверить дальше, какие уточнения задать и каких рискованных формулировок избегать. ' +
           'Не пиши готовый ответ кандидата, не отвечай от первого лица и не продолжай диалог за AI-кандидата. ' +
           'Верни строго JSON вида {"focus":"...","answerPlan":["..."],"keyDefinitions":["..."],"example":{"mainQuestion":"...?","followUps":["...?"]}}. ' +
           'answerPlan: 3–5 коротких действий интервьюера. keyDefinitions: 0–4 коротких определения методик интервью. ' +

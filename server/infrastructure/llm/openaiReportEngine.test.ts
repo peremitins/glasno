@@ -1,7 +1,10 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   REPORT_JSON_SCHEMA,
+  REPORT_JSON_SCHEMA_INTERVIEWER_CONTINUOUS,
   attachQuestionsToAnalysis,
+  buildContinuousInterviewerInstruction,
   buildInstruction,
   buildReportTranscript,
   extractReportJson,
@@ -22,6 +25,51 @@ describe('openai report engine helpers', () => {
       overallScore: 75,
       verdict: 'Нормально',
     });
+  });
+
+  it('makes the continuous interviewer schema return the question texts itself', () => {
+    const items = REPORT_JSON_SCHEMA_INTERVIEWER_CONTINUOUS.properties
+      .questionAnalysis.items as any;
+
+    // Этапов нет, поэтому сервер не может подставить вопрос по turnId —
+    // модель обязана вернуть формулировку вопроса и суть ответа сама.
+    expect(items.required).toContain('question');
+    expect(items.required).toContain('answer');
+    expect(items.properties.kind.enum).toEqual(['main']);
+    expect(
+      (REPORT_JSON_SCHEMA.properties.questionAnalysis.items as any).required
+    ).not.toContain('question');
+  });
+
+  it('caps the number of report sections so long interviews still finish', () => {
+    // Длинное интервью давало столько разборов, что генерация упиралась в
+    // таймаут и отчёт падал целиком.
+    const instruction = buildContinuousInterviewerInstruction();
+
+    expect(instruction).toContain('не более 8 элементов questionAnalysis');
+    expect(instruction).toContain('объедини близкие по теме');
+  });
+
+  it('allows enough time for a long interview report', () => {
+    const source = readFileSync(
+      'server/infrastructure/llm/openaiReportEngine.ts',
+      'utf8'
+    );
+
+    expect(source).toContain('timeoutMs: 180_000');
+    expect(source).not.toContain('timeoutMs: 45_000');
+  });
+
+  it('tells the model to segment the dialogue into asked questions', () => {
+    const instruction = buildContinuousInterviewerInstruction();
+
+    expect(instruction).toContain('один непрерывный диалог');
+    expect(instruction).toContain('фактически задал');
+    expect(instruction).toContain('q1, q2, q3');
+    expect(instruction).toContain('turnId "dialogue"');
+    expect(instruction).toContain('НЕ снижай баллы механически');
+    // Базовый интервьюерский контракт сохраняется.
+    expect(instruction).toContain('Ты тренер интервьюеров Гласно');
   });
 
   it('forbids invented facts without bracket placeholders or ellipsis', () => {
@@ -105,6 +153,36 @@ describe('openai report engine helpers', () => {
     expect(transcript).toContain('Пользователь-интервьюер: Расскажите о проекте.');
     expect(transcript).toContain('AI-кандидат: Мы полностью его переделали.');
     expect(transcript).toContain('Пользователь-интервьюер: Что именно сделали вы?');
+  });
+
+  it('keeps every reply of a long dialogue in the report transcript', () => {
+    // Контекст converse/hints обрезается окном ради экономии токенов, но
+    // разбор интервью обязан видеть разговор целиком — иначе часть заданных
+    // вопросов просто исчезнет из отчёта.
+    const dialogue = Array.from({ length: 120 }, (_, index) => ({
+      role: index % 2 === 0 ? 'user' : 'interviewer',
+      content: `Реплика номер ${index + 1}`,
+    }));
+
+    const transcript = buildReportTranscript(
+      [
+        {
+          id: 'turn_long',
+          index: 1,
+          kind: 'main',
+          question: 'Интервью по плану',
+          answerTranscript: 'Реплика номер 1',
+          followUpForTurnId: null,
+          metadata: { dialogue },
+        },
+      ] as never,
+      'interviewer'
+    );
+
+    expect(transcript).toContain('Реплика номер 1');
+    expect(transcript).toContain('Реплика номер 60');
+    expect(transcript).toContain('Реплика номер 120');
+    expect(transcript).not.toContain('пропущено реплик');
   });
 
   it('keeps the structured-output schema in sync with the Zod DTO criteria', () => {

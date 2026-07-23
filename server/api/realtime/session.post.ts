@@ -20,6 +20,7 @@ import { resolveRealtimeVoiceForFace } from '@/shared/interviewerVoice';
 import { apiError } from '@/server/utils/errors';
 import { assertDirectOpenAiAccessAllowed } from '@/server/infrastructure/llm/openaiResponsesClient';
 import { defineApiHandler } from '@/server/utils/handler';
+import { requireAuthenticatedSession } from '@/server/utils/session';
 import { readDto } from '@/server/utils/validate';
 
 // WebSocket-фоллбэк (Firefox) получает ephemeral-ключ напрямую от OpenAI:
@@ -31,10 +32,7 @@ const OPENAI_REALTIME_CLIENT_SECRETS_URL =
   'https://api.openai.com/v1/realtime/client_secrets';
 
 export default defineApiHandler(async (event) => {
-  const session = event.context.session;
-  if (!session) {
-    throw apiError('E_AUTH', 'Сессия не инициализирована');
-  }
+  const session = requireAuthenticatedSession(event);
 
   const input = await readDto(event, RealtimeSessionRequestDto);
   const runtimeConfig = useRuntimeConfig(event);
@@ -60,7 +58,14 @@ export default defineApiHandler(async (event) => {
     ...resolveRealtimeConfig(runtimeConfig),
     voice: resolveRealtimeVoiceForFace(state.session.interviewerFaceId),
   };
-  const realtimeContext = buildRealtimeContextFromState(state);
+  // Резюме и описание вакансии не входят в DTO состояния — забираем отдельно,
+  // иначе AI-кандидат не знает биографии, по которой должен играть.
+  const background = await interviewService.getSessionBackground({
+    anonymousSessionId: session.id,
+    userId: session.userId ?? null,
+    sessionId: input.sessionId,
+  });
+  const realtimeContext = buildRealtimeContextFromState(state, background);
   const instructions = buildRealtimeInstructions(realtimeContext);
   const billingStatus = await createBillingService(event).getStatus({
     anonymousSessionId: session.id,

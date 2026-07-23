@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { nanoid } from 'nanoid';
 import type { H3Event } from 'h3';
 import type { UserRole } from '@/shared/dto';
+import { apiError } from './errors';
 
 // Лёгкая АНОНИМНАЯ сессия (до полноценной авторизации, Фаза 4).
 // В cookie кладём `${id}.${hmac}`, подписанный NUXT_SESSION_SECRET.
@@ -61,4 +62,36 @@ export function getOrCreateAnonSession(event: H3Event): SessionContext {
   });
 
   return { id, isAnonymous: true, fresh: true };
+}
+
+// Отпечаток IP для наблюдения за накруткой бесплатных попыток. Сырой адрес
+// не сохраняем: в БД уходит только HMAC на том же секрете, что и подпись
+// cookie. Блокировок по нему нет — за одним IP в мобильных сетях стоят
+// тысячи абонентов, поэтому значение годится лишь как сигнал для алерта.
+export function hashRequestIp(event: H3Event): string | null {
+  const ip = getRequestIP(event, { xForwardedFor: true });
+  if (!ip) return null;
+  const secret = useRuntimeConfig(event).sessionSecret as string;
+  if (!secret) return null;
+  return createHmac('sha256', secret).update(ip).digest('hex');
+}
+
+// Требование авторизации для операций, которые расходуют деньги (запросы к
+// LLM/TTS) или бесплатную попытку. Вход в приложение и так обязателен —
+// клиентский middleware пускает без него только /auth, — но сервер этого не
+// проверял: прямой запрос с одной лишь анонимной cookie проходил, а её
+// очистка давала новую личность и новый триал.
+export function requireAuthenticatedSession(event: H3Event): {
+  id: string;
+  userId: string;
+  role: UserRole | null;
+} {
+  const session = event.context.session as SessionContext | undefined;
+  if (!session) {
+    throw apiError('E_AUTH', 'Сессия не инициализирована');
+  }
+  if (!session.userId) {
+    throw apiError('E_AUTH', 'Требуется вход в аккаунт');
+  }
+  return { id: session.id, userId: session.userId, role: session.role ?? null };
 }
