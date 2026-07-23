@@ -1,4 +1,6 @@
 import { existsSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import PDFDocument from 'pdfkit';
 import type { InterviewReport, InterviewTrainingMode } from '@/shared/dto';
 
@@ -11,15 +13,70 @@ export const REPORT_PDF_INTERVIEWER_STAR_LABEL = 'Как усилить след
 const REPORT_PDF_STAR_EXPLANATION =
   'STAR (ситуация, задача, действие, результат)';
 
-const FONT_CANDIDATES = [
-  '/System/Library/Fonts/Supplemental/Arial Unicode.ttf',
-  '/System/Library/Fonts/Supplemental/Arial.ttf',
+// Шрифт лежит в репозитории: встроенные шрифты pdfkit (Helvetica) не содержат
+// кириллицы, а системных TTF в рантайм-образе (node:alpine) нет вовсе.
+const FONT_ASSET_KEY = 'fonts/Onest-Variable.ttf';
+const FONT_DISK_CANDIDATES = [
+  join(process.cwd(), 'server/assets', FONT_ASSET_KEY),
+  join(process.cwd(), '.output/server/assets', FONT_ASSET_KEY),
   '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+  '/System/Library/Fonts/Supplemental/Arial Unicode.ttf',
 ];
+
+let cachedFont: Buffer | undefined;
+
+async function loadReportFont(): Promise<Buffer> {
+  if (cachedFont) {
+    return cachedFont;
+  }
+
+  const fromAssets = await loadFontFromServerAssets();
+  if (fromAssets) {
+    cachedFont = fromAssets;
+    return cachedFont;
+  }
+
+  const diskPath = FONT_DISK_CANDIDATES.find((candidate) =>
+    existsSync(candidate)
+  );
+  if (!diskPath) {
+    throw new Error(
+      `Не найден шрифт для PDF-отчёта (${FONT_ASSET_KEY}): PDF без него получится нечитаемым`
+    );
+  }
+
+  cachedFont = await readFile(diskPath);
+  return cachedFont;
+}
+
+async function loadFontFromServerAssets(): Promise<Buffer | null> {
+  const storage = (
+    globalThis as {
+      useStorage?: (base: string) => {
+        getItemRaw: (key: string) => Promise<unknown>;
+      };
+    }
+  ).useStorage;
+  if (typeof storage !== 'function') {
+    return null;
+  }
+
+  try {
+    const raw = await storage('assets:server').getItemRaw(FONT_ASSET_KEY);
+    if (!raw) {
+      return null;
+    }
+    return Buffer.isBuffer(raw) ? raw : Buffer.from(raw as Uint8Array);
+  } catch {
+    return null;
+  }
+}
 
 export async function renderReportPdf(
   report: InterviewReport
 ): Promise<Buffer> {
+  const font = await loadReportFont();
+
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     const doc = new PDFDocument({ margin: 48, size: 'A4' });
@@ -28,11 +85,8 @@ export async function renderReportPdf(
     doc.on('error', reject);
     doc.on('end', () => resolve(Buffer.concat(chunks)));
 
-    const fontPath = FONT_CANDIDATES.find((candidate) => existsSync(candidate));
-    if (fontPath) {
-      doc.registerFont('GlasnoSans', fontPath);
-      doc.font('GlasnoSans');
-    }
+    doc.registerFont('GlasnoSans', font);
+    doc.font('GlasnoSans');
 
     const labels = reportPdfLabels(report.trainingMode);
 
