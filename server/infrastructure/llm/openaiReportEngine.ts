@@ -97,6 +97,47 @@ export const REPORT_JSON_SCHEMA = {
   ],
 } as const;
 
+// Непрерывное интервьюерское интервью живёт в одном этапе, поэтому связать
+// разбор с turnId нельзя: модель сама выделяет фактически заданные вопросы и
+// возвращает их тексты вместе с ответами кандидата.
+export const REPORT_JSON_SCHEMA_INTERVIEWER_CONTINUOUS = {
+  ...REPORT_JSON_SCHEMA,
+  properties: {
+    ...REPORT_JSON_SCHEMA.properties,
+    questionAnalysis: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          turnId: { type: 'string' },
+          kind: { type: 'string', enum: ['main'] },
+          question: { type: 'string' },
+          answer: { type: 'string' },
+          criteria: CRITERIA_JSON_SCHEMA,
+          whatWorked: { type: 'string' },
+          whatWeak: { type: 'string' },
+          modelAnswer: { type: 'string' },
+          strongerAnswerStar: { type: 'string' },
+          nextPractice: { type: 'string' },
+        },
+        required: [
+          'turnId',
+          'kind',
+          'question',
+          'answer',
+          'criteria',
+          'whatWorked',
+          'whatWeak',
+          'modelAnswer',
+          'strongerAnswerStar',
+          'nextPractice',
+        ],
+      },
+    },
+  },
+} as const;
+
 // Модель возвращает разбор без текстов вопросов/ответов — подставляем их из
 // транскрипта по turnId, чтобы в отчёте были исходные формулировки из БД.
 export function attachQuestionsToAnalysis(
@@ -148,11 +189,16 @@ export class OpenAiReportEngine implements ReportEngine {
       throw apiError('E_UPSTREAM', 'Провайдер обработки не настроен');
     }
 
+    const isContinuous = params.analysisMode === 'interviewer_continuous';
     const startedAt = Date.now();
     try {
       const response = await sendOpenAiResponsesRequest<any>({
         purpose: 'report',
-        timeoutMs: 45_000,
+        // Отчёт генерируется в фоне, фронт опрашивает статус — ждать можно
+        // долго. 45 секунд хватало на 3–6 вопросов фиксированного плана, но в
+        // непрерывном интервью разборов столько, сколько вопросов реально
+        // задали: длинная беседа упиралась в таймаут, и отчёт падал.
+        timeoutMs: 180_000,
         apiKey: this.options.apiKey,
         organization: this.options.organization,
         project: this.options.project,
@@ -160,13 +206,19 @@ export class OpenAiReportEngine implements ReportEngine {
           model: this.options.model,
           // 5000 не хватало: при 6+ вопросах с развёрнутыми modelAnswer вывод
           // обрезался ровно на лимите и JSON не парсился.
-          max_output_tokens: 16_000,
+          // Потолок вывода ограничивает не только длину, но и время генерации.
+          // AI-relay обрывает долгие запросы (502 от nginx), поэтому отчёт
+          // должен укладываться в его окно с запасом. 8 разборов JSON'ом —
+          // это ~4000 токенов, так что 12 000 остаётся щедрым лимитом.
+          max_output_tokens: 12_000,
           text: {
             format: {
               type: 'json_schema',
               name: 'interview_report',
               strict: true,
-              schema: REPORT_JSON_SCHEMA,
+              schema: isContinuous
+                ? REPORT_JSON_SCHEMA_INTERVIEWER_CONTINUOUS
+                : REPORT_JSON_SCHEMA,
             },
           },
           input: [
@@ -175,7 +227,9 @@ export class OpenAiReportEngine implements ReportEngine {
               content: [
                 {
                   type: 'input_text',
-                  text: buildInstruction(params.session.trainingMode),
+                  text: isContinuous
+                    ? buildContinuousInterviewerInstruction()
+                    : buildInstruction(params.session.trainingMode),
                 },
               ],
             },
@@ -206,11 +260,15 @@ export class OpenAiReportEngine implements ReportEngine {
         });
       }
 
-      const parsed = attachQuestionsToAnalysis(
-        extractReportJson(response),
-        params.turns,
-        params.session.trainingMode
-      );
+      // В непрерывном режиме тексты вопросов и ответов приходят от модели —
+      // подставлять их из turn'ов нечем и не нужно.
+      const parsed = isContinuous
+        ? extractReportJson(response)
+        : attachQuestionsToAnalysis(
+            extractReportJson(response),
+            params.turns,
+            params.session.trainingMode
+          );
       return ReportAnalysisDto.parse({
         ...parsed,
         model: this.options.model,
@@ -222,6 +280,26 @@ export class OpenAiReportEngine implements ReportEngine {
       });
     }
   }
+}
+
+// Разбор непрерывного интервьюерского интервью: этапов нет, поэтому модель
+// сама выделяет фактически заданные вопросы и связывает их с ответами.
+export function buildContinuousInterviewerInstruction(): string {
+  return [
+    buildInstruction('interviewer'),
+    '',
+    'ВАЖНО: транскрипт — один непрерывный диалог без этапов и без переходов по пунктам плана.',
+    'Выдели вопросы, которые пользователь-интервьюер фактически задал, включая реплики без знака вопроса и просьбы рассказать или уточнить, и свяжи каждый с последующим ответом AI-кандидата.',
+    'Для каждой пары верни отдельный элемент questionAnalysis: turnId — синтетический идентификатор q1, q2, q3 по порядку, kind — всегда "main".',
+    'question — формулировка вопроса пользователя близко к тексту диалога, без переписывания смысла. answer — суть ответа AI-кандидата по этому вопросу.',
+    'Приветствия, благодарности, смолток и организационные реплики отдельными вопросами не считай.',
+    'Если выделить содержательные пары нельзя, но разговор есть, верни ровно один элемент с turnId "dialogue", question «Ведение интервью» и разбором всего разговора целиком.',
+    // Объём вывода растёт вместе с длиной интервью: без потолка длинная беседа
+    // упирается в лимит токенов и таймаут, а отчёт из трёх десятков секций
+    // всё равно нечитаем.
+    'Верни не более 8 элементов questionAnalysis. Если содержательных вопросов было больше, объедини близкие по теме в один разбор и оставь самые значимые для решения по кандидату.',
+    'План интервью дан справочно. Темы плана, которые не прозвучали, упомяни в summary и recommendations.topFixes как зоны, которые стоило проверить. НЕ снижай баллы механически за то, что пройдены не все пункты плана: оценивай качество состоявшегося разговора.',
+  ].join('\n');
 }
 
 export function buildInstruction(
@@ -272,6 +350,9 @@ export function buildInstruction(
 function buildUserPayload(params: AnalyzeReportParams): string {
   const { session, turns } = params;
   const transcript = buildReportTranscript(turns, session.trainingMode);
+  const planQuestions = (params.planQuestions ?? []).filter((question) =>
+    question.trim()
+  );
 
   return [
     `Роль: ${session.role || 'не указана'}`,
@@ -280,6 +361,15 @@ function buildUserPayload(params: AnalyzeReportParams): string {
     `Компания: ${session.companyName || 'не указана'}`,
     `Описание вакансии: ${session.vacancyRaw || 'нет'}`,
     `Резюме: ${session.resumeRaw || 'нет'}`,
+    ...(planQuestions.length
+      ? [
+          '',
+          'План интервью (справочник, пользователь не обязан был пройти его целиком):',
+          planQuestions
+            .map((question, index) => `${index + 1}) ${question}`)
+            .join('\n'),
+        ]
+      : []),
     '',
     'Транскрипт:',
     transcript,

@@ -134,6 +134,7 @@ export class DrizzleInterviewRepository implements InterviewRepository {
         interviewerAvatarId: input.interviewerAvatarId,
         status: input.status,
         metadata: input.metadata ?? null,
+        creatorIpHash: input.creatorIpHash ?? null,
       })
       .returning();
 
@@ -227,6 +228,18 @@ export class DrizzleInterviewRepository implements InterviewRepository {
         interviewerAvatarId: fields.interviewerAvatarId,
         metadata: fields.metadata,
       })
+      .where(eq(schema.interviewSessions.id, id))
+      .returning();
+    return row ? mapSession(row) : null;
+  }
+
+  async updateSessionMetadata(
+    id: string,
+    metadata: Record<string, unknown>
+  ): Promise<InterviewSessionRecord | null> {
+    const [row] = await this.db
+      .update(schema.interviewSessions)
+      .set({ metadata })
       .where(eq(schema.interviewSessions.id, id))
       .returning();
     return row ? mapSession(row) : null;

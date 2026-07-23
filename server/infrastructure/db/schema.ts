@@ -91,6 +91,9 @@ export const interviewSessions = pgTable('interview_sessions', {
   interviewerAvatarId: text('interviewer_avatar_id').default('neutral-pro').notNull(),
   status: text('status').default('created').notNull(), // created | running | done
   metadata: jsonb('metadata'),
+  // HMAC от IP создателя — только для наблюдения за всплесками бесплатных
+  // попыток. Сырой IP не храним, значение обнуляется через 30 дней.
+  creatorIpHash: text('creator_ip_hash'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
@@ -483,6 +486,9 @@ export const trialGrantHistory = pgTable('trial_grant_history', {
 export const trialInterviewHistory = pgTable('trial_interview_history', {
   id: uuid('id').defaultRandom().primaryKey(),
   email: text('email').unique(),
+  // Ключ попытки: адрес, сведённый к одному ящику (без +suffix, без точек у
+  // gmail). Не даёт получить новый триал через плюс-адресацию.
+  emailCanonical: text('email_canonical').unique(),
   telegramId: text('telegram_id').unique(),
   userId: uuid('user_id').references(() => users.id),
   completedAt: timestamp('completed_at', { withTimezone: true })

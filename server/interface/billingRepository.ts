@@ -219,6 +219,14 @@ export interface BillingRepository {
   ): Promise<UnfinishedSessionRecord | null>;
   // Для антиабьюз-порогов: сколько сессий создано с указанного момента.
   countOwnerSessionsSince(owner: BillingOwner, since: Date): Promise<number>;
+  // Сколько бесплатных интервью создано с одного отпечатка IP. Используется
+  // только для алерта — блокировок по IP нет.
+  countTrialSessionsByIpHashSince(
+    ipHash: string,
+    since: Date
+  ): Promise<number>;
+  // Отпечатки нужны только для суточного окна — старые обнуляем.
+  clearCreatorIpHashesOlderThan(before: Date): Promise<number>;
   findUserEmail(userId: string): Promise<string | null>;
   // Идемпотентная выдача доступа: пропуск (создание/продление записи) или
   // пакет минут. Безопасна при гонке «вебхук + поллинг checkout-status».

@@ -7,6 +7,8 @@ import type {
 } from '@/shared/dto';
 import { apiError } from '@/server/utils/errors';
 import { assertOwnedInterviewSession } from '@/server/application/interview/sessionOwnership';
+import { isContinuousInterviewFlow } from '@/server/application/interview/interviewService';
+import { parseInterviewSessionMetadata } from '@/server/application/interview/interviewPlan';
 import { logger } from '@/server/utils/logger';
 import type {
   InterviewRepository,
@@ -133,10 +135,7 @@ export class ReportService {
         return saved;
       }
 
-      const analysis = await this.deps.engine.analyze({
-        session,
-        turns: sanitizedTurns,
-      });
+      const analysis = await this.analyzeSession(session, sanitizedTurns);
       const adjustedAnalysis = applyAnswerCoverage(
         analysis,
         answerCoverage,
@@ -148,9 +147,55 @@ export class ReportService {
       );
       return saved;
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      await this.deps.reportRepository.saveFailed(reportId, message);
+      // Пишем в БД подробную причину, а не только общую фразу: иначе по
+      // упавшему отчёту невозможно понять, сбой это у провайдера или наш
+      // некорректный запрос. Пользователю текст всё равно санируется в
+      // toReportDto.
+      await this.deps.reportRepository.saveFailed(
+        reportId,
+        describeReportFailure(err)
+      );
       throw err;
+    }
+  }
+
+  // Интервьюер ведёт разговор одним непрерывным этапом, поэтому вопросы для
+  // разбора выделяет модель. Если сегментация не удалась, откатываемся на
+  // обычный разбор: он даст один цельный разбор всего диалога.
+  private async analyzeSession(
+    session: InterviewSessionRecord,
+    turns: InterviewTurnRecord[]
+  ): Promise<ReportAnalysis> {
+    const metadata = parseInterviewSessionMetadata(session.metadata);
+    if (!isContinuousInterviewFlow(session, metadata)) {
+      return this.deps.engine.analyze({ session, turns });
+    }
+
+    const planQuestions = metadata.plan.items
+      .map((item) => item.question?.trim())
+      .filter((question): question is string => Boolean(question));
+
+    try {
+      return await this.deps.engine.analyze({
+        session,
+        turns,
+        analysisMode: 'interviewer_continuous',
+        planQuestions,
+      });
+    } catch (err) {
+      logger.warn(
+        {
+          interviewSessionId: session.id,
+          error: describeReportFailure(err),
+        },
+        'Continuous interviewer report segmentation failed, falling back'
+      );
+      // Небольшая пауза перед повтором: если предыдущий запрос оборвал relay,
+      // мгновенная вторая попытка приходит на ещё занятый апстрим и падает
+      // так же. Обычный разбор просит один блок вместо восьми и укладывается
+      // в окно relay с большим запасом.
+      await delay(1_500);
+      return this.deps.engine.analyze({ session, turns });
     }
   }
 
@@ -193,6 +238,20 @@ export class ReportService {
     const session = await this.deps.interviewRepository.findSessionById(sessionId);
     return assertOwnedInterviewSession(session, { anonymousSessionId, userId });
   }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function describeReportFailure(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  const details = (err as { data?: { details?: unknown } })?.data?.details;
+  const cause =
+    details && typeof details === 'object' && 'cause' in details
+      ? String((details as { cause: unknown }).cause)
+      : '';
+  return cause ? `${message} | ${cause}` : message;
 }
 
 function withDialogueAnswerFallback(
@@ -340,6 +399,20 @@ function applyAnswerCoverage(
   coverage: AnswerCoverage,
   trainingMode: InterviewTrainingMode = 'candidate'
 ): ReportAnalysis {
+  // Интервьюер не обязан пройти весь план: покрытие здесь определяется
+  // качеством состоявшегося разговора, а не числом пунктов. Механически
+  // снижать балл за «обсуждён 1 из 6» нельзя — план лишь ориентир.
+  if (trainingMode === 'interviewer') {
+    return {
+      ...analysis,
+      questionAnalysis: normalizeQuestionAnalysis(
+        analysis.questionAnalysis,
+        coverage.reportTurns,
+        trainingMode
+      ),
+    };
+  }
+
   const criteria = scaleCriteria(analysis.criteria, coverage.ratio);
   const normalizedQuestionAnalysis = normalizeQuestionAnalysis(
     analysis.questionAnalysis,
@@ -352,9 +425,7 @@ function applyAnswerCoverage(
   );
   const skippedSummary =
     coverage.answered < coverage.expected
-      ? trainingMode === 'interviewer'
-        ? `Обсуждено ${coverage.answered} из ${coverage.expected} пунктов плана.`
-        : `Зачтено ${coverage.answered} из ${coverage.expected} содержательных ответов.`
+      ? `Зачтено ${coverage.answered} из ${coverage.expected} содержательных ответов.`
       : '';
 
   return {
@@ -370,13 +441,9 @@ function applyAnswerCoverage(
     recommendations: {
       topFixes: prependUnique(
         coverage.answered < coverage.expected
-          ? trainingMode === 'interviewer'
-            ? [
-                `Пройти весь план интервью: сейчас обсуждено ${coverage.answered} из ${coverage.expected} пунктов.`,
-              ]
-            : [
-                `Ответить на все вопросы интервью: сейчас зачтено ${coverage.answered} из ${coverage.expected}.`,
-              ]
+          ? [
+              `Ответить на все вопросы интервью: сейчас зачтено ${coverage.answered} из ${coverage.expected}.`,
+            ]
           : [],
         analysis.recommendations.topFixes
       ).slice(0, 5),

@@ -93,6 +93,19 @@ export function formatPaymentIssueAlert(params: {
     .join('\n');
 }
 
+export function formatTrialAbuseSuspectedAlert(params: {
+  trialCount: number;
+  windowHours: number;
+  ipHashPrefix: string;
+}): string {
+  return [
+    '⚠️ [glasno] Подозрение на накрутку бесплатных интервью',
+    `Бесплатных сессий с одного адреса: ${params.trialCount} за ${params.windowHours} ч`,
+    `Отпечаток IP: ${params.ipHashPrefix}…`,
+    'Блокировки не применялись — проверьте вручную.',
+  ].join('\n');
+}
+
 export function formatCriticalErrorAlert(params: {
   route: string;
   requestId?: string | null;

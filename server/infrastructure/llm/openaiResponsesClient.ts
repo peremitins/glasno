@@ -1,6 +1,7 @@
 import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { $fetch } from 'ofetch';
 import { apiError, isApiError } from '@/server/utils/errors';
+import { logger } from '@/server/utils/logger';
 
 export type OpenAiResponsesPurpose =
   | 'answer_eval'
@@ -208,11 +209,47 @@ function normalizeRelayUrl(value: string | undefined): string {
   return normalized;
 }
 
+// Причину падения надо сохранять подробно: без неё «провайдер недоступен»
+// одинаково выглядит и при реальном сбое OpenAI, и при нашем некорректном
+// запросе (400) или таймауте — понять, чья это ошибка, невозможно.
+function describeProviderFailure(error: unknown): string {
+  if (!(error instanceof Error)) return String(error);
+
+  const raw = error as Error & {
+    statusCode?: number;
+    status?: number;
+    data?: unknown;
+    cause?: unknown;
+  };
+  const status = raw.statusCode ?? raw.status;
+  const body =
+    typeof raw.data === 'string'
+      ? raw.data
+      : raw.data
+        ? JSON.stringify(raw.data)
+        : '';
+  const causeCode =
+    raw.cause && typeof raw.cause === 'object' && 'code' in raw.cause
+      ? String((raw.cause as { code: unknown }).code)
+      : '';
+
+  return [
+    raw.message,
+    status ? `status=${status}` : '',
+    causeCode ? `code=${causeCode}` : '',
+    body ? `body=${body.slice(0, 800)}` : '',
+  ]
+    .filter(Boolean)
+    .join(' | ');
+}
+
 function throwProviderError(error: unknown, fallbackMessage: string): never {
   if (isApiError(error)) {
     throw error;
   }
+  const details = describeProviderFailure(error);
+  logger.error({ err: error, details }, '[openai] provider request failed');
   throw apiError('E_UPSTREAM', fallbackMessage, {
-    cause: error instanceof Error ? error.message : String(error),
+    cause: details,
   });
 }

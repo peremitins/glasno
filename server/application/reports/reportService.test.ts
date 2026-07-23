@@ -488,7 +488,7 @@ describe('ReportService', () => {
     ).toHaveLength(1);
   });
 
-  it('describes incomplete interviewer coverage as plan items, not candidate answers', async () => {
+  it('does not penalise the interviewer for skipping plan items', async () => {
     const reportRepository = createReportRepository();
     const engine = {
       analyze: vi.fn().mockResolvedValue({
@@ -504,11 +504,7 @@ describe('ReportService', () => {
     const service = new ReportService({
       interviewRepository: createInterviewRepository(
         { trainingMode: 'interviewer', questionCount: 3 },
-        [
-          { answerTranscript: 'Расскажите о вашем самом сложном проекте?' },
-          { answerTranscript: '—' },
-          { answerTranscript: '—' },
-        ]
+        [{ answerTranscript: 'Расскажите о вашем самом сложном проекте?' }]
       ) as any,
       reportRepository: reportRepository as any,
       engine,
@@ -519,11 +515,122 @@ describe('ReportService', () => {
       sessionId: 'session_1',
     });
 
-    expect(report.verdict).toContain('Обсуждено 1 из 3 пунктов плана');
-    expect(report.recommendations?.topFixes[0]).toContain(
-      'Пройти весь план интервью'
+    // План — ориентир, а не чек-лист: балл за непройденные пункты не режем.
+    expect(report.overallScore).toBe(90);
+    expect(report.criteria).toMatchObject({
+      substance: 90,
+      structure: 90,
+      delivery: 90,
+    });
+    expect(report.verdict).toBe('Хорошее начало интервью.');
+    expect(report.verdict).not.toContain('Оценка снижена');
+    expect(report.summary).not.toContain('Обсуждено');
+    expect(
+      report.recommendations?.topFixes.some((fix) =>
+        fix.includes('Пройти весь план интервью')
+      )
+    ).toBe(false);
+  });
+
+  it('asks the engine to segment a continuous interviewer dialogue and passes the plan', async () => {
+    const reportRepository = createReportRepository();
+    const engine = {
+      analyze: vi.fn().mockResolvedValue({
+        overallScore: 74,
+        verdict: 'Интервью прошло содержательно.',
+        summary: 'Заданы четыре вопроса из шести тем плана.',
+        criteria: { substance: 74, structure: 70, delivery: 78 },
+        recommendations: { topFixes: ['Уточнять личный вклад'] },
+        questionAnalysis: [
+          {
+            turnId: 'q1',
+            kind: 'main',
+            question: 'Какой у вас опыт во фронтенд-разработке?',
+            answer: 'Около десяти лет, вёл крупные проекты на Vue и Nuxt.',
+            criteria: { substance: 70, structure: 72, delivery: 75 },
+            whatWorked: 'Открытый вопрос дал развёрнутый ответ.',
+            whatWeak: 'Не уточнён личный вклад.',
+            modelAnswer: 'Что именно вы делали сами в этих проектах?',
+            strongerAnswerStar: 'Уточните роль и результат кандидата.',
+            nextPractice: 'Задайте одно уточнение про личный вклад.',
+          },
+        ],
+        model: 'gpt-test',
+      }),
+    };
+    const service = new ReportService({
+      interviewRepository: createInterviewRepository(
+        {
+          trainingMode: 'interviewer',
+          questionCount: 6,
+          metadata: {
+            trainingMode: 'interviewer',
+            plan: {
+              items: [
+                { id: 'p1', index: 1, question: 'Опыт во фронтенде?' },
+                { id: 'p2', index: 2, question: 'Как принимаете решения?' },
+              ],
+            },
+          },
+        },
+        [{ answerTranscript: 'Какой у вас опыт во фронтенд-разработке?' }]
+      ) as any,
+      reportRepository: reportRepository as any,
+      engine,
+    });
+
+    const report = await service.ensureReport({
+      anonymousSessionId: 'anon_1',
+      sessionId: 'session_1',
+    });
+
+    expect(engine.analyze).toHaveBeenCalledWith(
+      expect.objectContaining({
+        analysisMode: 'interviewer_continuous',
+        planQuestions: ['Опыт во фронтенде?', 'Как принимаете решения?'],
+      })
     );
-    expect(report.verdict).not.toContain('содержательных ответов');
+    // Разбор идёт по фактически заданным вопросам, а не по пунктам плана.
+    expect(report.questionAnalysis).toHaveLength(1);
+    expect(report.questionAnalysis?.[0]).toMatchObject({
+      turnId: 'q1',
+      question: 'Какой у вас опыт во фронтенд-разработке?',
+    });
+    expect(report.overallScore).toBe(74);
+  });
+
+  it('falls back to a whole-dialogue analysis when segmentation fails', async () => {
+    const reportRepository = createReportRepository();
+    const analyze = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('segmentation failed'))
+      .mockResolvedValueOnce({
+        overallScore: 60,
+        verdict: 'Разбор всего разговора.',
+        summary: 'Сегментация не удалась, разобран диалог целиком.',
+        criteria: { substance: 60, structure: 60, delivery: 60 },
+        recommendations: { topFixes: ['Задавать больше уточнений'] },
+        questionAnalysis: [],
+        model: 'gpt-test',
+      });
+    const service = new ReportService({
+      interviewRepository: createInterviewRepository(
+        { trainingMode: 'interviewer', questionCount: 6 },
+        [{ answerTranscript: 'Расскажите про сложный проект?' }]
+      ) as any,
+      reportRepository: reportRepository as any,
+      engine: { analyze },
+    });
+
+    const report = await service.ensureReport({
+      anonymousSessionId: 'anon_1',
+      sessionId: 'session_1',
+    });
+
+    expect(analyze).toHaveBeenCalledTimes(2);
+    expect(analyze.mock.calls[1]?.[0]).not.toHaveProperty('analysisMode');
+    expect(report.status).toBe('done');
+    expect(report.verdict).toBe('Разбор всего разговора.');
   });
 
   it('uses realtime dialogue messages as report answers when answer transcript is not finalized', async () => {

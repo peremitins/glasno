@@ -1,0 +1,2 @@
+ALTER TABLE "trial_interview_history" ADD COLUMN "email_canonical" text;--> statement-breakpoint
+ALTER TABLE "trial_interview_history" ADD CONSTRAINT "trial_interview_history_email_canonical_unique" UNIQUE("email_canonical");

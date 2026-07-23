@@ -23,7 +23,7 @@ describe('QuestionPreferenceMenu', () => {
 
   it('uses an opaque surface because the menu is teleported over the interview', () => {
     const menuStyle = menuSource.match(
-      /\.question-preference-menu\s*\{([\s\S]*?)\n  \}/
+      /\.question-preference-menu\s*\{([\s\S]*?)\n {2}\}/
     )?.[1];
 
     expect(menuStyle).toContain('background: var(--surface-solid)');

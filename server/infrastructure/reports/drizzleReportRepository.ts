@@ -7,6 +7,7 @@ import type {
   ReportStatus,
 } from '@/shared/dto';
 import { getDb, schema } from '@/server/infrastructure/db/client';
+import { canonicalizeEmailForTrial } from '@/server/application/auth/authCrypto';
 import { apiError } from '@/server/utils/errors';
 import type {
   ReportRecord,
@@ -122,7 +123,12 @@ export class DrizzleReportRepository implements ReportRepository {
       if (email || telegramId) {
         await tx
           .insert(schema.trialInterviewHistory)
-          .values({ userId: session.userId, email, telegramId })
+          .values({
+            userId: session.userId,
+            email,
+            emailCanonical: email ? canonicalizeEmailForTrial(email) : null,
+            telegramId,
+          })
           .onConflictDoNothing();
       }
 

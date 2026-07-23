@@ -401,10 +401,11 @@
       "replyPlaceholderInterviewer": "Ваш вопрос кандидату…",
       "send": "Отправить ответ",
       "nextQuestion": "Следующий вопрос",
-      "nextPlanItem": "Следующий пункт",
       "finishInterview": "Завершить интервью",
+      "trialTimeUp": "Время бесплатного интервью вышло — формируем разбор по тому, что вы успели обсудить.",
       "plan": "План",
       "planProgress": "{asked} из {total} вопросов",
+      "planOverview": "Вопросов в плане: {count}",
       "plannedGlasnoQuestion": "Вопрос под вакансию сформируется по ходу интервью",
       "hints": "Подсказки",
       "noHints": "Подсказки появятся для активного вопроса",
@@ -585,6 +586,7 @@
     "newInterview": "Создать интервью",
     "progress": "{answered} из {total}",
     "freeInterview": "Свободный формат",
+    "plannedInterview": "Интервью по плану",
     "mode": {
       "candidate": "Вы — кандидат",
       "interviewer": "Вы — интервьюер"

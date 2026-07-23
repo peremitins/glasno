@@ -229,6 +229,37 @@ export class DrizzleBillingRepository implements BillingRepository {
     return Number(row?.value ?? 0);
   }
 
+  async countTrialSessionsByIpHashSince(
+    ipHash: string,
+    since: Date
+  ): Promise<number> {
+    const [row] = await this.db
+      .select({ value: count() })
+      .from(schema.interviewSessions)
+      .where(
+        and(
+          eq(schema.interviewSessions.creatorIpHash, ipHash),
+          gte(schema.interviewSessions.createdAt, since),
+          sql`${schema.interviewSessions.metadata}->>'trialSession' = 'true'`
+        )
+      );
+    return Number(row?.value ?? 0);
+  }
+
+  async clearCreatorIpHashesOlderThan(before: Date): Promise<number> {
+    const rows = await this.db
+      .update(schema.interviewSessions)
+      .set({ creatorIpHash: null })
+      .where(
+        and(
+          isNotNull(schema.interviewSessions.creatorIpHash),
+          lt(schema.interviewSessions.createdAt, before)
+        )
+      )
+      .returning({ id: schema.interviewSessions.id });
+    return rows.length;
+  }
+
   async findUserEmail(userId: string): Promise<string | null> {
     const [row] = await this.db
       .select({ email: schema.users.email })

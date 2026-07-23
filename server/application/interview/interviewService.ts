@@ -36,6 +36,11 @@ import {
   populateGeneratedPlanQuestions,
   resolveNextPlannedQuestion,
 } from './interviewPlan';
+import type { InterviewSessionMetadata } from './interviewPlan';
+import {
+  TRIAL_SESSION_ACTIVE_LIMIT_SECONDS,
+  calculateSessionActiveSeconds,
+} from './sessionActivity';
 import type { QuestionPreferenceRepository } from '@/server/interface/questionPreferenceRepository';
 import type { CanonicalQuestionRepository } from '@/server/interface/canonicalQuestionRepository';
 import {
@@ -59,6 +64,12 @@ export class InterviewService {
       hhClient: HhClient | null;
       questionPreferenceRepository?: QuestionPreferenceRepository;
       canonicalQuestionRepository?: CanonicalQuestionRepository;
+      // Проверка платного доступа. Вызывается только в момент исчерпания
+      // бюджета триала — на каждую реплику биллинг не дёргаем.
+      hasPaidAccess?: (owner: {
+        anonymousSessionId: string;
+        userId: string | null;
+      }) => Promise<boolean>;
     }
   ) {}
 
@@ -66,6 +77,8 @@ export class InterviewService {
     anonymousSessionId: string;
     userId?: string | null;
     input: CreateInterviewSessionRequestInput;
+    isTrialSession?: boolean;
+    creatorIpHash?: string | null;
   }): Promise<InterviewStateResponse> {
     const parsedInput = CreateInterviewSessionRequestDto.parse(params.input);
     const preparedSource = await prepareInterviewSource(parsedInput.source, {
@@ -84,6 +97,7 @@ export class InterviewService {
       input,
       role: input.role || preparedSource.role,
       vacancyTitle: preparedSource.vacancyTitle,
+      isTrialSession: params.isTrialSession,
     });
     const generatedPlanSlots = metadata.plan.items.filter(
       (item) => item.source === 'glasno' && !item.question
@@ -228,6 +242,7 @@ export class InterviewService {
       interviewerAvatarId: input.interviewerAvatarId,
       status: 'running',
       metadata: { ...metadata },
+      creatorIpHash: params.creatorIpHash ?? null,
     });
 
     await this.createNextMainQuestionOrFinish(session, []);
@@ -317,6 +332,25 @@ export class InterviewService {
     );
   }
 
+  // Резюме и описание вакансии не входят в DTO состояния: они большие, а
+  // состояние возвращается на каждую реплику. Голосовому режиму этот контекст
+  // нужен, поэтому отдаём его отдельным запросом.
+  async getSessionBackground(params: {
+    anonymousSessionId: string;
+    userId?: string | null;
+    sessionId: string;
+  }): Promise<{ resumeRaw: string | null; vacancyRaw: string | null }> {
+    const session = await this.requireOwnedSession(
+      params.anonymousSessionId,
+      params.sessionId,
+      params.userId
+    );
+    return {
+      resumeRaw: session.resumeRaw ?? null,
+      vacancyRaw: session.vacancyRaw ?? null,
+    };
+  }
+
   async deleteSession(params: {
     anonymousSessionId: string;
     userId?: string | null;
@@ -354,6 +388,7 @@ export class InterviewService {
     }
 
     const normalizedMetadata = normalizeTurnMetadata(turn.metadata);
+    const sessionMetadata = parseInterviewSessionMetadata(session.metadata);
     const baseMeta = toMetaRecord(turn.metadata);
     const dialogue = normalizedMetadata.dialogue.map((message) => ({
       role: message.role,
@@ -381,6 +416,43 @@ export class InterviewService {
       }
 
       const turns = await this.deps.repository.listTurns(session.id);
+
+      // В непрерывном интервью подсказка целиком привязана к последней реплике
+      // AI-кандидата, поэтому обновляем весь блок, а не только пример вопроса.
+      // Запрос один: движок возвращает и «что проверить дальше», и пример.
+      if (isContinuousInterviewFlow(session, sessionMetadata)) {
+        const refreshed = await this.deps.engine.generateQuestionHints({
+          session,
+          turn,
+          turns,
+          dialogue,
+          exampleContext,
+        });
+        const refreshedExample = readStoredHintExample(
+          session,
+          turn,
+          refreshed
+        );
+        await this.deps.repository.updateTurnMetadata(session.id, turn.id, {
+          ...baseMeta,
+          hintPack: {
+            ...normalizedMetadata.hintPack,
+            detailed: replaceHintExample(
+              refreshed,
+              refreshedExample
+                ? { ...refreshedExample, context: exampleContext }
+                : fallbackHintExample(session, turn, exampleContext)
+            ),
+          },
+        });
+
+        return this.getStateForSession(
+          params.anonymousSessionId,
+          session.id,
+          params.userId
+        );
+      }
+
       const example = await this.generateHintExample({
         session,
         turn,
@@ -411,20 +483,32 @@ export class InterviewService {
         question: turn.question,
         role: session.role,
         vacancyTitle: session.vacancyTitle,
+        trainingMode: session.trainingMode,
       });
     const detailed = await this.deps.engine.generateQuestionHints({
       session,
       turn,
       turns,
       dialogue,
+      exampleContext,
     });
+    const generatedExample = readStoredHintExample(session, turn, detailed);
     let nextDetailed = replaceHintExample(
       detailed,
-      readStoredHintExample(session, turn, detailed) ??
+      generatedExample ??
         fallbackHintExample(session, turn, turn.question.trim())
     );
 
-    if (nextDetailed.example?.context !== exampleContext) {
+    // В непрерывном интервью движок уже получил актуальный контекст и вернул
+    // подсказку вместе с примером — второй запрос за примером не нужен.
+    if (isContinuousInterviewFlow(session, sessionMetadata)) {
+      nextDetailed = replaceHintExample(
+        nextDetailed,
+        generatedExample
+          ? { ...generatedExample, context: exampleContext }
+          : fallbackHintExample(session, turn, exampleContext)
+      );
+    } else if (nextDetailed.example?.context !== exampleContext) {
       const example = await this.generateHintExample({
         session,
         turn,
@@ -568,10 +652,11 @@ export class InterviewService {
     const baseMeta = toMetaRecord(turn.metadata);
     const dialogue = parseDialogue(baseMeta.dialogue);
     const now = new Date();
+    const sessionMetadata = parseInterviewSessionMetadata(session.metadata);
     const questionPacingStartedAt =
       readIsoString(baseMeta.questionPacingStartedAt) ?? now.toISOString();
     const pacing = resolveQuestionPacing({
-      goal: parseInterviewSessionMetadata(session.metadata).sessionGoal,
+      goal: sessionMetadata.sessionGoal,
       startedAt: questionPacingStartedAt,
       lastReminderAt: readIsoString(baseMeta.questionPacingLastReminderAt),
       now,
@@ -585,6 +670,25 @@ export class InterviewService {
     });
     const exchanges = dialogue.filter((message) => message.role === 'user').length;
     const turns = await this.deps.repository.listTurns(session.id);
+
+    if (
+      await this.finishTrialSessionIfTimeIsUp({
+        session,
+        metadata: sessionMetadata,
+        turns,
+        turn,
+        baseMeta,
+        dialogue,
+        userId: params.userId ?? null,
+        anonymousSessionId: params.anonymousSessionId,
+      })
+    ) {
+      return this.getStateForSession(
+        params.anonymousSessionId,
+        session.id,
+        params.userId
+      );
+    }
 
     const { reply, suggestMoveOn } = await this.deps.engine.converse({
       session,
@@ -657,10 +761,11 @@ export class InterviewService {
     const baseMeta = toMetaRecord(turn.metadata);
     const dialogue = parseDialogue(baseMeta.dialogue);
     const now = new Date();
+    const sessionMetadata = parseInterviewSessionMetadata(session.metadata);
     const questionPacingStartedAt =
       readIsoString(baseMeta.questionPacingStartedAt) ?? now.toISOString();
     const pacing = resolveQuestionPacing({
-      goal: parseInterviewSessionMetadata(session.metadata).sessionGoal,
+      goal: sessionMetadata.sessionGoal,
       startedAt: questionPacingStartedAt,
       lastReminderAt: readIsoString(baseMeta.questionPacingLastReminderAt),
       now,
@@ -674,6 +779,29 @@ export class InterviewService {
     });
     const exchanges = dialogue.filter((message) => message.role === 'user').length;
     const turns = await this.deps.repository.listTurns(session.id);
+
+    if (
+      await this.finishTrialSessionIfTimeIsUp({
+        session,
+        metadata: sessionMetadata,
+        turns,
+        turn,
+        baseMeta,
+        dialogue,
+        userId: params.userId ?? null,
+        anonymousSessionId: params.anonymousSessionId,
+      })
+    ) {
+      yield {
+        type: 'done',
+        state: await this.getStateForSession(
+          params.anonymousSessionId,
+          session.id,
+          params.userId
+        ),
+      };
+      return;
+    }
 
     const generator = this.deps.engine.converseStream({
       session,
@@ -816,6 +944,14 @@ export class InterviewService {
       throw apiError('E_CONFLICT', 'Интервью уже завершено');
     }
 
+    const metadata = parseInterviewSessionMetadata(session.metadata);
+    if (isContinuousInterviewFlow(session, metadata)) {
+      throw apiError(
+        'E_VALIDATION',
+        'В непрерывном интервью переход по пунктам недоступен'
+      );
+    }
+
     const turn = await this.deps.repository.findTurnById(
       session.id,
       params.input.turnId
@@ -876,6 +1012,57 @@ export class InterviewService {
     );
   }
 
+  // Бюджет бесплатного интервью исчерпан? Тогда реплику пользователя всё
+  // равно сохраняем (она попадёт в отчёт), интервью мягко закрываем, и фронт
+  // по статусу done сам запускает генерацию отчёта.
+  private async finishTrialSessionIfTimeIsUp(params: {
+    session: InterviewSessionRecord;
+    metadata: InterviewSessionMetadata;
+    turns: InterviewTurnRecord[];
+    turn: InterviewTurnRecord;
+    baseMeta: Record<string, unknown>;
+    dialogue: InterviewDialogueMessage[];
+    userId: string | null;
+    anonymousSessionId: string;
+  }): Promise<boolean> {
+    if (!params.metadata.trialSession) return false;
+    if (
+      calculateSessionActiveSeconds(params.turns) <
+      TRIAL_SESSION_ACTIVE_LIMIT_SECONDS
+    ) {
+      return false;
+    }
+
+    // Пользователь мог оформить доступ уже во время интервью — тогда лимит
+    // снимаем совсем, чтобы не обрывать разговор оплатившему.
+    const paid = this.deps.hasPaidAccess
+      ? await this.deps.hasPaidAccess({
+          anonymousSessionId: params.anonymousSessionId,
+          userId: params.userId,
+        })
+      : false;
+    if (paid) {
+      const { trialSession: _trialSession, ...paidMetadata } = params.metadata;
+      await this.deps.repository.updateSessionMetadata(
+        params.session.id,
+        paidMetadata as unknown as Record<string, unknown>
+      );
+      return false;
+    }
+
+    await this.deps.repository.updateTurnMetadata(
+      params.session.id,
+      params.turn.id,
+      { ...params.baseMeta, dialogue: params.dialogue }
+    );
+    await this.finalizeTurnAnswer(params.session.id, {
+      ...params.turn,
+      metadata: { ...params.baseMeta, dialogue: params.dialogue },
+    });
+    await this.deps.repository.completeSession(params.session.id);
+    return true;
+  }
+
   private async finalizeTurnAnswer(
     sessionId: string,
     turn: InterviewTurnRecord
@@ -903,19 +1090,27 @@ export class InterviewService {
   ) {
     const mainTurns = turns.filter((turn) => turn.kind === 'main');
     const metadata = parseInterviewSessionMetadata(session.metadata);
-    if (metadata.questionSourceMode === 'free') {
+    // Непрерывное интервью: один этап на весь разговор. Интервьюер сам ведёт
+    // беседу и завершает её кнопкой, поэтому пунктов-этапов здесь нет, а план
+    // остаётся в metadata только как справочник.
+    if (isContinuousInterviewFlow(session, metadata)) {
       if (mainTurns.length === 0) {
+        const question =
+          metadata.questionSourceMode === 'free'
+            ? 'Свободное интервью'
+            : 'Интервью по плану';
         await this.deps.repository.createTurn({
           sessionId: session.id,
           index: 1,
           kind: 'main',
-          question: 'Свободное интервью',
+          question,
           metadata: {
             questionSource: 'glasno',
             hintPack: buildHintPack({
-              question: 'Свободное интервью',
+              question,
               role: session.role,
               vacancyTitle: session.vacancyTitle,
+              trainingMode: session.trainingMode,
             }),
           },
         });
@@ -1244,6 +1439,19 @@ function parseDialogue(value: unknown): InterviewDialogueMessage[] {
     result.push({ role, content, at });
   }
   return result;
+}
+
+// Интервью без пошагового перехода: весь разговор живёт в одном этапе.
+// Так работает свободный сценарий и любая тренировка интервьюера — там
+// пользователь сам решает, о чём спрашивать, а план нужен лишь как ориентир.
+export function isContinuousInterviewFlow(
+  session: Pick<InterviewSessionRecord, 'trainingMode'>,
+  metadata: Pick<InterviewSessionMetadata, 'questionSourceMode'>
+): boolean {
+  return (
+    session.trainingMode === 'interviewer' ||
+    metadata.questionSourceMode === 'free'
+  );
 }
 
 function resolveHintExampleContext(

@@ -5,6 +5,7 @@ import {
   buildConverseInstruction,
   buildConverseUserText,
   extractResponsesText,
+  formatDialogue,
   normalizeSampleAnswerHint,
   normalizeQuestionHintDetails,
   parseJsonObject,
@@ -15,6 +16,39 @@ import type { ConverseParams } from '@/server/interface/interviewEngine';
 import { readFileSync } from 'node:fs';
 
 describe('openai interview engine helpers', () => {
+  it('sends a long dialogue to the model as a bounded window', () => {
+    const dialogue = Array.from({ length: 100 }, (_, index) => ({
+      role: (index % 2 === 0 ? 'user' : 'interviewer') as
+        | 'user'
+        | 'interviewer',
+      content: `Реплика номер ${index + 1}`,
+    }));
+
+    const formatted = formatDialogue(dialogue, 'interviewer');
+
+    // Начало разговора нужно, чтобы AI-кандидат не противоречил себе,
+    // хвост — актуальный контекст. Середина заменяется маркером.
+    expect(formatted).toContain('Реплика номер 1');
+    expect(formatted).toContain('Реплика номер 100');
+    expect(formatted).toContain('пропущено реплик');
+    expect(formatted).not.toContain('Реплика номер 50');
+    expect(formatted.split('\n')).toHaveLength(21);
+  });
+
+  it('keeps a short dialogue complete', () => {
+    const dialogue = Array.from({ length: 12 }, (_, index) => ({
+      role: (index % 2 === 0 ? 'user' : 'interviewer') as
+        | 'user'
+        | 'interviewer',
+      content: `Реплика ${index + 1}`,
+    }));
+
+    const formatted = formatDialogue(dialogue, 'candidate');
+
+    expect(formatted).not.toContain('пропущено реплик');
+    expect(formatted.split('\n')).toHaveLength(12);
+  });
+
   it('reserves more output tokens for the verbose AI candidate', () => {
     expect(
       resolveConverseMaxOutputTokens({
@@ -319,6 +353,66 @@ describe('openai interview engine helpers', () => {
     expect(text).toContain('не раскрывай противоречия добровольно');
   });
 
+  it('feeds the uploaded resume to the AI candidate as its own biography', () => {
+    const session = {
+      id: 'session_resume',
+      anonymousSessionId: 'anon_resume',
+      userId: null,
+      trainingMode: 'interviewer' as const,
+      source: 'profession' as const,
+      role: 'Frontend-разработчик',
+      level: 'middle' as const,
+      questionCount: 3,
+      language: 'ru' as const,
+      interviewerMode: 'neutral' as const,
+      interviewerAvatarId: 'neutral-pro' as const,
+      status: 'running' as const,
+      companyName: null,
+      vacancyTitle: null,
+      vacancyRaw: null,
+      vacancyUrl: null,
+      resumeRaw: 'Иван, 10 лет во фронтенде: Vue, Nuxt, дизайн-система.',
+      metadata: null,
+      createdAt: new Date('2026-07-23T10:00:00.000Z'),
+    };
+    const turn = {
+      id: 'turn_resume',
+      sessionId: session.id,
+      index: 1,
+      kind: 'main' as const,
+      question: 'Интервью по плану',
+      answerTranscript: null,
+      followUpForTurnId: null,
+      metadata: null,
+      answeredAt: null,
+      createdAt: new Date('2026-07-23T10:00:00.000Z'),
+    };
+
+    const interviewerText = buildConverseUserText({
+      session,
+      turn,
+      turns: [],
+      dialogue: [],
+      exchanges: 0,
+    });
+
+    // AI играет кандидата — резюме должно читаться как его собственное.
+    expect(interviewerText).toContain('Твоё резюме как AI-кандидата');
+    expect(interviewerText).toContain('10 лет во фронтенде');
+
+    const candidateText = buildConverseUserText({
+      session: { ...session, trainingMode: 'candidate' as const },
+      turn,
+      turns: [],
+      dialogue: [],
+      exchanges: 0,
+    });
+
+    // AI играет интервьюера — это резюме собеседника, а не его биография.
+    expect(candidateText).toContain('Резюме кандидата: Иван, 10 лет');
+    expect(candidateText).not.toContain('Твоё резюме');
+  });
+
   it('generates an interviewer question suggestion instead of an AI-candidate opening line', () => {
     const source = readFileSync(
       'server/infrastructure/llm/openaiInterviewEngine.ts',
@@ -506,8 +600,8 @@ describe('openai interview engine helpers', () => {
       level: 'middle',
       questionCount: 3,
       language: 'ru',
-      interviewerMode: 'friendly',
-      interviewerAvatarId: null,
+      interviewerMode: 'neutral',
+      interviewerAvatarId: 'neutral-pro',
       status: 'running',
       companyName: null,
       vacancyTitle: null,
