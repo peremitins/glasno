@@ -66,6 +66,9 @@ describe('report pdf labels', () => {
       const result = await parser.getText();
       expect(result.text).toContain('Оценки по вопросу');
       expect(result.text).toContain('Суть ответа: 92/100');
+      // Кириллица должна остаться читаемой: встроенные шрифты pdfkit её ломают.
+      expect(result.text).toContain('Итоговый балл: 82 / 100');
+      expect(result.text).toContain('Конверсия выросла до 18%.');
     } finally {
       await parser.destroy();
     }
