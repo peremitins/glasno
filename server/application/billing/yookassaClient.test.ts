@@ -204,9 +204,15 @@ describe('yookassaClient helpers', () => {
         planId: 'pro_monthly',
       },
       savePaymentMethod: true,
+      merchantCustomerId: 'user@example.com',
     });
 
-    expect(request.body).toMatchObject({ save_payment_method: true });
+    expect(request.body).toMatchObject({
+      save_payment_method: true,
+      // Без идентификатора покупателя виджет не предложит сохранённую карту
+      // при следующей оплате (требование документации виджета).
+      merchant_customer_id: 'user@example.com',
+    });
   });
 
   it('builds a recurring charge with the saved YooKassa payment method', () => {

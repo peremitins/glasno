@@ -26,6 +26,9 @@ export interface BuildYooKassaPaymentRequestInput extends YooKassaConfig {
   receipt?: YooKassaReceipt;
   // Сохранить выбранный способ для будущих автосписаний (первый платёж).
   savePaymentMethod?: boolean;
+  // Идентификатор покупателя в нашей системе. По документации виджета нужен,
+  // чтобы сохранённая карта предлагалась при следующей оплате.
+  merchantCustomerId?: string | null;
 }
 
 // Server-to-server списание с сохранённого способа оплаты (автопродление).
@@ -111,6 +114,9 @@ export function buildYooKassaCreatePaymentRequest(
   }
   if (input.savePaymentMethod) {
     body.save_payment_method = true;
+  }
+  if (input.merchantCustomerId) {
+    body.merchant_customer_id = input.merchantCustomerId.slice(0, 200);
   }
 
   return {
