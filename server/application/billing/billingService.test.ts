@@ -2195,11 +2195,12 @@ describe('BillingService saved payment method verification', () => {
     expect(mockedGetYooKassaPaymentMethod).not.toHaveBeenCalled();
   });
 
-  it('stores a card saved during payment without a second provider lookup', async () => {
-    // У карты payment_method.id — самостоятельный идентификатор способа,
-    // отличный от id платежа. Флаг saved=true в самом платеже — достаточное
-    // подтверждение (док «Автоплатежи. Основы»); отдельный GET не нужен и не
-    // должен блокировать включение автопродления.
+  it('stores a card saved during payment even when its id equals the payment id', async () => {
+    // У первого платежа YooKassa возвращает payment_method.id, РАВНЫЙ id
+    // платежа — и для карты тоже (док «Виджет: сохранение способов»). Признак
+    // пригодности — saved=true и тип не sbp, а не различие id. Отдельный GET
+    // (ресурс только для привязок на нулевую сумму) не нужен и не должен
+    // блокировать автопродление.
     const repository = createRepository();
     mockedGetYooKassaPaymentMethod.mockReset();
     mockedGetYooKassaPayment.mockResolvedValue({
@@ -2210,7 +2211,7 @@ describe('BillingService saved payment method verification', () => {
       currency: 'RUB',
       metadata: { orderId: 'order_1' },
       paymentMethod: {
-        id: 'pm_card_1',
+        id: 'payment_1',
         saved: true,
         methodType: 'bank_card',
         title: 'Bank card *1111',
@@ -2230,7 +2231,7 @@ describe('BillingService saved payment method verification', () => {
     expect(repository.fulfillPaidOrder).toHaveBeenCalledWith(
       expect.objectContaining({
         paymentMethod: expect.objectContaining({
-          providerPaymentMethodId: 'pm_card_1',
+          providerPaymentMethodId: 'payment_1',
           status: 'active',
         }),
       })
@@ -2315,7 +2316,11 @@ describe('BillingService saved payment method verification', () => {
     });
 
     expect(mockedCreateYooKassaPaymentMethodBinding).toHaveBeenCalledWith(
-      expect.objectContaining({ methodType: 'sbp' })
+      expect.objectContaining({
+        methodType: 'sbp',
+        // userId в metadata — устойчивый ключ корреляции payment_method.active.
+        metadata: { userId: 'user_1' },
+      })
     );
     expect(repository.savePendingPaymentMethod).toHaveBeenCalledWith({
       userId: 'user_1',
@@ -2368,6 +2373,50 @@ describe('BillingService saved payment method verification', () => {
     );
     // Событие способа оплаты не должно идти по платёжному пути (GET /payments).
     expect(mockedGetYooKassaPayment).not.toHaveBeenCalled();
+  });
+
+  it('correlates a payment_method.active webhook by metadata.userId when the id lookup misses', async () => {
+    // Устойчивый fallback: если по providerPaymentMethodId привязку не нашли,
+    // но событие несёт наш userId в metadata (мы кладём его при создании
+    // привязки), активируем pending-способ этого пользователя.
+    const repository = createRepository();
+    repository.findPaymentMethodByProviderPaymentMethodId.mockResolvedValue(
+      null
+    );
+    repository.findPaymentMethodByUserId.mockResolvedValue({
+      ...activePaymentMethod,
+      status: 'pending',
+      methodType: 'sbp',
+      providerPaymentMethodId: 'sbp_binding_1',
+    });
+    mockedGetYooKassaPaymentMethod.mockResolvedValue({
+      id: 'sbp_binding_1',
+      type: 'sbp',
+      saved: true,
+      status: 'active',
+    });
+    const service = createService(repository);
+
+    await service.handleYooKassaWebhook({
+      type: 'notification',
+      event: 'payment_method.active',
+      object: {
+        id: 'sbp_binding_1',
+        type: 'sbp',
+        status: 'active',
+        saved: true,
+        metadata: { userId: 'user_1' },
+      },
+    });
+
+    expect(repository.findPaymentMethodByUserId).toHaveBeenCalledWith('user_1');
+    expect(repository.activatePaymentMethod).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 'user_1',
+        providerPaymentMethodId: 'sbp_binding_1',
+        enableAutoRenewForActiveAccess: true,
+      })
+    );
   });
 });
 
