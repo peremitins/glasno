@@ -2156,11 +2156,11 @@ describe('BillingService saved payment method verification', () => {
     );
   });
 
-  it('does not save an SBP method whose id equals the payment id', async () => {
-    // По СБП привязка счёта асинхронная: в платеже YooKassa возвращает id
-    // самой операции (равный id платежа), а не идентификатор способа —
-    // автосписание им невозможно. Такой способ из платежа не заводим;
-    // настоящий счёт приходит событием payment_method.active.
+  it('stores an SBP method saved during payment, like a card', async () => {
+    // Прод-факт (24.07): по СБП с save_payment_method YooKassa возвращает в
+    // платеже saved=true и НЕ шлёт отдельного payment_method.active — токен
+    // отдаётся прямо в платеже, как у карты. Признак пригодности — saved=true;
+    // methodType роли не играет. GET к токену «из платежа» неприменим.
     const repository = createRepository();
     mockedGetYooKassaPaymentMethod.mockReset();
     mockedGetYooKassaPayment.mockResolvedValue({
@@ -2189,7 +2189,13 @@ describe('BillingService saved payment method verification', () => {
     });
 
     expect(repository.fulfillPaidOrder).toHaveBeenCalledWith(
-      expect.objectContaining({ paymentMethod: null })
+      expect.objectContaining({
+        paymentMethod: expect.objectContaining({
+          providerPaymentMethodId: 'payment_1',
+          methodType: 'sbp',
+          status: 'active',
+        }),
+      })
     );
     // Пригодность способа не должна зависеть от отдельного запроса к провайдеру.
     expect(mockedGetYooKassaPaymentMethod).not.toHaveBeenCalled();
