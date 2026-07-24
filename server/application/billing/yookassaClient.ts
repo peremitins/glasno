@@ -206,21 +206,28 @@ export async function createYooKassaPaymentMethodBinding(params: {
   idempotenceKey: string;
   returnUrl: string;
   methodType?: YooKassaBindablePaymentMethodType;
+  // Прокидывается в объект способа оплаты и возвращается в событии
+  // payment_method.active — по нему коррелируем активацию с пользователем.
+  metadata?: Record<string, string>;
 }): Promise<YooKassaPaymentMethodResponse> {
   const methodType = params.methodType ?? 'bank_card';
+  const body: Record<string, unknown> = {
+    type: methodType,
+    confirmation:
+      methodType === 'sbp'
+        ? { type: 'qr', return_url: params.returnUrl }
+        : { type: 'redirect', return_url: params.returnUrl },
+  };
+  if (params.metadata && Object.keys(params.metadata).length > 0) {
+    body.metadata = params.metadata;
+  }
   return await $fetch<YooKassaPaymentMethodResponse>(
     'https://api.yookassa.ru/v3/payment_methods',
     {
       method: 'POST',
       timeout: 15_000,
       headers: yookassaHeaders(params, params.idempotenceKey),
-      body: {
-        type: methodType,
-        confirmation:
-          methodType === 'sbp'
-            ? { type: 'qr', return_url: params.returnUrl }
-            : { type: 'redirect', return_url: params.returnUrl },
-      },
+      body,
     }
   );
 }
@@ -574,11 +581,17 @@ export interface YooKassaPaymentMethodEvent {
   saved: boolean;
   status: string | null;
   methodType: string | null;
+  // metadata способа оплаты (мы кладём в неё userId при создании привязки) —
+  // устойчивый ключ корреляции события с нашим пользователем.
+  metadata: Record<string, unknown>;
+  // merchant_customer_id, если YooKassa его возвращает в объекте способа.
+  merchantCustomerId: string | null;
 }
 
 // Уведомление о способе оплаты (payment_method.active и др.). object здесь —
 // не платёж, а способ оплаты; телу webhook не доверяем, поэтому забираем
-// только идентификатор, а пригодность подтверждаем обратным запросом.
+// только идентификатор и признаки корреляции, а пригодность подтверждаем
+// обратным запросом.
 export function extractYooKassaPaymentMethodEvent(
   payload: unknown
 ): YooKassaPaymentMethodEvent {
@@ -589,6 +602,8 @@ export function extractYooKassaPaymentMethodEvent(
       saved?: unknown;
       status?: unknown;
       type?: unknown;
+      metadata?: unknown;
+      merchant_customer_id?: unknown;
     };
   };
   const event = typeof data.event === 'string' ? data.event : null;
@@ -600,12 +615,18 @@ export function extractYooKassaPaymentMethodEvent(
       'Некорректный webhook способа оплаты YooKassa'
     );
   }
+  const metadata =
+    typeof data.object?.metadata === 'object' && data.object.metadata !== null
+      ? (data.object.metadata as Record<string, unknown>)
+      : {};
   return {
     event,
     paymentMethodId,
     saved: data.object?.saved === true,
     status: asString(data.object?.status),
     methodType: asString(data.object?.type),
+    metadata,
+    merchantCustomerId: asString(data.object?.merchant_customer_id),
   };
 }
 
