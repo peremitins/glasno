@@ -2616,17 +2616,19 @@ export class BillingService {
       // Способ, сохранённый во время платежа, YooKassa подтверждает флагом
       // payment_method.saved в самом платеже (док «Виджет: сохранение способов
       // оплаты»). У ПЕРВОГО платежа payment_method.id всегда равен id платежа —
-      // и для карты тоже; это штатный токен автосписания. GET /v3/payment_methods
-      // к таким id неприменим (это ресурс только для привязок на нулевую сумму),
-      // поэтому его не делаем и не даём ему блокировать автопродление.
-      // Исключение — СБП: во время платежа возвращается лишь id операции, счёт
-      // для автосписаний так не заводится; он приходит отдельной привязкой
-      // (startPaymentMethodBinding) и событием payment_method.active.
+      // и для карты, и для СБП; это штатный токен автосписания. GET
+      // /v3/payment_methods к таким id неприменим (это ресурс только для
+      // привязок на нулевую сумму), поэтому его не делаем.
+      //
+      // Прод-факт (24.07): по СБП с save_payment_method YooKassa возвращает
+      // saved=true прямо в платеже и НЕ шлёт отдельного payment_method.active —
+      // токен отдаётся в платеже так же, как у карты. Поэтому доверяем saved
+      // одинаково для всех способов; отдельная привязка счёта СБП
+      // (startPaymentMethodBinding + payment_method.active) остаётся
+      // альтернативным путём для подключения без покупки.
       const paymentMethod = verified.paymentMethod;
       const savedMethod =
-        paymentMethod?.saved === true &&
-        paymentMethod.id &&
-        paymentMethod.methodType !== 'sbp'
+        paymentMethod?.saved === true && paymentMethod.id
           ? {
               providerPaymentMethodId: paymentMethod.id,
               methodType: paymentMethod.methodType,
