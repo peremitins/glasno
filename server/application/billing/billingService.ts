@@ -1134,6 +1134,9 @@ export class BillingService {
         idempotenceKey: `bind-${userId}-${Date.now()}`,
         returnUrl: buildBindingReturnUrl(this.appUrl),
         methodType,
+        // userId в metadata возвращается в payment_method.active — устойчивый
+        // ключ корреляции активации привязки с пользователем.
+        metadata: { userId },
       });
     } catch (err) {
       // Без диагностики провайдера отказ выглядит одинаково для «магазин не
@@ -1197,16 +1200,31 @@ export class BillingService {
     payload: unknown
   ): Promise<void> {
     const event = extractYooKassaPaymentMethodEvent(payload);
+    // Корреляция события с нашей записью: сначала по идентификатору способа
+    // (флоу привязки хранит его как pending), затем — fallback по userId из
+    // metadata, который мы кладём при создании привязки.
+    const metadataUserId =
+      typeof event.metadata.userId === 'string' ? event.metadata.userId : null;
     const method =
-      await this.deps.repository.findPaymentMethodByProviderPaymentMethodId(
+      (await this.deps.repository.findPaymentMethodByProviderPaymentMethodId(
         event.paymentMethodId
-      );
+      )) ??
+      (metadataUserId
+        ? await this.deps.repository.findPaymentMethodByUserId(metadataUserId)
+        : null);
     if (!method) {
-      // Способ не наш (или уже удалён/заменён) — тихо игнорируем и отвечаем
-      // 200, иначе YooKassa будет бесконечно ретраить.
-      console.warn('[billing] payment_method webhook: unknown method', {
+      // Способ не наш (или запись не создавалась — например, сохранение по СБП
+      // прямо из чекаута). Полный объект в логе покажет, что именно шлёт
+      // YooKassa и по чему это можно связать с пользователем. Отвечаем 200,
+      // иначе YooKassa будет бесконечно ретраить.
+      console.warn('[billing] payment_method webhook: unmatched', {
         event: event.event,
         providerPaymentMethodId: event.paymentMethodId,
+        methodType: event.methodType,
+        saved: event.saved,
+        status: event.status,
+        metadata: event.metadata,
+        merchantCustomerId: event.merchantCustomerId,
       });
       return;
     }
@@ -2596,19 +2614,19 @@ export class BillingService {
       // (вебхук + поллинг) доступ второй раз не выдаст.
       //
       // Способ, сохранённый во время платежа, YooKassa подтверждает флагом
-      // payment_method.saved в самом платеже (док «Автоплатежи. Основы») —
-      // отдельный GET не нужен и не должен блокировать автопродление. У карты
-      // payment_method.id — самостоятельный идентификатор способа, пригодный
-      // для автосписаний. У СБП привязка счёта асинхронная: в платеже
-      // возвращается id самой операции (равный id платежа), а готовый счёт
-      // приходит отдельным событием payment_method.active и заводится через
-      // привязку. Поэтому из платежа берём способ, только если у него
-      // собственный id, отличный от id платежа.
+      // payment_method.saved в самом платеже (док «Виджет: сохранение способов
+      // оплаты»). У ПЕРВОГО платежа payment_method.id всегда равен id платежа —
+      // и для карты тоже; это штатный токен автосписания. GET /v3/payment_methods
+      // к таким id неприменим (это ресурс только для привязок на нулевую сумму),
+      // поэтому его не делаем и не даём ему блокировать автопродление.
+      // Исключение — СБП: во время платежа возвращается лишь id операции, счёт
+      // для автосписаний так не заводится; он приходит отдельной привязкой
+      // (startPaymentMethodBinding) и событием payment_method.active.
       const paymentMethod = verified.paymentMethod;
       const savedMethod =
         paymentMethod?.saved === true &&
         paymentMethod.id &&
-        paymentMethod.id !== verified.id
+        paymentMethod.methodType !== 'sbp'
           ? {
               providerPaymentMethodId: paymentMethod.id,
               methodType: paymentMethod.methodType,
@@ -2620,6 +2638,16 @@ export class BillingService {
               status: 'active' as const,
             }
           : null;
+      // Диагностика захвата: прод-логи должны объяснять, почему способ сохранён
+      // или нет (без PII — только тип и флаги).
+      console.info('[billing] checkout payment method capture', {
+        orderId: order.id,
+        methodType: paymentMethod?.methodType ?? null,
+        saved: paymentMethod?.saved === true,
+        idEqualsPaymentId:
+          paymentMethod?.id != null && paymentMethod.id === verified.id,
+        captured: savedMethod !== null,
+      });
       const fulfillResult = await this.deps.repository.fulfillPaidOrder({
         orderId: order.id,
         providerPaymentId: verified.id,
