@@ -356,7 +356,7 @@
   }
 
   // Подтверждения действий с картой/автопродлением — кастомная модалка
-  // вместо системного window.confirm (паттерн AlertDialog из Mentala).
+  // вместо системного window.confirm.
   type ConfirmAction = 'unbind' | 'enableRenew' | 'disableRenew';
   const confirmAction = ref<ConfirmAction | null>(null);
   const confirmOpen = computed({
@@ -406,7 +406,7 @@
     confirmAction.value = null;
   }
 
-  // Отвязка карты (по образцу Mentala): карта удаляется, автопродление
+  // Отвязка карты: карта удаляется, автопродление
   // выключается, оплаченный период остаётся до конца.
   async function unbindCard() {
     if (cardActionPending.value) return;

@@ -43,7 +43,7 @@ export interface BuildYooKassaRecurringPaymentInput extends YooKassaConfig {
 }
 
 /**
- * Чек для 54-ФЗ (реализация по образцу Mentala).
+ * Чек для 54-ФЗ.
  * vat_code 1 = без НДС, payment_subject 'service' — услуга.
  */
 export function buildYooKassaReceipt(params: {
@@ -266,7 +266,7 @@ export async function createYooKassaPayment(
   });
 }
 
-// Презентация сохранённого способа оплаты (по образцу Mentala):
+// Презентация сохранённого способа оплаты:
 // сам PAN хранит YooKassa, нам доступны только маска и тип.
 export interface YooKassaPaymentMethodPresentation {
   id: string | null;

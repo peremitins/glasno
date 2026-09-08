@@ -105,7 +105,7 @@ describe('billing plans v2', () => {
   it('keeps landing pricing copy synchronized with the catalog', () => {
     const landingPlans = useLandingContent().pricing.plans;
     // Лендинг показывает три ключевых срока; тексты должны совпадать
-    // с каталогом приложения (ручная синхронизация из CLAUDE.md).
+    // с каталогом приложения.
     expect(landingPlans.map((plan) => plan.id)).toEqual([
       'pass_7d',
       'pass_30d',

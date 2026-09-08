@@ -23,9 +23,8 @@ import { defineApiHandler } from '@/server/utils/handler';
 import { requireAuthenticatedSession } from '@/server/utils/session';
 import { readDto } from '@/server/utils/validate';
 
-// WebSocket-фоллбэк (Firefox) получает ephemeral-ключ напрямую от OpenAI:
-// AI-relay пока не проксирует /v1/realtime/client_secrets и WebSocket (см.
-// .docs/DEPLOY.md, «Риски / что проверить после первого деплоя»). WebRTC
+// WebSocket-фоллбэк (Firefox) получает ephemeral-ключ напрямую от OpenAI.
+// AI-relay пока не проксирует /v1/realtime/client_secrets и WebSocket. WebRTC
 // (основной транспорт) секрет не запрашивает — SDP обменивается через
 // /api/realtime/session/sdp, который уже ходит в OpenAI через relay.
 const OPENAI_REALTIME_CLIENT_SECRETS_URL =

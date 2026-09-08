@@ -3,7 +3,7 @@ import { createBillingService } from '@/server/application/billing/serviceFactor
 import { apiError } from '@/server/utils/errors';
 import { defineApiHandler } from '@/server/utils/handler';
 
-// Отвязка карты автосписания (по образцу Mentala): карта удаляется,
+// Отвязка карты автосписания: карта удаляется,
 // автопродление выключается, оплаченный период остаётся до конца.
 export default defineApiHandler(async (event) => {
   const session = event.context.session;

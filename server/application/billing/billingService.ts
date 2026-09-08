@@ -883,7 +883,7 @@ export class BillingService {
     }
 
     // Чек 54-ФЗ: передаём receipt, если у пользователя указан email
-    // (паттерн Mentala: без email платёж уходит без чека из кода).
+    // Без email платёж уходит без чека из кода.
     const description = recipientEmail
       ? `Гласно ${plan.name}, подарок`
       : `Гласно ${plan.name}`;
@@ -1110,7 +1110,7 @@ export class BillingService {
     );
   }
 
-  // Явная привязка карты БЕЗ платежа (по образцу Mentala): создаём
+  // Явная привязка карты без платежа: создаём
   // payment_method в YooKassa, сохраняем pending-запись и отправляем
   // пользователя на страницу подтверждения банка.
   async startPaymentMethodBinding(
@@ -1181,7 +1181,7 @@ export class BillingService {
   }
 
   // Синхронизация pending-привязки (вызывается опортунистически из
-  // /api/billing/status, как syncPendingPaymentMethodBinding в Mentala).
+  // /api/billing/status.
   async syncPendingPaymentMethod(
     userId: string | null | undefined
   ): Promise<void> {
@@ -1339,7 +1339,7 @@ export class BillingService {
   }
 
   // Автопродление при обращении пользователя к биллинг-статусу (по образцу
-  // Mentala). Работает как бэкап к фоновому обходу runAutoRenewalSweep.
+  // Работает как резервный механизм для runAutoRenewalSweep.
   // Безопасно вызывать часто: claim-паттерн не даст списать дважды.
   async maybeRunAutoRenewal(userId: string | null | undefined): Promise<void> {
     if (!userId) return;

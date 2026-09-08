@@ -42,7 +42,7 @@
     errorMessage: realtimeVoice.errorMessage,
   });
 
-  // Пейволл (паттерн Mentala): если минуты голоса кончились — на кнопке
+  // Пейволл: если минуты голоса закончились, на кнопке
   // бейдж 💎, клик открывает пейволл вместо запуска сессии.
   const billing = useBillingStatus();
   const paywallOpen = ref(false);

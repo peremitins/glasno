@@ -9,7 +9,7 @@ const socialDescription =
   'Репетиция собеседования голосом: вопросы по вакансии, подсказки во время ответа и подробный разбор.';
 const socialImageUrl = `${landingSiteUrl}/og-cover.jpg`;
 
-// Конфиг по образцу Mentala, но без Capacitor/мобильного слоя.
+// Конфигурация веб-приложения без мобильного слоя.
 // SPA-режим (ssr:false) на старте; при необходимости SEO для базы вопросов
 // включим SSR/гибрид-рендеринг точечно на нужных маршрутах.
 export default defineNuxtConfig({
@@ -174,8 +174,7 @@ export default defineNuxtConfig({
     featureTtsEnabled: process.env.NUXT_FEATURE_TTS_ENABLED === 'true',
     sessionSecret: '',
     telegramBotToken: '',
-    // Служебные алерты (регистрации/оплаты/ошибки) — общий с Mentala бот и чат
-    // деплой-уведомлений (см. .docs/DEPLOY.md), временное решение.
+    // Служебные алерты для регистрации, оплаты и ошибок.
     telegramAlertsBotToken: '',
     telegramAlertsChatId: '',
     // Прямой api.telegram.org может быть заблокирован с прод-сервера (РФ) —

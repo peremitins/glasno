@@ -1,6 +1,6 @@
 <script setup lang="ts">
   // Кастомная модалка подтверждения в стиле glass-фреймов проекта —
-  // замена системному window.confirm (паттерн AlertDialog из Mentala).
+  // замена системному window.confirm.
   import ButtonLoader from '@/app/components/design/ButtonLoader.vue';
 
   const props = defineProps<{

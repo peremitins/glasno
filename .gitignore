@@ -21,10 +21,14 @@ node_modules
 !.vscode/extensions.json
 .idea
 
-# секреты агентов (могут содержать ключи/пароли)
-.cursor/mcp.json
-.claude/settings.local.json
-
-# Serena local cache and per-developer overrides
-.serena/cache/
-.serena/project.local.yml
+# internal documentation and local AI-tool configuration
+.docs/
+.claude/
+.codex/
+.cursor/
+.cloudcode/
+CLAUDE.md
+AGENTS.md
+GEMINI.md
+CLOUDCODE.md
+.serena/

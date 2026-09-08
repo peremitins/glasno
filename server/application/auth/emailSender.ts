@@ -3,7 +3,7 @@ import {
   sendSmtpEmail,
 } from '@/server/infrastructure/email/smtpEmailSender';
 
-// Отправка писем через SMTP (те же креды, что в Mentala — Yandex SMTP).
+// Отправка писем через SMTP.
 // Конфиг берём из env (SMTP_*), которые подгружаются из .env.development.
 
 export { isSmtpConfigured };

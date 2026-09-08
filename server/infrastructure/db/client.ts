@@ -3,7 +3,7 @@ import { Pool } from 'pg';
 import * as schema from './schema';
 
 // Единый пул соединений к Postgres. Строка подключения — из runtimeConfig
-// (NUXT_DATABASE_URL). Отдельная база glasno, не общая с Mentala.
+// (NUXT_DATABASE_URL). Приложение использует отдельную базу данных.
 let pool: Pool | null = null;
 
 function resolveDatabaseUrl(): string {

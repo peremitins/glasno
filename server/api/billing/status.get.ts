@@ -11,7 +11,7 @@ export default defineApiHandler(async (event) => {
 
   const service = createBillingService(event);
 
-  // По образцу Mentala current.get: при обращении к статусу опортунистически
+  // При обращении к статусу опортунистически
   // (1) подтверждаем pending-привязку карты, (2) пробуем автосписание.
   // Ошибки этих шагов не должны ломать выдачу статуса.
   try {
@@ -33,4 +33,3 @@ export default defineApiHandler(async (event) => {
 
   return BillingStatusResponseDto.parse(status);
 });
-
