@@ -1,48 +1,42 @@
-# Гласно
+# Glasno
 
-Сайт: [glasno.app](https://glasno.app)
+AI-powered interview practice platform built with Nuxt, Vue, and TypeScript.
 
-AI-тренажёр собеседований для веба и Telegram. Помогает готовиться к интервью: проходить текстовые и голосовые сессии, получать разбор ответов и отслеживать прогресс.
+[Live product](https://glasno.app)
 
-## Стек
+![Glasno interview workspace](public/readme/glasno-interview-workspace.png)
 
-- **Frontend:** Nuxt 4, Vue 3, Pinia, Tailwind CSS, vue-i18n, VueUse.
-- **Backend:** Nitro, Clean Architecture, Drizzle ORM, PostgreSQL, BullMQ, Redis.
-- **AI:** OpenAI SDK, текстовые сценарии и Realtime Voice.
+## Product
 
-## Структура
+Glasno helps people prepare for job interviews through realistic practice sessions tailored to a role, job description, and personal context.
 
-```
-app/                 frontend: pages, layouts, components, stores, composables, i18n
-server/
-  api/               тонкие Nitro-обработчики
-  application/       бизнес-логика, сервисы, очереди, воркеры
-  domain/            доменные сущности
-  infrastructure/    база данных, Redis, внешние провайдеры
-  interface/         порты интеграций
-  middleware/        CSRF, безопасность, сессия
-shared/dto/          Zod-схемы общего контракта frontend и backend
-```
+The interview workspace brings together a simulated interview scene, conversation flow, contextual hints, and a structured interview plan in one interface.
 
-## Запуск локально
+## Main Capabilities
 
-```bash
-pnpm install
-cp .env.example .env.development
-pnpm db:generate
-pnpm db:migrate
-pnpm dev
-```
+- Configurable interview sessions for a chosen role and context
+- Interview workspace with chat, interview plan, answer input, and controls
+- Contextual hints that support answers without replacing them
+- Session reports and interview history
+- Question library and configurable practice flows
 
-Для полноценной локальной работы нужны Node.js 20+, PostgreSQL и Redis. Серверная часть находится в этом репозитории. В `.env.development` укажите свои тестовые значения на основе `.env.example`.
+## Stack
 
-Проверка сервера: `GET /api/health` возвращает `{ "status": "ok" }`.
+- **Frontend:** Nuxt 4, Vue 3, TypeScript, Pinia, Tailwind CSS, shadcn-vue
+- **Backend:** Nitro, Drizzle ORM, PostgreSQL, Redis, BullMQ
+- **Quality:** Vitest, ESLint, Zod, Docker
 
-## Проверки качества
+## Architecture
 
-```bash
-pnpm lint
-pnpm typecheck
-pnpm test:run
+The application is organised as a full-stack Nuxt codebase:
+
+```text
+app/                    Vue application: pages, components, stores, and composables
+server/api/             Thin HTTP handlers
+server/application/     Use cases and business logic
+server/domain/          Domain models and rules
+server/infrastructure/  Database, Redis, queues, and external providers
+server/interface/       Ports and integration contracts
+shared/dto/             Shared Zod validation schemas
 ```
 ```
