@@ -27,6 +27,7 @@ node_modules
 .codex/
 .cursor/
 .cloudcode/
+.mcp.json
 CLAUDE.md
 AGENTS.md
 GEMINI.md
